@@ -1,0 +1,20 @@
+[submodule "etcd"]
+	path = etcd
+	url = https://github.com/etcd-io/etcd.git
+	branch = release-3.6
+[submodule "kubernetes"]
+	path = kubernetes
+	url = https://github.com/kubernetes/kubernetes.git
+	branch = release-1.35
+[submodule "cri-dockerd"]
+	path = cri-dockerd
+	url = https://github.com/Mirantis/cri-dockerd.git
+	branch = master
+[submodule "cri-tools"]
+	path = cri-tools
+	url = https://github.com/kubernetes-sigs/cri-tools.git
+	branch = master
+[submodule "cni-plugins"]
+	path = cni-plugins
+	url = https://github.com/containernetworking/plugins.git
+	branch = main
