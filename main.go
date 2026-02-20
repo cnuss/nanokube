@@ -81,6 +81,10 @@ var rootCmd = &cobra.Command{
 			internal.NewScheduler(config),
 		}
 
+		if runtime == internal.RuntimeDocker {
+			components = append(components, internal.NewDocker(config))
+		}
+
 		for _, c := range components {
 			if err := c.Start(ctx); err != nil {
 				return err

@@ -8,8 +8,8 @@
 	branch = release-1.35
 [submodule "cri-dockerd"]
 	path = cri-dockerd
-	url = https://github.com/Mirantis/cri-dockerd.git
-	branch = master
+	url = https://github.com/cnuss/cri-dockerd.git
+	branch = darwin-support
 [submodule "cri-tools"]
 	path = cri-tools
 	url = https://github.com/kubernetes-sigs/cri-tools.git
