@@ -1,7 +1,12 @@
 .PHONY: build clean test submodules run
 
-build:
-	@cd kubernetes && git apply ../patches/kubernetes/001-scheduler-use-cmd-context.patch 2>/dev/null || true
+patch-kubernetes:
+	@cd kubernetes && git reset --hard
+	@cd kubernetes && git apply ../patches/kubernetes.patch
+
+patch: patch-kubernetes
+
+build: patch
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o nanokube .
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 
