@@ -68,26 +68,41 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		etcd := internal.NewEtcd(dataDir, verbose)
-		if err := etcd.Start(ctx); err != nil {
+		// Create config and generate certs
+		config := internal.NewConfig(dataDir, verbose)
+		if err := config.Generate(); err != nil {
 			return err
+		}
+
+		components := []internal.Component{
+			internal.NewEtcd(config),
+			internal.NewAPIServer(config),
+			internal.NewControllerManager(config),
+			internal.NewScheduler(config),
+		}
+
+		for _, c := range components {
+			if err := c.Start(ctx); err != nil {
+				return err
+			}
 		}
 
 		<-ctx.Done()
 		log.Info().Msg("shutting down")
-
-		return etcd.Stop()
+		return nil
 	},
 }
 
 func init() {
-	rootCmd.Flags().BoolVar(&docker, "docker", true, "use Docker as container runtime")
-	rootCmd.Flags().BoolVar(&podman, "podman", false, "use Podman as container runtime")
-	rootCmd.Flags().BoolVar(&crio, "cri-o", false, "use CRI-O as container runtime")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
 	rootCmd.Flags().StringVar(&dataDir, "data", "", "data directory (default: ~/.nanokube)")
 	rootCmd.Flags().BoolVar(&clean, "clean", false, "clean data directory before starting")
-	rootCmd.MarkFlagsMutuallyExclusive("docker", "podman", "cri-o")
+
+	// Runtimes
+	rootCmd.Flags().BoolVar(&docker, "docker", true, "use Docker as container runtime")
+	rootCmd.MarkFlagsMutuallyExclusive(
+		"docker",
+	)
 }
 
 func main() {

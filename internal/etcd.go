@@ -5,33 +5,34 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"time"
 
 	"github.com/rs/zerolog/log"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 type Etcd struct {
-	DataDir string
-	Verbose bool
-	server  *embed.Etcd
+	config *Config
+	server *embed.Etcd
 }
 
-func NewEtcd(dataDir string, verbose bool) *Etcd {
+func NewEtcd(config *Config) *Etcd {
 	return &Etcd{
-		DataDir: dataDir,
-		Verbose: verbose,
+		config: config,
 	}
 }
 
 func (e *Etcd) Start(ctx context.Context) error {
-	log.Info().Str("dataDir", e.DataDir).Msg("starting etcd")
+	log.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
-	cfg.Dir = filepath.Join(e.DataDir, "etcd")
+	cfg.Dir = filepath.Join(e.config.DataDir, "etcd")
 
-	if e.Verbose {
+	if e.config.Verbose {
 		cfg.LogLevel = "info"
 	} else {
 		cfg.LogLevel = "error"
@@ -44,14 +45,28 @@ func (e *Etcd) Start(ctx context.Context) error {
 		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
 	}
 
-	clientURL, _ := url.Parse("http://127.0.0.1:2379")
-	peerURL, _ := url.Parse("http://127.0.0.1:2380")
+	clientURL, _ := url.Parse("https://127.0.0.1:2379")
+	peerURL, _ := url.Parse("https://127.0.0.1:2380")
 
 	cfg.ListenClientUrls = []url.URL{*clientURL}
 	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
 	cfg.ListenPeerUrls = []url.URL{*peerURL}
 	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
 	cfg.InitialCluster = "default=" + peerURL.String()
+
+	// Client TLS
+	cfg.ClientTLSInfo = transport.TLSInfo{
+		CertFile:      e.config.Certs.ServerCert,
+		KeyFile:       e.config.Certs.ServerKey,
+		TrustedCAFile: e.config.Certs.CACert,
+	}
+
+	// Peer TLS
+	cfg.PeerTLSInfo = transport.TLSInfo{
+		CertFile:      e.config.Certs.ServerCert,
+		KeyFile:       e.config.Certs.ServerKey,
+		TrustedCAFile: e.config.Certs.CACert,
+	}
 
 	var err error
 	e.server, err = embed.StartEtcd(cfg)
@@ -61,18 +76,45 @@ func (e *Etcd) Start(ctx context.Context) error {
 
 	select {
 	case <-e.server.Server.ReadyNotify():
-		log.Info().Msg("etcd is ready")
+		log.Info().Msg("etcd server ready")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 
-	return nil
-}
-
-func (e *Etcd) Stop() error {
-	log.Info().Msg("stopping etcd")
-	if e.server != nil {
-		e.server.Close()
+	// Wait for client connectivity
+	tlsInfo := transport.TLSInfo{
+		CertFile:      e.config.Certs.ClientCert,
+		KeyFile:       e.config.Certs.ClientKey,
+		TrustedCAFile: e.config.Certs.CACert,
 	}
-	return nil
+	tlsConfig, err := tlsInfo.ClientConfig()
+	if err != nil {
+		return fmt.Errorf("failed to create tls config: %w", err)
+	}
+
+	client, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"https://127.0.0.1:2379"},
+		TLS:         tlsConfig,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create etcd client: %w", err)
+	}
+	defer client.Close()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
+			_, err := client.Get(ctxTimeout, "health")
+			cancel()
+			if err == nil {
+				log.Info().Msg("etcd is ready")
+				return nil
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
