@@ -53,6 +53,7 @@ var rootCmd = &cobra.Command{
 			internal.NewAPIServer(config),
 			internal.NewControllerManager(config),
 			internal.NewScheduler(config),
+			internal.NewKubelet(config),
 		}
 
 		for _, c := range components {

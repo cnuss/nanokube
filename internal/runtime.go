@@ -18,6 +18,12 @@ const (
 	Podman     RuntimeType = "podman"
 )
 
+type runtimeCandidate struct {
+	kind      RuntimeType
+	socks     []string
+	preflight func() string // returns CRI endpoint, or "" if preflight fails
+}
+
 type Runtime struct {
 	ctx      context.Context
 	once     sync.Once
@@ -25,51 +31,73 @@ type Runtime struct {
 	endpoint string
 }
 
+var candidates = []runtimeCandidate{
+	// Virtual runtimes (checked first)
+	{
+		kind: Docker,
+		socks: []string{
+			"/var/run/docker.sock", "/run/docker.sock",
+			os.Getenv("HOME") + "/.docker/run/docker.sock",
+			os.Getenv("HOME") + "/.colima/default/docker.sock",
+			os.Getenv("HOME") + "/.rd/docker.sock",
+		},
+		preflight: func() string {
+			// Docker requires cri-dockerd as a CRI shim
+			sock := "/var/run/cri-dockerd.sock"
+			if _, err := os.Stat(sock); err != nil {
+				log.Warn().Str("socket", sock).Msg("cri-dockerd not found, skipping docker")
+				return ""
+			}
+			return "unix://" + sock
+		},
+	},
+	{
+		kind: Podman,
+		socks: []string{
+			"/var/run/podman/podman.sock", "/run/podman/podman.sock",
+			os.Getenv("HOME") + "/.local/share/podman/podman.sock",
+			os.Getenv("XDG_RUNTIME_DIR") + "/podman/podman.sock",
+		},
+		// TODO: podman may need a CRI shim
+	},
+	// Native runtimes
+	{kind: Containerd, socks: []string{"/var/run/containerd/containerd.sock"}},
+	{kind: CriDockerd, socks: []string{"/var/run/cri-dockerd.sock"}},
+	{kind: CriO, socks: []string{"/var/run/crio/crio.sock"}},
+}
+
 func NewRuntime(ctx context.Context) *Runtime {
 	r := &Runtime{ctx: ctx}
 	r.detect()
-	log.Info().Str("runtime", r.Name()).Str("socket", r.endpoint).Msg("using container runtime")
+	log.Info().Str("runtime", r.Name()).Str("endpoint", r.endpoint).Msg("using container runtime")
 	return r
-}
-
-var nativeRuntimes = map[RuntimeType]string{
-	Containerd: "/var/run/containerd/containerd.sock",
-	CriDockerd: "/var/run/cri-dockerd.sock",
-	CriO:       "/var/run/crio/crio.sock",
-}
-
-// And include home directories for rootless runtimes
-var virtualRuntimes = map[RuntimeType][]string{
-	Docker: {"/var/run/docker.sock", "/run/docker.sock", os.Getenv("HOME") + "/.docker/run/docker.sock", os.Getenv("HOME") + "/.colima/default/docker.sock", os.Getenv("HOME") + "/.rd/docker.sock"},
-	Podman: {"/var/run/podman/podman.sock", "/run/podman/podman.sock", os.Getenv("HOME") + "/.local/share/podman/podman.sock", os.Getenv("XDG_RUNTIME_DIR") + "/podman/podman.sock"},
 }
 
 func (r *Runtime) detect() {
 	r.once.Do(func() {
-		for kind, socks := range virtualRuntimes {
-			for _, sock := range socks {
-				if _, err := os.Stat(sock); err == nil {
-					r.kind = kind
-					r.endpoint = "unix://" + sock
-					return
+		var checked []string
+		for _, c := range candidates {
+			for _, sock := range c.socks {
+				checked = append(checked, sock)
+				if _, err := os.Stat(sock); err != nil {
+					continue
 				}
-			}
-		}
-		for kind, sock := range nativeRuntimes {
-			if _, err := os.Stat(sock); err == nil {
-				r.kind = kind
+				// Socket exists, run preflight if defined
+				if c.preflight != nil {
+					if endpoint := c.preflight(); endpoint != "" {
+						r.kind = c.kind
+						r.endpoint = endpoint
+						return
+					}
+					// Preflight failed, try next candidate
+					break
+				}
+				r.kind = c.kind
 				r.endpoint = "unix://" + sock
 				return
 			}
 		}
-		socks := make([]string, 0, len(virtualRuntimes)+len(nativeRuntimes))
-		for _, socksList := range virtualRuntimes {
-			socks = append(socks, socksList...)
-		}
-		for _, sock := range nativeRuntimes {
-			socks = append(socks, sock)
-		}
-		log.Fatal().Strs("checked", socks).Msg("no container runtime found")
+		log.Fatal().Strs("checked", checked).Msg("no container runtime found")
 	})
 }
 
@@ -78,20 +106,7 @@ func (r *Runtime) Name() string {
 }
 
 func (r *Runtime) ContainerRuntimeEndpoint() string {
-	switch r.kind {
-	case Docker:
-		// Docker requires cri-dockerd as a CRI shim
-		sock := "/var/run/cri-dockerd.sock"
-		if _, err := os.Stat(sock); err != nil {
-			log.Fatal().Str("socket", sock).Msg("cri-dockerd is required for Docker runtime but not running")
-		}
-		return "unix://" + sock
-	case Podman:
-		// TODO: podman may need a CRI shim
-		return r.endpoint
-	default:
-		return r.endpoint
-	}
+	return r.endpoint
 }
 
 // TODO: return different hostname based on RuntimeType
