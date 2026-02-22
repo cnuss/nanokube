@@ -32,10 +32,6 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 	c.cmd = app.NewControllerManagerCommand()
 	c.cmd.SetContext(ctx)
 
-	// controllers := []string{
-	// 	"*",
-	// }
-
 	// Note: Don't use KubeArgs() here - logging is already configured by apiserver
 	args := []string{
 		"--feature-gates=" + c.config.FeatureGatesString(),
@@ -45,7 +41,6 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
-		// "--controllers=" + strings.Join(controllers, ","),
 		"--use-service-account-credentials=false",
 		// TLS
 		"--tls-cert-file=" + c.config.CertPath,
