@@ -3,6 +3,7 @@ package internal
 import (
 	"crypto/tls"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -30,9 +31,18 @@ func (k *Kubelet) Start() error {
 
 	k.cmd = app.NewKubeletCommand(ctx)
 
-	args := []string{
-		// TODO: flags to be provided
-	}
+	args := append(k.config.KubeArgs(),
+		"--config="+k.config.KubeletConfigPath(),
+		"--kubeconfig="+k.config.KubeconfigPath(),
+		"--root-dir="+k.config.DataDir,
+		"--cert-dir="+k.config.DataDir,
+		"--hostname-override="+k.config.Runtime.Hostname(),
+		"--cluster-domain="+k.config.Runtime.Domain(),
+		"--cluster-dns="+strings.Join(k.config.Runtime.Nameservers(), ","),
+		// TLS
+		"--tls-cert-file="+k.config.Certs.CertPath(),
+		"--tls-private-key-file="+k.config.Certs.KeyPath(),
+	)
 
 	k.cmd.SetArgs(args)
 

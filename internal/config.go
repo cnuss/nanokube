@@ -32,6 +32,7 @@ type Config struct {
 	DataDir      string
 	Verbose      bool
 	Certs        *Certs
+	Runtime      *Runtime
 	FeatureGates []string
 	Kubelet      kubeletconfig.KubeletConfiguration
 }
@@ -39,6 +40,7 @@ type Config struct {
 type Certs struct {
 	Name    string
 	DataDir string
+	Runtime *Runtime
 	CertPEM []byte
 	KeyPEM  []byte
 	once    sync.Once
@@ -78,11 +80,11 @@ func (c *Certs) generate() {
 			BasicConstraintsValid: true,
 			IsCA:                  true,
 			DNSNames: []string{
-				"localhost",
+				c.Runtime.Hostname(),
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
-				"kubernetes.default.svc.cluster.local",
+				"kubernetes.default.svc." + c.Runtime.Domain(),
 			},
 			IPAddresses: []net.IP{
 				net.ParseIP("127.0.0.1"),
@@ -149,7 +151,8 @@ func NewConfig(ctx context.Context, name, dataDir string, verbose, clean bool) *
 		Name:    name,
 		DataDir: dataDir,
 		Verbose: verbose,
-		Certs:   &Certs{Name: name, DataDir: dataDir},
+		Certs:   &Certs{Name: name, DataDir: dataDir, Runtime: runtime},
+		Runtime: runtime,
 		FeatureGates: []string{
 			"APIServerIdentity=false",
 			"RuntimeClassInImageCriApi=false",
