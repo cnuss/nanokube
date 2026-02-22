@@ -15,13 +15,9 @@ import (
 )
 
 var (
-	docker  bool
-	podman  bool
-	crio    bool
 	verbose bool
 	clean   bool
 	dataDir string
-	runtime internal.Runtime
 )
 
 var rootCmd = &cobra.Command{
@@ -50,20 +46,11 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("failed to create data dir: %w", err)
 		}
 
-		switch {
-		case podman:
-			return fmt.Errorf("podman is not supported")
-		case crio:
-			return fmt.Errorf("cri-o is not supported")
-		case docker:
-			runtime = internal.RuntimeDocker
-		}
-
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg("debug logging enabled")
-		log.Info().Str("runtime", runtime.String()).Str("data", dataDir).Msg("starting nanokube")
+		log.Info().Str("data", dataDir).Msg("starting nanokube")
 
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
@@ -79,10 +66,6 @@ var rootCmd = &cobra.Command{
 			internal.NewAPIServer(config),
 			internal.NewControllerManager(config),
 			internal.NewScheduler(config),
-		}
-
-		if runtime == internal.RuntimeDocker {
-			components = append(components, internal.NewDocker(config))
 		}
 
 		for _, c := range components {
@@ -101,12 +84,6 @@ func init() {
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
 	rootCmd.Flags().StringVar(&dataDir, "data", "", "data directory (default: ~/.nanokube)")
 	rootCmd.Flags().BoolVar(&clean, "clean", false, "clean data directory before starting")
-
-	// Runtimes
-	rootCmd.Flags().BoolVar(&docker, "docker", true, "use Docker as container runtime")
-	rootCmd.MarkFlagsMutuallyExclusive(
-		"docker",
-	)
 }
 
 func main() {
