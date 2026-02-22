@@ -33,16 +33,16 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 	args := []string{
 		"--feature-gates=" + s.config.FeatureGatesString(),
-		"--kubeconfig=" + s.config.Certs.Kubeconfig,
-		"--authentication-kubeconfig=" + s.config.Certs.Kubeconfig,
-		"--authorization-kubeconfig=" + s.config.Certs.Kubeconfig,
+		"--kubeconfig=" + s.config.Kubeconfig,
+		"--authentication-kubeconfig=" + s.config.Kubeconfig,
+		"--authorization-kubeconfig=" + s.config.Kubeconfig,
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
 		// TLS
-		"--tls-cert-file=" + s.config.Certs.ServerCert,
-		"--tls-private-key-file=" + s.config.Certs.ServerKey,
-		"--client-ca-file=" + s.config.Certs.CACert,
+		"--tls-cert-file=" + s.config.CertPath,
+		"--tls-private-key-file=" + s.config.KeyPath,
+		"--client-ca-file=" + s.config.CertPath,
 	}
 
 	s.cmd.SetArgs(args)

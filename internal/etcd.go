@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -56,16 +56,16 @@ func (e *Etcd) Start(ctx context.Context) error {
 
 	// Client TLS
 	cfg.ClientTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.Certs.ServerCert,
-		KeyFile:       e.config.Certs.ServerKey,
-		TrustedCAFile: e.config.Certs.CACert,
+		CertFile:      e.config.CertPath,
+		KeyFile:       e.config.KeyPath,
+		TrustedCAFile: e.config.CertPath,
 	}
 
 	// Peer TLS
 	cfg.PeerTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.Certs.ServerCert,
-		KeyFile:       e.config.Certs.ServerKey,
-		TrustedCAFile: e.config.Certs.CACert,
+		CertFile:      e.config.CertPath,
+		KeyFile:       e.config.KeyPath,
+		TrustedCAFile: e.config.CertPath,
 	}
 
 	var err error
@@ -83,9 +83,9 @@ func (e *Etcd) Start(ctx context.Context) error {
 
 	// Wait for client connectivity
 	tlsInfo := transport.TLSInfo{
-		CertFile:      e.config.Certs.ClientCert,
-		KeyFile:       e.config.Certs.ClientKey,
-		TrustedCAFile: e.config.Certs.CACert,
+		CertFile:      e.config.CertPath,
+		KeyFile:       e.config.KeyPath,
+		TrustedCAFile: e.config.CertPath,
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {

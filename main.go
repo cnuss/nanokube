@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	name    string
 	verbose bool
 	clean   bool
 	dataDir string
@@ -56,7 +57,7 @@ var rootCmd = &cobra.Command{
 		defer stop()
 
 		// Create config and generate certs
-		config := internal.NewConfig(dataDir, verbose)
+		config := internal.NewConfig(name, dataDir, verbose)
 		if err := config.Generate(); err != nil {
 			return err
 		}
@@ -81,6 +82,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.Flags().StringVar(&name, "name", "nanokube", "cluster name")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
 	rootCmd.Flags().StringVar(&dataDir, "data", "", "data directory (default: ~/.nanokube)")
 	rootCmd.Flags().BoolVar(&clean, "clean", false, "clean data directory before starting")

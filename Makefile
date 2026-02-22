@@ -1,4 +1,4 @@
-.PHONY: build clean test submodules run
+.PHONY: build clean test submodules run fmt
 
 patch-kubernetes:
 	@cd kubernetes && git reset --hard
@@ -19,5 +19,8 @@ test:
 submodules:
 	git submodule update --init --recursive
 
-run: build
+fmt:
+	gofmt -w .
+
+run: fmt build
 	./nanokube --clean

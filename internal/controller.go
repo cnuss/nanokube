@@ -70,24 +70,24 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 	// Note: Don't use KubeArgs() here - logging is already configured by apiserver
 	args := []string{
 		"--feature-gates=" + c.config.FeatureGatesString(),
-		"--kubeconfig=" + c.config.Certs.Kubeconfig,
-		"--authentication-kubeconfig=" + c.config.Certs.Kubeconfig,
-		"--authorization-kubeconfig=" + c.config.Certs.Kubeconfig,
+		"--kubeconfig=" + c.config.Kubeconfig,
+		"--authentication-kubeconfig=" + c.config.Kubeconfig,
+		"--authorization-kubeconfig=" + c.config.Kubeconfig,
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
 		"--controllers=" + strings.Join(controllers, ","),
 		"--use-service-account-credentials=false",
 		// TLS
-		"--tls-cert-file=" + c.config.Certs.ServerCert,
-		"--tls-private-key-file=" + c.config.Certs.ServerKey,
-		"--client-ca-file=" + c.config.Certs.CACert,
+		"--tls-cert-file=" + c.config.CertPath,
+		"--tls-private-key-file=" + c.config.KeyPath,
+		"--client-ca-file=" + c.config.CertPath,
 		// Service account
-		"--service-account-private-key-file=" + c.config.Certs.ClientKey,
-		"--root-ca-file=" + c.config.Certs.CACert,
+		"--service-account-private-key-file=" + c.config.KeyPath,
+		"--root-ca-file=" + c.config.CertPath,
 		// Cluster
-		"--cluster-signing-cert-file=" + c.config.Certs.CACert,
-		"--cluster-signing-key-file=" + c.config.Certs.CAKey,
+		"--cluster-signing-cert-file=" + c.config.CertPath,
+		"--cluster-signing-key-file=" + c.config.KeyPath,
 	}
 
 	c.cmd.SetArgs(args)
