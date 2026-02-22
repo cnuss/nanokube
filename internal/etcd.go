@@ -26,7 +26,8 @@ func NewEtcd(config *Config) *Etcd {
 	}
 }
 
-func (e *Etcd) Start(ctx context.Context) error {
+func (e *Etcd) Start() error {
+	ctx := e.config.ctx
 	log.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
@@ -56,16 +57,16 @@ func (e *Etcd) Start(ctx context.Context) error {
 
 	// Client TLS
 	cfg.ClientTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.CertPath,
-		KeyFile:       e.config.KeyPath,
-		TrustedCAFile: e.config.CertPath,
+		CertFile:      e.config.Certs.CertPath(),
+		KeyFile:       e.config.Certs.KeyPath(),
+		TrustedCAFile: e.config.Certs.CertPath(),
 	}
 
 	// Peer TLS
 	cfg.PeerTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.CertPath,
-		KeyFile:       e.config.KeyPath,
-		TrustedCAFile: e.config.CertPath,
+		CertFile:      e.config.Certs.CertPath(),
+		KeyFile:       e.config.Certs.KeyPath(),
+		TrustedCAFile: e.config.Certs.CertPath(),
 	}
 
 	var err error
@@ -83,9 +84,9 @@ func (e *Etcd) Start(ctx context.Context) error {
 
 	// Wait for client connectivity
 	tlsInfo := transport.TLSInfo{
-		CertFile:      e.config.CertPath,
-		KeyFile:       e.config.KeyPath,
-		TrustedCAFile: e.config.CertPath,
+		CertFile:      e.config.Certs.CertPath(),
+		KeyFile:       e.config.Certs.KeyPath(),
+		TrustedCAFile: e.config.Certs.CertPath(),
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {

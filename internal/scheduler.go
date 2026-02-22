@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
@@ -23,7 +22,8 @@ func NewScheduler(config *Config) *Scheduler {
 	}
 }
 
-func (s *Scheduler) Start(ctx context.Context) error {
+func (s *Scheduler) Start() error {
+	ctx := s.config.ctx
 	log.Info().Msg("starting scheduler")
 
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
@@ -31,19 +31,18 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.cmd = app.NewSchedulerCommand()
 	s.cmd.SetContext(ctx)
 
-	args := []string{
-		"--feature-gates=" + s.config.FeatureGatesString(),
-		"--kubeconfig=" + s.config.Kubeconfig,
-		"--authentication-kubeconfig=" + s.config.Kubeconfig,
-		"--authorization-kubeconfig=" + s.config.Kubeconfig,
+	args := append(s.config.KubeArgs(),
+		"--kubeconfig="+s.config.KubeconfigPath(),
+		"--authentication-kubeconfig="+s.config.KubeconfigPath(),
+		"--authorization-kubeconfig="+s.config.KubeconfigPath(),
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
 		// TLS
-		"--tls-cert-file=" + s.config.CertPath,
-		"--tls-private-key-file=" + s.config.KeyPath,
-		"--client-ca-file=" + s.config.CertPath,
-	}
+		"--tls-cert-file="+s.config.Certs.CertPath(),
+		"--tls-private-key-file="+s.config.Certs.KeyPath(),
+		"--client-ca-file="+s.config.Certs.CertPath(),
+	)
 
 	s.cmd.SetArgs(args)
 

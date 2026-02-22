@@ -46,10 +46,7 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		config := internal.NewConfig(name, dataDir, verbose, clean)
-		if err := config.Generate(); err != nil {
-			return err
-		}
+		config := internal.NewConfig(ctx, name, dataDir, verbose, clean)
 
 		components := []internal.Component{
 			internal.NewEtcd(config),
@@ -59,7 +56,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		for _, c := range components {
-			if err := c.Start(ctx); err != nil {
+			if err := c.Start(); err != nil {
 				return err
 			}
 		}

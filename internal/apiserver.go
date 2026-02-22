@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
@@ -22,7 +21,8 @@ func NewAPIServer(config *Config) *APIServer {
 	}
 }
 
-func (a *APIServer) Start(ctx context.Context) error {
+func (a *APIServer) Start() error {
+	ctx := a.config.ctx
 	log.Info().Str("dataDir", a.config.DataDir).Msg("starting apiserver")
 
 	/*
@@ -43,9 +43,9 @@ func (a *APIServer) Start(ctx context.Context) error {
 		"--advertise-address=127.0.0.1",
 		"--external-hostname=localhost",
 		"--etcd-servers=https://127.0.0.1:2379",
-		"--etcd-cafile="+a.config.CertPath,
-		"--etcd-certfile="+a.config.CertPath,
-		"--etcd-keyfile="+a.config.KeyPath,
+		"--etcd-cafile="+a.config.Certs.CertPath(),
+		"--etcd-certfile="+a.config.Certs.CertPath(),
+		"--etcd-keyfile="+a.config.Certs.KeyPath(),
 		"--service-account-issuer=https://kubernetes.default.svc.cluster.local",
 		"--allow-privileged=true",
 		"--authorization-mode=Node,RBAC",
@@ -57,15 +57,15 @@ func (a *APIServer) Start(ctx context.Context) error {
 		"--watch-cache=false",
 		"--shutdown-delay-duration=0s",
 		// TLS
-		"--tls-cert-file="+a.config.CertPath,
-		"--tls-private-key-file="+a.config.KeyPath,
-		"--client-ca-file="+a.config.CertPath,
+		"--tls-cert-file="+a.config.Certs.CertPath(),
+		"--tls-private-key-file="+a.config.Certs.KeyPath(),
+		"--client-ca-file="+a.config.Certs.CertPath(),
 		// Service account
-		"--service-account-key-file="+a.config.CertPath,
-		"--service-account-signing-key-file="+a.config.KeyPath,
+		"--service-account-key-file="+a.config.Certs.CertPath(),
+		"--service-account-signing-key-file="+a.config.Certs.KeyPath(),
 		// Kubelet
-		"--kubelet-client-certificate="+a.config.CertPath,
-		"--kubelet-client-key="+a.config.KeyPath,
+		"--kubelet-client-certificate="+a.config.Certs.CertPath(),
+		"--kubelet-client-key="+a.config.Certs.KeyPath(),
 	)
 
 	a.cmd.SetArgs(args)

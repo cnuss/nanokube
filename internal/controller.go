@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
@@ -23,7 +22,8 @@ func NewControllerManager(config *Config) *ControllerManager {
 	}
 }
 
-func (c *ControllerManager) Start(ctx context.Context) error {
+func (c *ControllerManager) Start() error {
+	ctx := c.config.ctx
 	log.Info().Msg("starting controller-manager")
 
 	// Allow logging reconfiguration since apiserver already configured it
@@ -32,27 +32,25 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 	c.cmd = app.NewControllerManagerCommand()
 	c.cmd.SetContext(ctx)
 
-	// Note: Don't use KubeArgs() here - logging is already configured by apiserver
-	args := []string{
-		"--feature-gates=" + c.config.FeatureGatesString(),
-		"--kubeconfig=" + c.config.Kubeconfig,
-		"--authentication-kubeconfig=" + c.config.Kubeconfig,
-		"--authorization-kubeconfig=" + c.config.Kubeconfig,
+	args := append(c.config.KubeArgs(),
+		"--kubeconfig="+c.config.KubeconfigPath(),
+		"--authentication-kubeconfig="+c.config.KubeconfigPath(),
+		"--authorization-kubeconfig="+c.config.KubeconfigPath(),
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
 		"--use-service-account-credentials=false",
 		// TLS
-		"--tls-cert-file=" + c.config.CertPath,
-		"--tls-private-key-file=" + c.config.KeyPath,
-		"--client-ca-file=" + c.config.CertPath,
+		"--tls-cert-file="+c.config.Certs.CertPath(),
+		"--tls-private-key-file="+c.config.Certs.KeyPath(),
+		"--client-ca-file="+c.config.Certs.CertPath(),
 		// Service account
-		"--service-account-private-key-file=" + c.config.KeyPath,
-		"--root-ca-file=" + c.config.CertPath,
+		"--service-account-private-key-file="+c.config.Certs.KeyPath(),
+		"--root-ca-file="+c.config.Certs.CertPath(),
 		// Cluster
-		"--cluster-signing-cert-file=" + c.config.CertPath,
-		"--cluster-signing-key-file=" + c.config.KeyPath,
-	}
+		"--cluster-signing-cert-file="+c.config.Certs.CertPath(),
+		"--cluster-signing-key-file="+c.config.Certs.KeyPath(),
+	)
 
 	c.cmd.SetArgs(args)
 
