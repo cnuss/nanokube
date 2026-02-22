@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -33,39 +32,9 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 	c.cmd = app.NewControllerManagerCommand()
 	c.cmd.SetContext(ctx)
 
-	controllers := []string{
-		// Garbage collection
-		"garbage-collector-controller",
-		"pod-garbage-collector-controller",
-		"storageversion-garbage-collector-controller",
-		// Cleanup / TTL
-		"ttl-controller",
-		"ttl-after-finished-controller",
-		"legacy-serviceaccount-token-cleaner-controller",
-		// Namespace lifecycle
-		"namespace-controller",
-		// RBAC
-		"clusterrole-aggregation-controller",
-		// Service accounts
-		"serviceaccount-controller",
-		// Certificates
-		"certificatesigningrequest-signing-controller",
-		"certificatesigningrequest-approving-controller",
-		"certificatesigningrequest-cleaner-controller",
-		// Node management
-		"node-lifecycle-controller",
-		"taint-eviction-controller",
-		// Core workloads
-		"deployment-controller",
-		"replicaset-controller",
-		"job-controller",
-		"cronjob-controller",
-		"daemonset-controller",
-		"statefulset-controller",
-		// Service & endpoint management
-		"root-ca-certificate-publisher-controller",
-		"serviceaccount-token-controller",
-	}
+	// controllers := []string{
+	// 	"*",
+	// }
 
 	// Note: Don't use KubeArgs() here - logging is already configured by apiserver
 	args := []string{
@@ -76,7 +45,7 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
-		"--controllers=" + strings.Join(controllers, ","),
+		// "--controllers=" + strings.Join(controllers, ","),
 		"--use-service-account-credentials=false",
 		// TLS
 		"--tls-cert-file=" + c.config.CertPath,

@@ -37,16 +37,6 @@ var rootCmd = &cobra.Command{
 			dataDir = filepath.Join(home, ".nanokube")
 		}
 
-		if clean {
-			if err := os.RemoveAll(dataDir); err != nil {
-				return fmt.Errorf("failed to clean data dir: %w", err)
-			}
-		}
-
-		if err := os.MkdirAll(dataDir, 0755); err != nil {
-			return fmt.Errorf("failed to create data dir: %w", err)
-		}
-
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,8 +46,7 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		// Create config and generate certs
-		config := internal.NewConfig(name, dataDir, verbose)
+		config := internal.NewConfig(name, dataDir, verbose, clean)
 		if err := config.Generate(); err != nil {
 			return err
 		}

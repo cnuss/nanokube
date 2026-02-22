@@ -30,7 +30,12 @@ type Config struct {
 	FeatureGates []string
 }
 
-func NewConfig(name, dataDir string, verbose bool) *Config {
+func NewConfig(name, dataDir string, verbose, clean bool) *Config {
+	if clean {
+		os.RemoveAll(dataDir)
+	}
+	os.MkdirAll(dataDir, 0755)
+
 	return &Config{
 		Name:       name,
 		DataDir:    dataDir,
@@ -77,7 +82,7 @@ func (c *Config) Generate() error {
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
 			Organization: []string{"system:masters"},
-			CommonName:   c.Name + "-admin",
+			CommonName:   c.Name,
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
@@ -156,14 +161,14 @@ func (c *Config) writeKubeconfig(certDER []byte, key *ecdsa.PrivateKey) error {
 		CertificateAuthorityData: certPEM,
 	}
 
-	config.AuthInfos[c.Name+"-admin"] = &clientcmdapi.AuthInfo{
+	config.AuthInfos[c.Name] = &clientcmdapi.AuthInfo{
 		ClientCertificateData: certPEM,
 		ClientKeyData:         keyPEM,
 	}
 
 	config.Contexts[c.Name] = &clientcmdapi.Context{
 		Cluster:  c.Name,
-		AuthInfo: c.Name + "-admin",
+		AuthInfo: c.Name,
 	}
 
 	config.CurrentContext = c.Name
