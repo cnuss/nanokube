@@ -36,13 +36,21 @@ nanokube auto-detects the container runtime by probing for sockets:
 
 If no runtime is found, nanokube starts with stub implementations (useful for development/testing).
 
-## Building
+## Install
 
 ```bash
+go install github.com/cnuss/nanokube@latest
+```
+
+Or build from source:
+
+```bash
+git clone --recurse-submodules https://github.com/cnuss/nanokube.git
+cd nanokube
 make build
 ```
 
-Requires Go 1.25+ and the Kubernetes source as a git submodule.
+Requires Go 1.25+.
 
 ## License
 
