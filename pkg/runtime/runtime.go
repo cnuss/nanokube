@@ -157,6 +157,11 @@ func (r *Runtime) ContainerRuntimeEndpoint() string {
 	return r.Endpoint
 }
 
+// SetCRIEndpoint overrides the container runtime endpoint with a CRI socket.
+func (r *Runtime) SetCRIEndpoint(endpoint string) {
+	r.Endpoint = endpoint
+}
+
 func (r *Runtime) Stop() {
 }
 

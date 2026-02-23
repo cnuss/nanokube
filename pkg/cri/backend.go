@@ -1,0 +1,68 @@
+package cri
+
+import (
+	"context"
+	"time"
+
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+)
+
+// Backend abstracts a container engine (Docker, Podman) behind the CRI interface.
+type Backend interface {
+	// Lifecycle
+	Init(ctx context.Context) error
+	Close() error
+
+	// Version / Status
+	Version(ctx context.Context) (*runtimeapi.VersionResponse, error)
+	Status(ctx context.Context, verbose bool) (*runtimeapi.StatusResponse, error)
+	UpdateRuntimeConfig(ctx context.Context, config *runtimeapi.RuntimeConfig) error
+	RuntimeConfig(ctx context.Context) (*runtimeapi.RuntimeConfigResponse, error)
+
+	// Pod Sandbox
+	RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandboxConfig, runtimeHandler string) (string, error)
+	StopPodSandbox(ctx context.Context, podSandboxID string) error
+	RemovePodSandbox(ctx context.Context, podSandboxID string) error
+	PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error)
+	ListPodSandbox(ctx context.Context, filter *runtimeapi.PodSandboxFilter) ([]*runtimeapi.PodSandbox, error)
+
+	// Container
+	CreateContainer(ctx context.Context, podSandboxID string, config *runtimeapi.ContainerConfig, sandboxConfig *runtimeapi.PodSandboxConfig) (string, error)
+	StartContainer(ctx context.Context, containerID string) error
+	StopContainer(ctx context.Context, containerID string, timeout int64) error
+	RemoveContainer(ctx context.Context, containerID string) error
+	ListContainers(ctx context.Context, filter *runtimeapi.ContainerFilter) ([]*runtimeapi.Container, error)
+	ContainerStatus(ctx context.Context, containerID string, verbose bool) (*runtimeapi.ContainerStatusResponse, error)
+	UpdateContainerResources(ctx context.Context, containerID string, resources *runtimeapi.ContainerResources) error
+	ReopenContainerLog(ctx context.Context, containerID string) error
+	ExecSync(ctx context.Context, containerID string, cmd []string, timeout time.Duration) ([]byte, []byte, error)
+	Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error)
+	Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error)
+	PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error)
+
+	// Stats
+	ContainerStats(ctx context.Context, containerID string) (*runtimeapi.ContainerStats, error)
+	ListContainerStats(ctx context.Context, filter *runtimeapi.ContainerStatsFilter) ([]*runtimeapi.ContainerStats, error)
+	PodSandboxStats(ctx context.Context, podSandboxID string) (*runtimeapi.PodSandboxStats, error)
+	ListPodSandboxStats(ctx context.Context, filter *runtimeapi.PodSandboxStatsFilter) ([]*runtimeapi.PodSandboxStats, error)
+
+	// Metrics
+	ListMetricDescriptors(ctx context.Context) ([]*runtimeapi.MetricDescriptor, error)
+	ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodSandboxMetrics, error)
+
+	// Checkpoint
+	CheckpointContainer(ctx context.Context, containerID string, location string, timeout int64) error
+
+	// Container Events
+	GetContainerEvents(ctx context.Context, eventsCh chan *runtimeapi.ContainerEventResponse) error
+
+	// Resource updates
+	UpdatePodSandboxResources(ctx context.Context, req *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error)
+
+	// Image
+	ListImages(ctx context.Context, filter *runtimeapi.ImageFilter) ([]*runtimeapi.Image, error)
+	ImageStatus(ctx context.Context, image *runtimeapi.ImageSpec, verbose bool) (*runtimeapi.ImageStatusResponse, error)
+	PullImage(ctx context.Context, image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig, sandbox *runtimeapi.PodSandboxConfig) (string, error)
+	RemoveImage(ctx context.Context, image *runtimeapi.ImageSpec) error
+	ImageFsInfo(ctx context.Context) (*runtimeapi.ImageFsInfoResponse, error)
+}

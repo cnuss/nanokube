@@ -10,6 +10,8 @@ import (
 
 	"github.com/cnuss/nanokube/internal"
 	"github.com/cnuss/nanokube/pkg/config"
+	"github.com/cnuss/nanokube/pkg/cri"
+	"github.com/cnuss/nanokube/pkg/cri/docker"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -51,13 +53,26 @@ var rootCmd = &cobra.Command{
 
 		cfg := config.NewConfig(ctx, name, dataDir, verbose, clean)
 
+		// Set up CRI server if a Docker socket is available
+		var criServer *cri.Server
+		if dockerSock := cri.DetectDockerSocket(); dockerSock != "" {
+			backend := docker.New(dockerSock)
+			criServer = cri.NewServer(dataDir, backend)
+			cfg.Runtime.SetCRIEndpoint("unix://" + criServer.SocketPath())
+		}
+
 		components := []internal.Component{
 			internal.NewEtcd(cfg),
 			internal.NewAPIServer(cfg),
 			internal.NewControllerManager(cfg),
 			internal.NewScheduler(cfg),
-			internal.NewKubelet(cfg),
 		}
+
+		if criServer != nil {
+			components = append(components, internal.NewCRI(cfg, criServer))
+		}
+
+		components = append(components, internal.NewKubelet(cfg))
 
 		for _, c := range components {
 			if err := c.Start(); err != nil {
