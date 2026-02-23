@@ -5,24 +5,25 @@ import (
 	"net/http"
 	"time"
 
+	pkgconfig "github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 )
 
 type APIServer struct {
-	config *Config
+	config *pkgconfig.Config
 	cmd    *cobra.Command
 }
 
-func NewAPIServer(config *Config) *APIServer {
+func NewAPIServer(config *pkgconfig.Config) *APIServer {
 	return &APIServer{
 		config: config,
 	}
 }
 
 func (a *APIServer) Start() error {
-	ctx := a.config.ctx
+	ctx := a.config.Ctx
 	log.Info().Str("dataDir", a.config.DataDir).Msg("starting apiserver")
 
 	/*
@@ -36,6 +37,8 @@ func (a *APIServer) Start() error {
 	*/
 
 	a.cmd = app.NewAPIServerCommand()
+	a.cmd.SilenceUsage = true
+	a.cmd.SilenceErrors = true
 	a.cmd.SetContext(ctx)
 
 	args := append(a.config.KubeArgs(),

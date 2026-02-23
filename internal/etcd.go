@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	pkgconfig "github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog/log"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -16,18 +17,18 @@ import (
 )
 
 type Etcd struct {
-	config *Config
+	config *pkgconfig.Config
 	server *embed.Etcd
 }
 
-func NewEtcd(config *Config) *Etcd {
+func NewEtcd(config *pkgconfig.Config) *Etcd {
 	return &Etcd{
 		config: config,
 	}
 }
 
 func (e *Etcd) Start() error {
-	ctx := e.config.ctx
+	ctx := e.config.Ctx
 	log.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()

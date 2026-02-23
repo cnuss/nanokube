@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	pkgconfig "github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -12,24 +13,26 @@ import (
 )
 
 type ControllerManager struct {
-	config *Config
+	config *pkgconfig.Config
 	cmd    *cobra.Command
 }
 
-func NewControllerManager(config *Config) *ControllerManager {
+func NewControllerManager(config *pkgconfig.Config) *ControllerManager {
 	return &ControllerManager{
 		config: config,
 	}
 }
 
 func (c *ControllerManager) Start() error {
-	ctx := c.config.ctx
+	ctx := c.config.Ctx
 	log.Info().Msg("starting controller-manager")
 
 	// Allow logging reconfiguration since apiserver already configured it
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 
 	c.cmd = app.NewControllerManagerCommand()
+	c.cmd.SilenceUsage = true
+	c.cmd.SilenceErrors = true
 	c.cmd.SetContext(ctx)
 
 	args := append(c.config.KubeArgs(),

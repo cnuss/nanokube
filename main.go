@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/cnuss/nanokube/internal"
+	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -22,8 +23,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "nanokube [flags]",
-	Short: "A minimal Kubernetes distribution",
+	Use:           "nanokube [flags]",
+	Short:         "A minimal Kubernetes distribution",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if verbose {
 			zerolog.SetGlobalLevel(zerolog.DebugLevel)
@@ -46,14 +49,14 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		config := internal.NewConfig(ctx, name, dataDir, verbose, clean)
+		cfg := config.NewConfig(ctx, name, dataDir, verbose, clean)
 
 		components := []internal.Component{
-			internal.NewEtcd(config),
-			internal.NewAPIServer(config),
-			internal.NewControllerManager(config),
-			internal.NewScheduler(config),
-			internal.NewKubelet(config),
+			internal.NewEtcd(cfg),
+			internal.NewAPIServer(cfg),
+			internal.NewControllerManager(cfg),
+			internal.NewScheduler(cfg),
+			internal.NewKubelet(cfg),
 		}
 
 		for _, c := range components {
@@ -81,6 +84,8 @@ func main() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		if err.Error() != "context canceled" {
+			log.Fatal().Err(err).Msg("fatal error")
+		}
 	}
 }

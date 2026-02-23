@@ -1,8 +1,12 @@
-.PHONY: build clean test submodules run fmt
+.PHONY: build clean test submodules run fmt patch-save
 
 patch-kubernetes:
 	@cd kubernetes && git reset --hard
 	@cd kubernetes && git apply ../patches/kubernetes.patch
+
+patch-save:
+	@cd kubernetes && git diff > ../patches/kubernetes.patch
+	@echo "Patch saved to patches/kubernetes.patch"
 
 patch: patch-kubernetes
 

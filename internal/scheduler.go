@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	pkgconfig "github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -12,23 +13,25 @@ import (
 )
 
 type Scheduler struct {
-	config *Config
+	config *pkgconfig.Config
 	cmd    *cobra.Command
 }
 
-func NewScheduler(config *Config) *Scheduler {
+func NewScheduler(config *pkgconfig.Config) *Scheduler {
 	return &Scheduler{
 		config: config,
 	}
 }
 
 func (s *Scheduler) Start() error {
-	ctx := s.config.ctx
+	ctx := s.config.Ctx
 	log.Info().Msg("starting scheduler")
 
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 
 	s.cmd = app.NewSchedulerCommand()
+	s.cmd.SilenceUsage = true
+	s.cmd.SilenceErrors = true
 	s.cmd.SetContext(ctx)
 
 	args := append(s.config.KubeArgs(),
