@@ -5,10 +5,9 @@ A single binary that runs all Kubernetes control plane components in one process
 ## Quick Start
 
 ```bash
-make run
+go install github.com/cnuss/nanokube@latest
+nanokube
 ```
-
-This builds and runs nanokube with auto-detected container runtime. Data is stored in `~/.nanokube` by default.
 
 ## Usage
 
