@@ -6,11 +6,13 @@ import (
 
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 type runtimeService struct {
 	runtimeapi.UnimplementedRuntimeServiceServer
-	backend Backend
+	backend      Backend
+	streamServer streaming.Server
 }
 
 func (s *runtimeService) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
@@ -122,15 +124,24 @@ func (s *runtimeService) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncR
 }
 
 func (s *runtimeService) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
-	return s.backend.Exec(ctx, req)
+	if s.streamServer == nil {
+		return &runtimeapi.ExecResponse{}, nil
+	}
+	return s.streamServer.GetExec(req)
 }
 
 func (s *runtimeService) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
-	return s.backend.Attach(ctx, req)
+	if s.streamServer == nil {
+		return &runtimeapi.AttachResponse{}, nil
+	}
+	return s.streamServer.GetAttach(req)
 }
 
 func (s *runtimeService) PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
-	return s.backend.PortForward(ctx, req)
+	if s.streamServer == nil {
+		return &runtimeapi.PortForwardResponse{}, nil
+	}
+	return s.streamServer.GetPortForward(req)
 }
 
 func (s *runtimeService) ContainerStats(ctx context.Context, req *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {

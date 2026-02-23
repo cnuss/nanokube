@@ -57,7 +57,8 @@ var rootCmd = &cobra.Command{
 		var criServer *cri.Server
 		if dockerSock := cri.DetectDockerSocket(); dockerSock != "" {
 			backend := docker.New(dockerSock)
-			criServer = cri.NewServer(dataDir, backend)
+			streamRuntime := docker.NewStreamingRuntime(backend)
+			criServer = cri.NewServer(dataDir, backend, streamRuntime)
 			cfg.Runtime.SetCRIEndpoint("unix://" + criServer.SocketPath())
 		}
 

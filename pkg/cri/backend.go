@@ -36,9 +36,6 @@ type Backend interface {
 	UpdateContainerResources(ctx context.Context, containerID string, resources *runtimeapi.ContainerResources) error
 	ReopenContainerLog(ctx context.Context, containerID string) error
 	ExecSync(ctx context.Context, containerID string, cmd []string, timeout time.Duration) ([]byte, []byte, error)
-	Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error)
-	Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error)
-	PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error)
 
 	// Stats
 	ContainerStats(ctx context.Context, containerID string) (*runtimeapi.ContainerStats, error)

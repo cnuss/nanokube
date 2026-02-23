@@ -353,17 +353,6 @@ func (b *Backend) ExecSync(ctx context.Context, containerID string, cmd []string
 	return stdout.Bytes(), stderr.Bytes(), nil
 }
 
-func (b *Backend) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
-	return &runtimeapi.ExecResponse{}, nil
-}
-
-func (b *Backend) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
-	return &runtimeapi.AttachResponse{}, nil
-}
-
-func (b *Backend) PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
-	return &runtimeapi.PortForwardResponse{}, nil
-}
 
 func (b *Backend) ContainerStats(ctx context.Context, containerID string) (*runtimeapi.ContainerStats, error) {
 	resp, err := b.client.ContainerStatsOneShot(ctx, containerID)
