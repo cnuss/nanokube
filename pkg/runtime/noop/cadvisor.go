@@ -5,6 +5,8 @@ import (
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 )
 
@@ -22,9 +24,17 @@ func (s *Cadvisor) GetRequestedContainersInfo(string, cadvisorapiv2.RequestOptio
 	return nil, nil
 }
 func (s *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
+	cores, _ := cpu.Counts(true)
+	if cores == 0 {
+		cores = 1
+	}
+	var memory uint64
+	if v, err := mem.VirtualMemory(); err == nil {
+		memory = v.Total
+	}
 	return &cadvisorapi.MachineInfo{
-		NumCores:       0,
-		MemoryCapacity: 0,
+		NumCores:       cores,
+		MemoryCapacity: memory,
 	}, nil
 }
 func (s *Cadvisor) VersionInfo() (*cadvisorapi.VersionInfo, error) {

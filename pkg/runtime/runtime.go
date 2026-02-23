@@ -177,17 +177,21 @@ func (r *Runtime) Nameservers() []string {
 }
 
 func (r *Runtime) Cadvisor() cadvisor.Interface {
+	// TODO: maybe need to initialize based on type
 	return r.Candidate.Cadvisor
 }
 
 func (r *Runtime) ImageService() internalapi.ImageManagerService {
+	// TODO: maybe need to initialize based on type
 	return r.Candidate.ImageService
 }
 
 func (r *Runtime) RuntimeService() internalapi.RuntimeService {
+	// TODO: maybe need to initialize based on type
 	return r.Candidate.RuntimeService
 }
 
 func (r *Runtime) ContainerManager() cm.ContainerManager {
+	// TODO: maybe need to initialize based on type
 	return r.Candidate.ContainerManager
 }
