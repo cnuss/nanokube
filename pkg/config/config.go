@@ -37,7 +37,7 @@ func NewConfig(ctx context.Context, name, dataDir string, verbose, clean bool) *
 	}
 	os.MkdirAll(dataDir, 0755)
 
-	runtime := runtime.NewRuntime(ctx)
+	runtime := runtime.NewRuntime(ctx, dataDir)
 
 	return &Config{
 		Ctx:     ctx,

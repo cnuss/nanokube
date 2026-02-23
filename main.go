@@ -66,6 +66,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		<-ctx.Done()
+		cfg.Runtime.Stop()
 		log.Info().Msg("shutting down")
 		return nil
 	},

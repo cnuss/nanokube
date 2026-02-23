@@ -25,7 +25,7 @@ const (
 type Candidate struct {
 	Kind             RuntimeType
 	Sockets          []string
-	Preflight        func() string // returns CRI endpoint, or "" if preflight fails
+	Preflight        func(dataDir string) string // returns CRI endpoint, or "" if preflight fails
 	Cadvisor         cadvisor.Interface
 	ImageService     internalapi.ImageManagerService
 	RuntimeService   internalapi.RuntimeService
@@ -50,14 +50,10 @@ var candidates = []Candidate{
 			os.Getenv("HOME") + "/.colima/default/docker.sock",
 			os.Getenv("HOME") + "/.rd/docker.sock",
 		},
-		Preflight: func() string {
-			// Docker requires cri-dockerd as a CRI shim
-			sock := "/var/run/cri-dockerd.sock"
-			if _, err := os.Stat(sock); err != nil {
-				log.Warn().Str("socket", sock).Msg("cri-dockerd not found, skipping docker")
-				return ""
-			}
-			return "unix://" + sock
+		Preflight: func(dataDir string) string {
+			// TODO: Docker Desktop disables the CRI plugin on its containerd.
+			// Until we can enable CRI or use cri-dockerd, fall back to noop services.
+			return ""
 		},
 		Cadvisor:         noop.NewCadvisor(),
 		RuntimeService:   noop.NewRuntimeService(),
@@ -107,14 +103,14 @@ var candidates = []Candidate{
 	},
 }
 
-func NewRuntime(ctx context.Context) *Runtime {
+func NewRuntime(ctx context.Context, dataDir string) *Runtime {
 	r := &Runtime{Ctx: ctx}
-	r.detect(ctx)
+	r.detect(ctx, dataDir)
 	log.Info().Str("runtime", r.Name()).Str("endpoint", r.Endpoint).Msg("using container runtime")
 	return r
 }
 
-func (r *Runtime) detect(ctx context.Context) {
+func (r *Runtime) detect(ctx context.Context, dataDir string) {
 	r.once.Do(func() {
 		var checked []string
 		for i := range candidates {
@@ -126,7 +122,7 @@ func (r *Runtime) detect(ctx context.Context) {
 				}
 				// Socket exists, run preflight if defined
 				if c.Preflight != nil {
-					if endpoint := c.Preflight(); endpoint != "" {
+					if endpoint := c.Preflight(dataDir); endpoint != "" {
 						r.Ctx = ctx
 						r.Kind = c.Kind
 						r.Endpoint = endpoint
@@ -159,6 +155,9 @@ func (r *Runtime) Name() string {
 
 func (r *Runtime) ContainerRuntimeEndpoint() string {
 	return r.Endpoint
+}
+
+func (r *Runtime) Stop() {
 }
 
 // TODO: return different hostname based on RuntimeType
