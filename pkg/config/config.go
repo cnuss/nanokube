@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cnuss/nanokube/pkg/runtime"
 	"github.com/rs/zerolog/log"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/tools/clientcmd"
@@ -22,8 +23,8 @@ type Config struct {
 	Name         string
 	DataDir      string
 	Verbose      bool
-	Certs        *Certs
-	Runtime      *Runtime
+	Certs        *certs
+	Runtime      *runtime.Runtime
 	FeatureGates map[string]bool
 	Kubelet      kubeletconfig.KubeletConfiguration
 }
@@ -36,14 +37,14 @@ func NewConfig(ctx context.Context, name, dataDir string, verbose, clean bool) *
 	}
 	os.MkdirAll(dataDir, 0755)
 
-	runtime := NewRuntime(ctx)
+	runtime := runtime.NewRuntime(ctx)
 
 	return &Config{
 		Ctx:     ctx,
 		Name:    name,
 		DataDir: dataDir,
 		Verbose: verbose,
-		Certs:   &Certs{Name: name, DataDir: dataDir, Runtime: runtime},
+		Certs:   &certs{Name: name, DataDir: dataDir, Hostname: runtime.Hostname()},
 		Runtime: runtime,
 		FeatureGates: map[string]bool{
 			"APIServerIdentity":         false,
@@ -53,7 +54,7 @@ func NewConfig(ctx context.Context, name, dataDir string, verbose, clean bool) *
 	}
 }
 
-func newKubeletConfig(runtime *Runtime, dataDir string) *kubeletconfig.KubeletConfiguration {
+func newKubeletConfig(runtime *runtime.Runtime, dataDir string) *kubeletconfig.KubeletConfiguration {
 	c, err := options.NewKubeletConfiguration()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create default kubelet config")

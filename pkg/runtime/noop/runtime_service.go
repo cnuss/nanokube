@@ -1,4 +1,4 @@
-package stub
+package noop
 
 import (
 	"context"

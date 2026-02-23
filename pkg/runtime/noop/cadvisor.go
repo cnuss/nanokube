@@ -1,4 +1,4 @@
-package stub
+package noop
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 type Cadvisor struct{ NodeName string }
 
 func NewCadvisor() cadvisor.Interface {
-	return &Cadvisor{NodeName: "localhost"}
+	return &Cadvisor{NodeName: "noop"}
 }
 
 func (s *Cadvisor) Start() error { return nil }
@@ -23,8 +23,8 @@ func (s *Cadvisor) GetRequestedContainersInfo(string, cadvisorapiv2.RequestOptio
 }
 func (s *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 	return &cadvisorapi.MachineInfo{
-		NumCores:       1,
-		MemoryCapacity: 4 * 1024 * 1024 * 1024,
+		NumCores:       0,
+		MemoryCapacity: 0,
 	}, nil
 }
 func (s *Cadvisor) VersionInfo() (*cadvisorapi.VersionInfo, error) {

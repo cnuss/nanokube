@@ -17,16 +17,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type Certs struct {
-	Name    string
-	DataDir string
-	Runtime *Runtime
-	CertPEM []byte
-	KeyPEM  []byte
-	once    sync.Once
+type certs struct {
+	Name     string
+	DataDir  string
+	Hostname string
+	CertPEM  []byte
+	KeyPEM   []byte
+	once     sync.Once
 }
 
-func (c *Certs) generate() {
+func (c *certs) generate() {
 	c.once.Do(func() {
 		certPath := filepath.Join(c.DataDir, "ca.crt")
 		keyPath := filepath.Join(c.DataDir, "ca.key")
@@ -60,11 +60,11 @@ func (c *Certs) generate() {
 			BasicConstraintsValid: true,
 			IsCA:                  true,
 			DNSNames: []string{
-				c.Runtime.Hostname(),
+				c.Hostname,
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
-				"kubernetes.default.svc." + c.Runtime.Domain(),
+				"kubernetes.default.svc." + c.Hostname,
 			},
 			IPAddresses: []net.IP{
 				net.ParseIP("127.0.0.1"),
@@ -88,17 +88,17 @@ func (c *Certs) generate() {
 	})
 }
 
-func (c *Certs) Cert() []byte {
+func (c *certs) Cert() []byte {
 	c.generate()
 	return c.CertPEM
 }
 
-func (c *Certs) Key() []byte {
+func (c *certs) Key() []byte {
 	c.generate()
 	return c.KeyPEM
 }
 
-func (c *Certs) CertPath() string {
+func (c *certs) CertPath() string {
 	c.generate()
 	path := filepath.Join(c.DataDir, "ca.crt")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -107,7 +107,7 @@ func (c *Certs) CertPath() string {
 	return path
 }
 
-func (c *Certs) KeyPath() string {
+func (c *certs) KeyPath() string {
 	c.generate()
 	path := filepath.Join(c.DataDir, "ca.key")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
