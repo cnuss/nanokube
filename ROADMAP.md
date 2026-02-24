@@ -34,12 +34,6 @@ These are skipped by critest itself (not failures), typically platform-specific 
 
 The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs.
 
-### ContainerManager — Node Allocatable
-
-- **Location**: `pkg/kubernetes/kubelet.go`
-- **Status**: `GetNodeAllocatableAbsolute` delegates to the embedded stub.
-- **Fix**: Derive from host resources minus system-reserved.
-
 ### OS-Level — Keep as Stubs
 
 These fakes operate at the OS/kernel level and have no Docker API equivalent. They are appropriate stubs for NanoKube's single-process architecture.

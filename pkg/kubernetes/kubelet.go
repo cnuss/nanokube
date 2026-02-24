@@ -157,6 +157,10 @@ func (m *capacityContainerManager) GetCapacity(localStorageCapacityIsolation boo
 	return m.capacity
 }
 
+func (m *capacityContainerManager) GetNodeAllocatableAbsolute() v1.ResourceList {
+	return m.capacity
+}
+
 // buildContainerManager creates a container manager that reports real CPU/memory
 // capacity from cadvisor's MachineInfo, falling back to a plain stub.
 func buildContainerManager(cadvisorInterface *cri.Cadvisor) cm.ContainerManager {
