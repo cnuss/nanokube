@@ -45,30 +45,9 @@ fmt:
 run: fmt build
 	./nanokube --clean
 
-CRITEST_DIR := /tmp/nanokube-critest
-CRITEST_SOCK := $(CRITEST_DIR)/cri.sock
-
 critest: build
-	@bash -c '\
-		cleanup() { \
-			echo "Cleaning up..."; \
-			[ -n "$$NANOKUBE_PID" ] && kill $$NANOKUBE_PID 2>/dev/null && wait $$NANOKUBE_PID 2>/dev/null; \
-			rm -rf $(CRITEST_DIR); \
-		}; \
-		trap cleanup EXIT INT TERM HUP; \
-		rm -rf $(CRITEST_DIR); \
-		echo "Starting nanokube for critest..."; \
-		./nanokube --clean --kubelet=false --data $(CRITEST_DIR) & \
-		NANOKUBE_PID=$$!; \
-		echo "Waiting for CRI socket (pid $$NANOKUBE_PID)..."; \
-		for i in $$(seq 1 30); do \
-			[ -S $(CRITEST_SOCK) ] && break; \
-			sleep 1; \
-		done; \
-		if [ ! -S $(CRITEST_SOCK) ]; then \
-			echo "CRI socket not found after 30s"; \
-			exit 1; \
-		fi; \
-		echo "Running critest..."; \
-		critest --runtime-endpoint unix://$(CRITEST_SOCK) --image-endpoint unix://$(CRITEST_SOCK); \
-	'
+	@D=$$(mktemp -d); \
+	trap 'kill $$! 2>/dev/null; wait 2>/dev/null; rm -rf "$$D"' EXIT; \
+	./nanokube --kubelet=false --data "$$D" & \
+	for i in $$(seq 1 30); do [ -S "$$D/cri.sock" ] && break; sleep 1; done; \
+	critest --runtime-endpoint "unix://$$D/cri.sock" --image-endpoint "unix://$$D/cri.sock"
