@@ -26,13 +26,13 @@ type CRI struct {
 
 func NewCRI(dataDir, name string) *CRI {
 	socketPath := filepath.Join(dataDir, "cri.sock")
-	backend, streaming := detectBackend(name)
+	backend, streamingRT := detectBackend(name)
 	return &CRI{
 		dataDir:    dataDir,
 		name:       name,
 		socketPath: socketPath,
 		backend:    backend,
-		streaming:  streaming,
+		streaming:  streamingRT,
 	}
 }
 
@@ -121,6 +121,11 @@ func (c *CRI) Domain() string {
 
 func (c *CRI) Nameservers() []string {
 	return []string{}
+}
+
+// RuntimeBackend returns the underlying container runtime backend, or nil.
+func (c *CRI) RuntimeBackend() Backend {
+	return c.backend
 }
 
 // detectBackend probes for Docker then Podman and returns the first available backend

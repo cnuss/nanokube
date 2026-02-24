@@ -13,6 +13,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/cri"
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/trace/noop"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -93,9 +95,15 @@ func (k *Kubelet) Start(ctx context.Context) error {
 		return fmt.Errorf("kubelet image service: %w", err)
 	}
 
+	// Get the runtime backend from CRI for cadvisor + capacity
+	var backend cri.Backend
+	if criImpl, ok := k.config.CRI.(*cri.CRI); ok {
+		backend = criImpl.RuntimeBackend()
+	}
+
 	// Create cadvisor + container manager
-	cadvisorInterface := cri.NewCadvisor(k.config.CRI.Hostname())
-	containerManager := cm.NewStubContainerManager()
+	cadvisorInterface := cri.NewCadvisor(ctx, k.config.CRI.Hostname(), backend)
+	containerManager := buildContainerManager(cadvisorInterface)
 
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(
@@ -108,6 +116,9 @@ func (k *Kubelet) Start(ctx context.Context) error {
 		containerManager,
 	)
 	hk.KubeletDeps.OSInterface = &ScopedOS{DataDir: k.config.DataDir}
+	// Let the kubelet create a real event broadcaster and probe manager
+	hk.KubeletDeps.Recorder = nil
+	hk.KubeletDeps.ProbeManager = nil
 	go hk.Run(ctx)
 
 	// Wait for kubelet to be healthy
@@ -133,5 +144,38 @@ func (k *Kubelet) Start(ctx context.Context) error {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+	}
+}
+
+// capacityContainerManager embeds the stub and overrides GetCapacity with real values.
+type capacityContainerManager struct {
+	cm.ContainerManager
+	capacity v1.ResourceList
+}
+
+func (m *capacityContainerManager) GetCapacity(localStorageCapacityIsolation bool) v1.ResourceList {
+	return m.capacity
+}
+
+// buildContainerManager creates a container manager that reports real CPU/memory
+// capacity from cadvisor's MachineInfo, falling back to a plain stub.
+func buildContainerManager(cadvisorInterface *cri.Cadvisor) cm.ContainerManager {
+	stub := cm.NewStubContainerManager()
+
+	info, err := cadvisorInterface.MachineInfo()
+	if err != nil || info.NumCores == 0 {
+		log.Warn().Err(err).Msg("kubelet: MachineInfo unavailable, using stub container manager")
+		return stub
+	}
+
+	capacity := v1.ResourceList{
+		v1.ResourceCPU:    *resource.NewQuantity(int64(info.NumCores), resource.DecimalSI),
+		v1.ResourceMemory: *resource.NewQuantity(int64(info.MemoryCapacity), resource.BinarySI),
+	}
+	log.Info().Int("cpus", info.NumCores).Uint64("memory", info.MemoryCapacity).Msg("kubelet: runtime-backed capacity")
+
+	return &capacityContainerManager{
+		ContainerManager: stub,
+		capacity:         capacity,
 	}
 }

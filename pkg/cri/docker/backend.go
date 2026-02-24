@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/rs/zerolog/log"
@@ -166,4 +169,83 @@ func (b *Backend) GetContainerEvents(ctx context.Context, eventsCh chan *runtime
 
 func (b *Backend) UpdatePodSandboxResources(ctx context.Context, req *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
 	return &runtimeapi.UpdatePodSandboxResourcesResponse{}, nil
+}
+
+// RunProbe creates a short-lived container from image, executes cmd with
+// optional bind mounts, and returns stdout. The container is removed after.
+func (b *Backend) RunProbe(ctx context.Context, img string, cmd []string, binds []string) ([]byte, error) {
+	// Ensure image is available
+	_, err := b.client.ImageInspect(ctx, img)
+	if err != nil {
+		reader, pullErr := b.client.ImagePull(ctx, img, image.PullOptions{})
+		if pullErr != nil {
+			return nil, fmt.Errorf("pull %s: %w", img, pullErr)
+		}
+		io.Copy(io.Discard, reader)
+		reader.Close()
+	}
+
+	hostCfg := &container.HostConfig{}
+	if len(binds) > 0 {
+		hostCfg.Binds = binds
+	}
+
+	resp, err := b.client.ContainerCreate(ctx,
+		&container.Config{Image: img, Cmd: cmd},
+		hostCfg, nil, nil, "")
+	if err != nil {
+		return nil, fmt.Errorf("create probe container: %w", err)
+	}
+	defer b.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := b.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return nil, fmt.Errorf("start probe container: %w", err)
+	}
+
+	waitCh, errCh := b.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-waitCh:
+	case err := <-errCh:
+		if err != nil {
+			return nil, fmt.Errorf("wait probe container: %w", err)
+		}
+	}
+
+	logReader, err := b.client.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
+	if err != nil {
+		return nil, fmt.Errorf("read probe logs: %w", err)
+	}
+	defer logReader.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, logReader)
+	return stripLogHeaders(buf.Bytes()), nil
+}
+
+// stripLogHeaders removes Docker's 8-byte multiplexed stream headers.
+// Each frame: [type(1) 0 0 0 size(4)] followed by size bytes of payload.
+func stripLogHeaders(data []byte) []byte {
+	var result []byte
+	for len(data) >= 8 {
+		size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
+		data = data[8:]
+		if size > len(data) {
+			size = len(data)
+		}
+		result = append(result, data[:size]...)
+		data = data[size:]
+	}
+	if len(result) == 0 {
+		return data
+	}
+	return result
+}
+
+// HostInfo returns host system information from Docker.
+func (b *Backend) HostInfo(ctx context.Context) (int, int64, string, string, error) {
+	info, err := b.client.Info(ctx)
+	if err != nil {
+		return 0, 0, "", "", fmt.Errorf("docker info: %w", err)
+	}
+	return info.NCPU, info.MemTotal, info.KernelVersion, info.OperatingSystem, nil
 }

@@ -62,4 +62,13 @@ type Backend interface {
 	PullImage(ctx context.Context, image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig, sandbox *runtimeapi.PodSandboxConfig) (string, error)
 	RemoveImage(ctx context.Context, image *runtimeapi.ImageSpec) error
 	ImageFsInfo(ctx context.Context) (*runtimeapi.ImageFsInfoResponse, error)
+
+	// Probe runs a short-lived container from image with cmd, optional bind
+	// mounts (host:container:mode), and returns stdout. The container is
+	// removed after execution.
+	RunProbe(ctx context.Context, image string, cmd []string, binds []string) ([]byte, error)
+
+	// HostInfo returns CPU count, total memory (bytes), kernel version, and OS
+	// version from the container runtime's view of the host.
+	HostInfo(ctx context.Context) (cpus int, memoryBytes int64, kernelVersion string, osVersion string, err error)
 }
