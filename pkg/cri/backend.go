@@ -71,4 +71,8 @@ type Backend interface {
 	// HostInfo returns CPU count, total memory (bytes), kernel version, and OS
 	// version from the container runtime's view of the host.
 	HostInfo(ctx context.Context) (cpus int, memoryBytes int64, kernelVersion string, osVersion string, err error)
+
+	// HostIDs returns the host's boot ID, system UUID, and machine ID by
+	// probing the host's /proc, /sys, and /etc via namespace sharing.
+	HostIDs(ctx context.Context) (bootID string, systemUUID string, machineID string, err error)
 }

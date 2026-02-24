@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,4 +249,85 @@ func (b *Backend) HostInfo(ctx context.Context) (int, int64, string, string, err
 		return 0, 0, "", "", fmt.Errorf("docker info: %w", err)
 	}
 	return info.NCPU, info.MemTotal, info.KernelVersion, info.OperatingSystem, nil
+}
+
+// HostIDs probes the host's boot ID, system UUID, and machine ID by running
+// a busybox container with host namespace access and bind-mounted /etc + /sys.
+func (b *Backend) HostIDs(ctx context.Context) (string, string, string, error) {
+	// Ensure image is available
+	img := "busybox"
+	_, err := b.client.ImageInspect(ctx, img)
+	if err != nil {
+		reader, pullErr := b.client.ImagePull(ctx, img, image.PullOptions{})
+		if pullErr != nil {
+			return "", "", "", fmt.Errorf("pull %s: %w", img, pullErr)
+		}
+		io.Copy(io.Discard, reader)
+		reader.Close()
+	}
+
+	resp, err := b.client.ContainerCreate(ctx,
+		&container.Config{
+			Image: img,
+			Cmd: []string{"sh", "-c",
+				// boot_id
+				"cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo; " +
+					// system UUID: try DMI, then device-tree fallbacks (same order as cadvisor)
+					"cat /host/sys/class/dmi/id/product_uuid 2>/dev/null || " +
+					"cat /proc/device-tree/system-id 2>/dev/null || " +
+					"cat /proc/device-tree/vm,uuid 2>/dev/null || echo; " +
+					// machine-id
+					"cat /etc/machine-id 2>/dev/null || echo",
+			},
+		},
+		&container.HostConfig{
+			Privileged:  true,
+			PidMode:     "host",
+			NetworkMode: "host",
+			IpcMode:     "host",
+			Binds: []string{
+				"/etc/machine-id:/etc/machine-id:ro",
+				"/sys:/host/sys:ro",
+			},
+		}, nil, nil, "")
+	if err != nil {
+		return "", "", "", fmt.Errorf("create host-id probe: %w", err)
+	}
+	defer b.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	if err := b.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", "", "", fmt.Errorf("start host-id probe: %w", err)
+	}
+
+	waitCh, errCh := b.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-waitCh:
+	case err := <-errCh:
+		if err != nil {
+			return "", "", "", fmt.Errorf("wait host-id probe: %w", err)
+		}
+	}
+
+	logReader, err := b.client.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
+	if err != nil {
+		return "", "", "", fmt.Errorf("read host-id probe logs: %w", err)
+	}
+	defer logReader.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, logReader)
+	lines := strings.Split(strings.TrimSpace(string(stripLogHeaders(buf.Bytes()))), "\n")
+
+	var bootID, systemUUID, machineID string
+	if len(lines) > 0 {
+		bootID = strings.TrimSpace(lines[0])
+	}
+	if len(lines) > 1 {
+		systemUUID = strings.TrimSpace(lines[1])
+	}
+	if len(lines) > 2 {
+		machineID = strings.TrimSpace(lines[2])
+	}
+
+	return bootID, systemUUID, machineID, nil
 }

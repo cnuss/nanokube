@@ -53,10 +53,18 @@ func (c *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 		memBytes = 0
 	}
 
+	bootID, systemUUID, machineID, err := c.backend.HostIDs(c.ctx)
+	if err != nil {
+		log.Warn().Err(err).Msg("cadvisor: HostIDs probe failed")
+	}
+
 	return &cadvisorapi.MachineInfo{
 		NumCores:       cpus,
 		InstanceID:     cadvisorapi.InstanceID(c.nodeName),
 		MemoryCapacity: uint64(memBytes),
+		BootID:         bootID,
+		SystemUUID:     systemUUID,
+		MachineID:      machineID,
 	}, nil
 }
 
