@@ -32,47 +32,37 @@ These are skipped by critest itself (not failures), typically platform-specific 
 
 ## HollowKubelet: Replace Fakes with Real Implementations
 
-The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some can be backed by the Docker API; others are OS-level and should remain stubs.
+The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs.
 
-### Docker API-Backable
+### Completed
 
-#### 1. Cadvisor — Container & Filesystem Info
+#### 1. Cadvisor — Machine Info, Version Info, Filesystem Info
 
-- **Location**: `pkg/cri/cadvisor.go`
-- **Status**: `MachineInfo()` and `VersionInfo()` already use real data (gopsutil). The remaining 6 methods return empty values.
-- **Methods to implement**:
-  - `ContainerInfoV2(name)` — Use `docker container stats` / `ContainerStats` API to report per-container CPU, memory, network, and disk I/O. Map Docker container names back to pod sandbox IDs.
-  - `GetRequestedContainersInfo(name)` — Same data source, different return type (`v1.ContainerInfo` vs `v2.ContainerInfo`).
-  - `ImagesFsInfo()` — Use `docker system df` / `DiskUsage` API to report image layer storage (total, used, inodes).
-  - `RootFsInfo()` — Use gopsutil `disk.Usage("/")` for the root filesystem. Not Docker-specific but needed for accurate node status.
-  - `ContainerFsInfo()` — Use `DiskUsage` API for container writable layer storage.
-  - `GetDirFsInfo(path)` — Use gopsutil `disk.Usage(path)` for arbitrary directory filesystem info.
-- **Impact**: Enables `kubectl top nodes`, accurate node capacity reporting, and eviction manager decisions.
+- **Location**: `pkg/cri/cadvisor.go`, `pkg/cri/backend.go`
+- **Status**: Done. All methods backed by the container runtime via the `Backend` interface (no gopsutil dependency).
+- **MachineInfo**: CPU count, memory, boot ID, system UUID, machine ID — all from `Backend.HostInfo()` and `Backend.HostIDs()`. HostIDs runs a privileged busybox probe with host namespaces to read `/proc/sys/kernel/random/boot_id`, `/sys/class/dmi/id/product_uuid` (with device-tree fallbacks), and `/etc/machine-id`.
+- **VersionInfo**: Kernel version and OS from `Backend.HostInfo()` (wraps `docker info`).
+- **FsInfo methods** (`ImagesFsInfo`, `RootFsInfo`, `ContainerFsInfo`, `GetDirFsInfo`): Use `Backend.RunProbe()` to run `stat -f` inside a busybox container with host path bind-mounted. Results cached with 60s TTL.
+- **Remaining stubs**: `ContainerInfoV2` and `GetRequestedContainersInfo` still return empty maps (per-container stats not yet implemented).
 
-#### 2. ContainerManager — Resource Capacity & Allocation
+#### 2. ContainerManager — Resource Capacity
 
-- **Location**: Currently uses upstream `cm.NewStubContainerManager()`
-- **Status**: All methods return nil/empty/zero.
-- **Methods to implement**:
-  - `GetCapacity(localStorageCapacityIsolation)` — Report real ephemeral storage capacity via gopsutil `disk.Usage`. Docker `Info` API can supplement with storage driver details.
-  - `GetNodeAllocatableAbsolute()` — Currently hardcoded to 4 CPU / 4Gi in the fake. Should derive from actual host resources (gopsutil) minus any configured system-reserved.
-  - `GetResources(pod, container)` — Use `docker container inspect` to return device mounts and resource configs applied to running containers.
-  - `Start()` — Initialize Docker client connection, verify runtime is accessible.
-- **Approach**: Create `pkg/cri/container_manager.go` implementing `cm.ContainerManager`. Delegate cgroup-specific methods (QOS cgroups, cgroup root, CPU/memory managers) to no-op stubs since NanoKube doesn't manage cgroups directly — Docker handles that.
+- **Location**: `pkg/kubernetes/kubelet.go`
+- **Status**: Done. `buildContainerManager()` wraps the upstream stub with a `capacityContainerManager` that overrides `GetCapacity()` with real CPU/memory from `cadvisor.MachineInfo()`.
+- **Remaining stubs**: `GetNodeAllocatableAbsolute`, `GetResources`, cgroup methods — delegated to the embedded stub.
 
 #### 3. EventRecorder — Real API Server Events
 
-- **Location**: Currently uses `record.FakeRecorder{}` (drops events or writes to a channel)
-- **Status**: No events are recorded to the API server.
-- **Fix**: Replace with `record.NewBroadcaster()` + `recorder.NewRecorder()` using the existing k8s clientset. This is straightforward — the kubelet already has a client connection. The comment in upstream says "With real recorder we attempt to read /dev/kmsg" — investigate whether this is a blocker or can be avoided with config.
-- **Impact**: `kubectl get events` will show kubelet lifecycle events (node ready, pod scheduled, image pulled, container started/failed).
+- **Status**: Done. `hk.KubeletDeps.Recorder` set to `nil` after `NewHollowKubelet()`, causing the kubelet to create a real event broadcaster. Events (node ready, pod scheduled, image pulled) now appear in `kubectl get events`.
 
 #### 4. ProbeManager — Health Check Execution
 
-- **Location**: Currently uses `probetest.FakeManager{}` (marks all containers Ready)
-- **Status**: No actual health checks run. All containers are unconditionally reported as ready.
-- **Fix**: Use the real `prober.Manager` from `pkg/kubelet/prober/`. It already integrates with the CRI runtime service for exec probes and uses net/http for HTTP probes. The real manager needs a functioning CRI exec path (which we have via `pkg/cri/docker/streaming.go`).
-- **Impact**: Liveness, readiness, and startup probes will actually execute. Pods with failing probes will be restarted or removed from service endpoints.
+- **Status**: Done. `hk.KubeletDeps.ProbeManager` set to `nil`, causing the kubelet to create a real probe manager. Liveness, readiness, and startup probes execute via the CRI exec path.
+
+### Future Work
+
+- **Cadvisor container stats**: `ContainerInfoV2` and `GetRequestedContainersInfo` — use Docker `ContainerStats` API for per-container CPU/memory/network/disk I/O. Enables `kubectl top pods`.
+- **ContainerManager allocatable**: `GetNodeAllocatableAbsolute` — derive from host resources minus system-reserved.
 
 ### OS-Level — Keep as Stubs
 
@@ -80,20 +70,12 @@ These fakes operate at the OS/kernel level and have no Docker API equivalent. Th
 
 | Fake | Interface | Why Keep |
 |------|-----------|----------|
-| `FakeOS` | `kubecontainer.OSInterface` | Filesystem ops (mkdir, symlink, chmod). Docker doesn't manage kubelet's volume mount paths. |
+| `ScopedOS` | `kubecontainer.OSInterface` | Filesystem ops scoped to DataDir. Docker doesn't manage kubelet's volume mount paths. |
 | `FakeOOMAdjuster` | `OOMAdjuster` | Linux cgroup OOM score adjustment. Kernel-level, not exposed via Docker. |
 | `FakeMounter` | `mount.Interface` | OS mount/unmount syscalls. Docker manages container mounts internally. |
 | `FakeSubpath` | `subpath.Interface` | Bind-mount subpaths within volumes. Pure kubelet filesystem logic. |
 | `FakeHostUtil` | `hostutil.HostUtils` | Device checks, SELinux support, file type queries. OS-level. |
 | `NoopTracerProvider` | `trace.TracerProvider` | OpenTelemetry tracing. No-op is correct unless tracing is explicitly wanted. |
-
-### Implementation Order
-
-1. **EventRecorder** — Lowest effort, highest visibility. Swap `FakeRecorder` for a real broadcaster.
-2. **Cadvisor filesystem methods** — `RootFsInfo` and `GetDirFsInfo` via gopsutil, `ImagesFsInfo` via Docker `DiskUsage`.
-3. **ContainerManager capacity** — `GetCapacity` and `GetNodeAllocatableAbsolute` with real values.
-4. **Cadvisor container stats** — `ContainerInfoV2` via Docker `ContainerStats` streaming API.
-5. **ProbeManager** — Swap fake for real `prober.Manager`. Requires validated CRI exec path.
 
 ## Podman Backend
 
