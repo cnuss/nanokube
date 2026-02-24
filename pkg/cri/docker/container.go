@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -385,12 +386,34 @@ func (b *Backend) ContainerStats(ctx context.Context, containerID string) (*runt
 	}
 	defer resp.Body.Close()
 
+	var stats container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return nil, fmt.Errorf("decode docker stats: %w", err)
+	}
+
 	inspect, err := b.client.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return nil, err
 	}
 
 	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
+	ts := stats.Read.UnixNano()
+	if ts <= 0 {
+		ts = createdAt.UnixNano()
+	}
+
+	// CPU: cumulative nanoseconds
+	cpuTotal := stats.CPUStats.CPUUsage.TotalUsage
+
+	// Memory: working set = usage - inactive_file
+	memUsage := stats.MemoryStats.Usage
+	inactiveFile := stats.MemoryStats.Stats["inactive_file"]
+	workingSet := memUsage - inactiveFile
+	if inactiveFile > memUsage {
+		workingSet = 0
+	}
+	rssBytes := stats.MemoryStats.Stats["rss"]
+
 	return &runtimeapi.ContainerStats{
 		Attributes: &runtimeapi.ContainerAttributes{
 			Id: containerID,
@@ -401,10 +424,14 @@ func (b *Backend) ContainerStats(ctx context.Context, containerID string) (*runt
 			Annotations: extractAnnotations(inspect.Config.Labels),
 		},
 		Cpu: &runtimeapi.CpuUsage{
-			Timestamp: createdAt.UnixNano(),
+			Timestamp:            ts,
+			UsageCoreNanoSeconds: &runtimeapi.UInt64Value{Value: cpuTotal},
 		},
 		Memory: &runtimeapi.MemoryUsage{
-			Timestamp: createdAt.UnixNano(),
+			Timestamp:       ts,
+			WorkingSetBytes: &runtimeapi.UInt64Value{Value: workingSet},
+			UsageBytes:      &runtimeapi.UInt64Value{Value: memUsage},
+			RssBytes:        &runtimeapi.UInt64Value{Value: rssBytes},
 		},
 		WritableLayer: &runtimeapi.FilesystemUsage{
 			Timestamp: createdAt.UnixNano(),

@@ -11,6 +11,7 @@ import (
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
 	"github.com/rs/zerolog/log"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 )
 
@@ -82,11 +83,220 @@ func (c *Cadvisor) VersionInfo() (*cadvisorapi.VersionInfo, error) {
 }
 
 func (c *Cadvisor) ContainerInfoV2(name string, options cadvisorapiv2.RequestOptions) (map[string]cadvisorapiv2.ContainerInfo, error) {
-	return map[string]cadvisorapiv2.ContainerInfo{}, nil
+	if c.backend == nil {
+		return map[string]cadvisorapiv2.ContainerInfo{}, nil
+	}
+
+	// For non-root cgroup queries, return a synthetic entry with node-level
+	// stats. The kubelet calls getCgroupInfo(name) which expects exactly 1
+	// entry keyed by name.
+	if name != "/" {
+		return map[string]cadvisorapiv2.ContainerInfo{
+			name: c.rootContainerInfoV2(),
+		}, nil
+	}
+
+	result := make(map[string]cadvisorapiv2.ContainerInfo)
+
+	// "/" always gets a root entry — the kubelet needs it for RootFsStats
+	// and node-level resource accounting.
+	result["/"] = c.rootContainerInfoV2()
+
+	// When Recursive=true, also include per-container entries.
+	if options.Recursive {
+		ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+		defer cancel()
+
+		containers, err := c.backend.ListContainers(ctx, nil)
+		if err != nil {
+			log.Warn().Err(err).Msg("cadvisor: ListContainers failed")
+			return result, nil
+		}
+
+		for _, ctr := range containers {
+			stats, err := c.backend.ContainerStats(ctx, ctr.Id)
+			if err != nil {
+				log.Debug().Err(err).Str("id", ctr.Id[:12]).Msg("cadvisor: ContainerStats failed, skipping")
+				continue
+			}
+			result[ctr.Id] = c.criStatsToV2(ctr.CreatedAt, ctr.Labels, ctr.GetImage().GetImage(), stats)
+		}
+	}
+
+	return result, nil
+}
+
+// rootContainerInfoV2 returns a synthetic root ("/") container entry with
+// node-level CPU and memory from HostInfo.
+func (c *Cadvisor) rootContainerInfoV2() cadvisorapiv2.ContainerInfo {
+	now := time.Now()
+	cpus, memBytes, _, _, _ := c.backend.HostInfo(c.ctx)
+	return cadvisorapiv2.ContainerInfo{
+		Spec: cadvisorapiv2.ContainerSpec{
+			CreationTime: now,
+			HasCpu:       true,
+			HasMemory:    true,
+			HasNetwork:   true,
+			Cpu:          cadvisorapiv2.CpuSpec{Limit: uint64(cpus)},
+			Memory:       cadvisorapiv2.MemorySpec{Limit: uint64(memBytes)},
+		},
+		Stats: []*cadvisorapiv2.ContainerStats{{
+			Timestamp: now,
+			Cpu:       &cadvisorapi.CpuStats{},
+			Memory: &cadvisorapi.MemoryStats{
+				Usage:      uint64(memBytes),
+				WorkingSet: uint64(memBytes),
+			},
+		}},
+	}
+}
+
+// criStatsToV2 converts CRI container stats to cadvisor v2 ContainerInfo.
+func (c *Cadvisor) criStatsToV2(createdAtNs int64, labels map[string]string, image string, stats *runtimeapi.ContainerStats) cadvisorapiv2.ContainerInfo {
+	var cpuStats *cadvisorapi.CpuStats
+	if stats.Cpu != nil && stats.Cpu.UsageCoreNanoSeconds != nil {
+		cpuStats = &cadvisorapi.CpuStats{
+			Usage: cadvisorapi.CpuUsage{
+				Total: stats.Cpu.UsageCoreNanoSeconds.Value,
+			},
+		}
+	}
+
+	var memStats *cadvisorapi.MemoryStats
+	if stats.Memory != nil {
+		memStats = &cadvisorapi.MemoryStats{}
+		if stats.Memory.UsageBytes != nil {
+			memStats.Usage = stats.Memory.UsageBytes.Value
+		}
+		if stats.Memory.WorkingSetBytes != nil {
+			memStats.WorkingSet = stats.Memory.WorkingSetBytes.Value
+		}
+		if stats.Memory.RssBytes != nil {
+			memStats.RSS = stats.Memory.RssBytes.Value
+		}
+	}
+
+	ts := time.Now()
+	if stats.Cpu != nil && stats.Cpu.Timestamp > 0 {
+		ts = time.Unix(0, stats.Cpu.Timestamp)
+	}
+
+	return cadvisorapiv2.ContainerInfo{
+		Spec: cadvisorapiv2.ContainerSpec{
+			CreationTime: time.Unix(0, createdAtNs),
+			Labels:       labels,
+			HasCpu:       true,
+			HasMemory:    true,
+			HasNetwork:   true,
+			Image:        image,
+		},
+		Stats: []*cadvisorapiv2.ContainerStats{{
+			Timestamp: ts,
+			Cpu:       cpuStats,
+			Memory:    memStats,
+		}},
+	}
 }
 
 func (c *Cadvisor) GetRequestedContainersInfo(containerName string, options cadvisorapiv2.RequestOptions) (map[string]*cadvisorapi.ContainerInfo, error) {
-	return map[string]*cadvisorapi.ContainerInfo{}, nil
+	if c.backend == nil {
+		return map[string]*cadvisorapi.ContainerInfo{}, nil
+	}
+
+	result := make(map[string]*cadvisorapi.ContainerInfo)
+
+	// For root or non-root cgroup queries, return a synthetic entry.
+	if containerName != "/" || !options.Recursive {
+		now := time.Now()
+		_, memBytes, _, _, _ := c.backend.HostInfo(c.ctx)
+		result[containerName] = &cadvisorapi.ContainerInfo{
+			ContainerReference: cadvisorapi.ContainerReference{
+				Name: containerName,
+			},
+			Spec: cadvisorapi.ContainerSpec{
+				CreationTime: now,
+				HasCpu:       true,
+				HasMemory:    true,
+				HasNetwork:   true,
+			},
+			Stats: []*cadvisorapi.ContainerStats{{
+				Timestamp: now,
+				Memory: cadvisorapi.MemoryStats{
+					Usage:      uint64(memBytes),
+					WorkingSet: uint64(memBytes),
+				},
+			}},
+		}
+		if !options.Recursive {
+			return result, nil
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+	defer cancel()
+
+	containers, err := c.backend.ListContainers(ctx, nil)
+	if err != nil {
+		log.Warn().Err(err).Msg("cadvisor: ListContainers failed")
+		return result, nil
+	}
+
+	for _, ctr := range containers {
+		stats, err := c.backend.ContainerStats(ctx, ctr.Id)
+		if err != nil {
+			log.Debug().Err(err).Str("id", ctr.Id[:12]).Msg("cadvisor: ContainerStats failed, skipping")
+			continue
+		}
+		result[ctr.Id] = c.criStatsToV1(ctr, stats)
+	}
+	return result, nil
+}
+
+// criStatsToV1 converts CRI container stats to cadvisor v1 ContainerInfo.
+func (c *Cadvisor) criStatsToV1(ctr *runtimeapi.Container, stats *runtimeapi.ContainerStats) *cadvisorapi.ContainerInfo {
+	var cpuStats cadvisorapi.CpuStats
+	if stats.Cpu != nil && stats.Cpu.UsageCoreNanoSeconds != nil {
+		cpuStats.Usage.Total = stats.Cpu.UsageCoreNanoSeconds.Value
+	}
+
+	var memStats cadvisorapi.MemoryStats
+	if stats.Memory != nil {
+		if stats.Memory.UsageBytes != nil {
+			memStats.Usage = stats.Memory.UsageBytes.Value
+		}
+		if stats.Memory.WorkingSetBytes != nil {
+			memStats.WorkingSet = stats.Memory.WorkingSetBytes.Value
+		}
+		if stats.Memory.RssBytes != nil {
+			memStats.RSS = stats.Memory.RssBytes.Value
+		}
+	}
+
+	ts := time.Now()
+	if stats.Cpu != nil && stats.Cpu.Timestamp > 0 {
+		ts = time.Unix(0, stats.Cpu.Timestamp)
+	}
+
+	return &cadvisorapi.ContainerInfo{
+		ContainerReference: cadvisorapi.ContainerReference{
+			Id:        ctr.Id,
+			Name:      ctr.Id,
+			Namespace: "docker",
+		},
+		Spec: cadvisorapi.ContainerSpec{
+			CreationTime: time.Unix(0, ctr.CreatedAt),
+			Labels:       ctr.Labels,
+			HasCpu:       true,
+			HasMemory:    true,
+			HasNetwork:   true,
+			Image:        ctr.GetImage().GetImage(),
+		},
+		Stats: []*cadvisorapi.ContainerStats{{
+			Timestamp: ts,
+			Cpu:       cpuStats,
+			Memory:    memStats,
+		}},
+	}
 }
 
 func (c *Cadvisor) ImagesFsInfo(ctx context.Context) (cadvisorapiv2.FsInfo, error) {
