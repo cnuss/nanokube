@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/config"
@@ -34,9 +36,15 @@ func NewKubelet(config *config.Config) *Kubelet {
 func (k *Kubelet) Start(ctx context.Context) error {
 	log.Info().Msg("starting kubelet")
 
-	// Build KubeletFlags
+	// Build KubeletFlags — use a dedicated subdirectory so the kubelet's
+	// internal cleanup doesn't interfere with certs, etcd data, etc.
+	kubeletRoot := filepath.Join(k.config.DataDir, "kubelet")
+	os.MkdirAll(kubeletRoot, 0755)
+	os.MkdirAll(filepath.Join(k.config.DataDir, "manifests"), 0755)
+
 	f := options.NewKubeletFlags()
-	f.RootDirectory = k.config.DataDir
+	f.RootDirectory = kubeletRoot
+	f.CertDirectory = filepath.Join(kubeletRoot, "pki")
 	f.HostnameOverride = k.config.CRI.Hostname()
 	f.MinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
 	f.MaxContainerCount = 100

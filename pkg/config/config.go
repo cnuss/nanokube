@@ -120,6 +120,8 @@ func (c *Config) ApplyKubeletConfig(cfg *kubeletconfig.KubeletConfiguration) {
 	cfg.Authorization = kubeletconfig.KubeletAuthorization{
 		Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
 	}
+	cfg.TLSCertFile = c.Certs.CertPath()
+	cfg.TLSPrivateKeyFile = c.Certs.KeyPath()
 	cfg.EnableServer = true
 	cfg.Port = 10250
 	cfg.ReadOnlyPort = 10255
