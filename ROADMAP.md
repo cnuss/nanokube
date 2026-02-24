@@ -34,17 +34,6 @@ These are skipped by critest itself (not failures), typically platform-specific 
 
 The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs.
 
-### Cadvisor — Container Stats (Done)
-
-- **Location**: `pkg/cri/cadvisor.go`, `pkg/cri/docker/container.go`
-- **Status**: Implemented. `ContainerInfoV2` and `GetRequestedContainersInfo` return real stats.
-- **What was done**:
-  - Docker `ContainerStatsOneShot` response is now decoded and mapped to CRI CPU/memory fields
-  - `ContainerInfoV2("/", Recursive=false)` returns a synthetic root entry for node-level stats
-  - `ContainerInfoV2("/", Recursive=true)` returns root + per-container entries
-  - `GetRequestedContainersInfo` follows the same pattern with v1 types
-- **Remaining**: Node-level CPU stats are synthetic (zeroed). Real values would require reading cgroup stats from inside the Docker VM.
-
 ### ContainerManager — Node Allocatable
 
 - **Location**: `pkg/kubernetes/kubelet.go`
