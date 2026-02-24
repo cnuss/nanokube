@@ -15,12 +15,12 @@ const (
 	labelSandboxUID       = labelPrefix + "pod.uid"
 
 	// Container labels
-	labelContainerName = labelPrefix + "container.name"
-	labelLogPath       = labelPrefix + "container.logPath"
+	labelContainerName    = labelPrefix + "container.name"
+	labelContainerAttempt = labelPrefix + "container.attempt"
+	labelLogPath          = labelPrefix + "container.logPath"
 
 	// Managed-by label to identify CRI-created containers
-	labelManagedBy    = labelPrefix + "managed-by"
-	managedByNanokube = "nanokube-cri"
+	labelManagedBy = labelPrefix + "managed-by"
 
 	// Annotations stored as labels with this prefix
 	labelAnnotationPrefix = labelPrefix + "annotation."

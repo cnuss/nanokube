@@ -7,18 +7,22 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, config *runtimeapi.ContainerConfig, sandboxConfig *runtimeapi.PodSandboxConfig) (string, error) {
-	dockerConfig, hostConfig := toContainerConfig(config, podSandboxID, sandboxConfig)
+	dockerConfig, hostConfig := toContainerConfig(config, podSandboxID, sandboxConfig, b.name)
 	name := containerName(sandboxConfig, config)
+
+	log.Debug().Str("name", name).Str("image", config.GetImage().GetImage()).Str("sandbox", podSandboxID[:12]).Msg("CRI CreateContainer")
 
 	// Store the full CRI log path as a label for symlink creation on start
 	if logPath := config.GetLogPath(); logPath != "" {
@@ -28,14 +32,23 @@ func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, conf
 		}
 	}
 
+	for _, m := range config.GetMounts() {
+		log.Debug().Str("host", m.GetHostPath()).Str("container", m.GetContainerPath()).Bool("ro", m.GetReadonly()).Msg("CRI mount")
+	}
+
+	// Remove any stale container with the same name from a previous run
+	b.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+
 	resp, err := b.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	if err != nil {
 		return "", fmt.Errorf("create container: %w", err)
 	}
+	log.Debug().Str("id", resp.ID[:12]).Str("name", name).Msg("CRI container created")
 	return resp.ID, nil
 }
 
 func (b *Backend) StartContainer(ctx context.Context, containerID string) error {
+	log.Debug().Str("id", containerID[:12]).Msg("CRI StartContainer")
 	if err := b.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		return err
 	}
@@ -137,6 +150,7 @@ func (b *Backend) writeCRILog(ctx context.Context, containerID, logPath string) 
 }
 
 func (b *Backend) StopContainer(ctx context.Context, containerID string, timeout int64) error {
+	log.Debug().Str("id", containerID[:12]).Int64("timeout", timeout).Msg("CRI StopContainer")
 	t := int(timeout)
 	err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t})
 	if err != nil && isNotFoundOrNotRunning(err) {
@@ -146,6 +160,7 @@ func (b *Backend) StopContainer(ctx context.Context, containerID string, timeout
 }
 
 func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error {
+	log.Debug().Str("id", containerID[:12]).Msg("CRI RemoveContainer")
 	err := b.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
 	if err != nil && isNotFoundOrNotRunning(err) {
 		return nil
@@ -156,7 +171,7 @@ func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error
 func (b *Backend) ListContainers(ctx context.Context, filter *runtimeapi.ContainerFilter) ([]*runtimeapi.Container, error) {
 	f := filters.NewArgs()
 	f.Add("label", labelContainerType+"="+containerTypeContainer)
-	f.Add("label", labelManagedBy+"="+managedByNanokube)
+	f.Add("label", labelManagedBy+"="+b.name)
 
 	if filter != nil {
 		if filter.Id != "" {
@@ -192,11 +207,13 @@ func (b *Backend) ListContainers(ctx context.Context, filter *runtimeapi.Contain
 	for _, c := range containers {
 		createdAt := time.Unix(c.Created, 0)
 		state := dockerStateToContainerState(c.State)
+		attempt, _ := strconv.ParseUint(c.Labels[labelContainerAttempt], 10, 32)
 		result = append(result, &runtimeapi.Container{
 			Id:           c.ID,
 			PodSandboxId: c.Labels[labelSandboxID],
 			Metadata: &runtimeapi.ContainerMetadata{
-				Name: c.Labels[labelContainerName],
+				Name:    c.Labels[labelContainerName],
+				Attempt: uint32(attempt),
 			},
 			Image: &runtimeapi.ImageSpec{
 				Image: c.Image,
@@ -207,6 +224,11 @@ func (b *Backend) ListContainers(ctx context.Context, filter *runtimeapi.Contain
 			Labels:      extractLabels(c.Labels),
 			Annotations: extractAnnotations(c.Labels),
 		})
+	}
+	if filter != nil && filter.PodSandboxId != "" {
+		log.Debug().Int("count", len(result)).Str("sandbox", filter.PodSandboxId[:12]).Msg("CRI ListContainers")
+	} else {
+		log.Debug().Int("count", len(result)).Msg("CRI ListContainers")
 	}
 	return result, nil
 }
@@ -219,11 +241,14 @@ func (b *Backend) ContainerStatus(ctx context.Context, containerID string, verbo
 
 	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
 	state := dockerStateToContainerState(inspect.State.Status)
+	log.Debug().Str("id", containerID[:12]).Str("dockerState", inspect.State.Status).Int32("criState", int32(state)).Msg("CRI ContainerStatus")
 
+	attempt, _ := strconv.ParseUint(inspect.Config.Labels[labelContainerAttempt], 10, 32)
 	status := &runtimeapi.ContainerStatus{
 		Id: containerID,
 		Metadata: &runtimeapi.ContainerMetadata{
-			Name: inspect.Config.Labels[labelContainerName],
+			Name:    inspect.Config.Labels[labelContainerName],
+			Attempt: uint32(attempt),
 		},
 		State:     state,
 		CreatedAt: createdAt.UnixNano(),

@@ -34,7 +34,7 @@ type CRIProvider interface {
 type Config struct {
 	Name         string
 	DataDir      string
-	Verbose      bool
+	Verbosity    int
 	Certs        *certs
 	FeatureGates map[string]bool
 	Components   []Component
@@ -44,16 +44,10 @@ type Config struct {
 func NewConfig(options *Options) *Config {
 	log.Info().Str("dir", options.DataDir).Msg("generating configuration")
 
-	if options.Clean {
-		log.Info().Msg("cleaning data directory")
-		os.RemoveAll(options.DataDir)
-	}
-	os.MkdirAll(options.DataDir, 0755)
-
 	return &Config{
-		Name:    options.Name,
-		DataDir: options.DataDir,
-		Verbose: options.Verbose,
+		Name:      options.Name,
+		DataDir:   options.DataDir,
+		Verbosity: options.Verbosity,
 		FeatureGates: map[string]bool{
 			"APIServerIdentity":         false,
 			"RuntimeClassInImageCriApi": false,
@@ -231,10 +225,6 @@ func (c *Config) KubeArgs() []string {
 	args := []string{
 		"--feature-gates=" + strings.Join(gates, ","),
 	}
-	if c.Verbose {
-		args = append(args, "--v=4")
-	} else {
-		args = append(args, "--v=2")
-	}
+	args = append(args, fmt.Sprintf("--v=%d", c.Verbosity*2))
 	return args
 }

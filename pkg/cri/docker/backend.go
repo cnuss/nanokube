@@ -3,9 +3,13 @@ package docker
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/rs/zerolog/log"
@@ -15,6 +19,7 @@ import (
 // Backend implements cri.Backend using the Docker Engine API.
 type Backend struct {
 	dockerSocket string
+	name         string // cluster name, used as managed-by label value
 	client       *dockerclient.Client
 
 	logMu      sync.Mutex
@@ -22,18 +27,29 @@ type Backend struct {
 }
 
 // New creates a Docker backend that connects to the given Docker socket.
-func New(dockerSocket string) *Backend {
+func New(dockerSocket, name string) *Backend {
 	return &Backend{
 		dockerSocket: dockerSocket,
+		name:         name,
 		logWriters:   make(map[string]context.CancelFunc),
 	}
 }
 
 func (b *Backend) Init(ctx context.Context) error {
+	httpClient := &http.Client{
+		Transport: &loggingTransport{
+			inner: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", b.dockerSocket)
+				},
+			},
+		},
+	}
 	var err error
 	b.client, err = dockerclient.NewClientWithOpts(
 		dockerclient.WithHost("unix://"+b.dockerSocket),
 		dockerclient.WithAPIVersionNegotiation(),
+		dockerclient.WithHTTPClient(httpClient),
 	)
 	if err != nil {
 		return fmt.Errorf("docker client: %w", err)
@@ -51,9 +67,35 @@ func (b *Backend) Init(ctx context.Context) error {
 
 func (b *Backend) Close() error {
 	if b.client != nil {
+		b.Cleanup()
 		return b.client.Close()
 	}
 	return nil
+}
+
+// Cleanup force-removes all containers managed by this backend.
+func (b *Backend) Cleanup() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	f := filters.NewArgs()
+	f.Add("label", labelManagedBy+"="+b.name)
+
+	log.Info().Str("label", labelManagedBy+"="+b.name).Msg("cleanup: removing managed containers")
+
+	containers, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		log.Warn().Err(err).Msg("cleanup: failed to list containers")
+		return
+	}
+	for _, c := range containers {
+		b.stopLogWriter(c.ID)
+		if err := b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			log.Warn().Err(err).Str("id", c.ID[:12]).Msg("cleanup: failed to remove container")
+		} else {
+			log.Info().Str("id", c.ID[:12]).Msg("cleanup: removed container")
+		}
+	}
 }
 
 func (b *Backend) Version(ctx context.Context) (*runtimeapi.VersionResponse, error) {

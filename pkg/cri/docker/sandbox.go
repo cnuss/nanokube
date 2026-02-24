@@ -7,12 +7,18 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandboxConfig, runtimeHandler string) (string, error) {
-	dockerConfig, hostConfig, netConfig := toSandboxContainerConfig(config)
+	dockerConfig, hostConfig, netConfig := toSandboxContainerConfig(config, b.name)
 	name := sandboxContainerName(config)
+
+	log.Debug().Str("name", name).Str("uid", config.GetMetadata().GetUid()).Msg("CRI RunPodSandbox")
+
+	// Remove any stale sandbox with the same name from a previous run
+	b.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
 
 	resp, err := b.client.ContainerCreate(ctx, dockerConfig, hostConfig, netConfig, nil, name)
 	if err != nil {
@@ -24,10 +30,12 @@ func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandb
 		return "", fmt.Errorf("start sandbox: %w", err)
 	}
 
+	log.Debug().Str("id", resp.ID[:12]).Str("name", name).Msg("CRI sandbox started")
 	return resp.ID, nil
 }
 
 func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error {
+	log.Debug().Str("id", podSandboxID[:12]).Msg("CRI StopPodSandbox")
 	// Stop all containers in this sandbox first
 	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
 		PodSandboxId: podSandboxID,
@@ -48,6 +56,7 @@ func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error
 }
 
 func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) error {
+	log.Debug().Str("id", podSandboxID[:12]).Msg("CRI RemovePodSandbox")
 	// Remove all containers in this sandbox first
 	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
 		PodSandboxId: podSandboxID,
@@ -105,7 +114,7 @@ func (b *Backend) PodSandboxStatus(ctx context.Context, podSandboxID string, ver
 func (b *Backend) ListPodSandbox(ctx context.Context, filter *runtimeapi.PodSandboxFilter) ([]*runtimeapi.PodSandbox, error) {
 	f := filters.NewArgs()
 	f.Add("label", labelContainerType+"="+containerTypeSandbox)
-	f.Add("label", labelManagedBy+"="+managedByNanokube)
+	f.Add("label", labelManagedBy+"="+b.name)
 
 	if filter != nil {
 		if filter.Id != "" {
@@ -147,7 +156,9 @@ func (b *Backend) ListPodSandbox(ctx context.Context, filter *runtimeapi.PodSand
 			Labels:      extractLabels(c.Labels),
 			Annotations: extractAnnotations(c.Labels),
 		})
+		log.Debug().Str("id", c.ID[:12]).Str("uid", c.Labels[labelSandboxUID]).Str("name", c.Labels[labelSandboxName]).Str("state", c.State).Msg("CRI ListPodSandbox entry")
 	}
+	log.Debug().Int("count", len(result)).Msg("CRI ListPodSandbox")
 	return result, nil
 }
 

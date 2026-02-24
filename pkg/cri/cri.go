@@ -16,6 +16,7 @@ import (
 
 type CRI struct {
 	dataDir      string
+	name         string
 	socketPath   string
 	backend      Backend
 	streaming    streaming.Runtime
@@ -23,11 +24,12 @@ type CRI struct {
 	grpcServer   *grpc.Server
 }
 
-func NewCRI(dataDir string) *CRI {
+func NewCRI(dataDir, name string) *CRI {
 	socketPath := filepath.Join(dataDir, "cri.sock")
-	backend, streaming := detectBackend()
+	backend, streaming := detectBackend(name)
 	return &CRI{
 		dataDir:    dataDir,
+		name:       name,
 		socketPath: socketPath,
 		backend:    backend,
 		streaming:  streaming,
@@ -36,8 +38,7 @@ func NewCRI(dataDir string) *CRI {
 
 func (c *CRI) Start(ctx context.Context) error {
 	if c.backend == nil {
-		log.Warn().Msg("no container runtime detected; CRI server disabled")
-		return nil
+		return fmt.Errorf("no container runtime detected (checked Docker, Podman)")
 	}
 
 	log.Info().Msg("starting CRI server")
@@ -124,10 +125,10 @@ func (c *CRI) Nameservers() []string {
 
 // detectBackend probes for Docker then Podman and returns the first available backend
 // along with its streaming runtime (for exec/attach/portforward).
-func detectBackend() (Backend, streaming.Runtime) {
+func detectBackend(name string) (Backend, streaming.Runtime) {
 	if sock := detectDockerSocket(); sock != "" {
 		log.Info().Str("socket", sock).Msg("detected Docker runtime")
-		b := docker.New(sock)
+		b := docker.New(sock, name)
 		return b, docker.NewStreamingRuntime(b)
 	}
 	if sock := detectPodmanSocket(); sock != "" {

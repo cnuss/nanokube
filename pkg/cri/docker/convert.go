@@ -7,7 +7,6 @@ import (
 
 	dockercontainer "github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/go-connections/nat"
@@ -15,10 +14,10 @@ import (
 )
 
 // sandboxLabels builds Docker labels for a CRI sandbox container.
-func sandboxLabels(config *runtimeapi.PodSandboxConfig) map[string]string {
+func sandboxLabels(config *runtimeapi.PodSandboxConfig, name string) map[string]string {
 	labels := map[string]string{
 		labelContainerType: containerTypeSandbox,
-		labelManagedBy:     managedByNanokube,
+		labelManagedBy:     name,
 		labelSandboxName:   config.GetMetadata().GetName(),
 		labelSandboxUID:    config.GetMetadata().GetUid(),
 	}
@@ -35,12 +34,13 @@ func sandboxLabels(config *runtimeapi.PodSandboxConfig) map[string]string {
 }
 
 // containerLabels builds Docker labels for a CRI container.
-func containerLabels(sandboxID string, config *runtimeapi.ContainerConfig, sandboxConfig *runtimeapi.PodSandboxConfig) map[string]string {
+func containerLabels(sandboxID string, config *runtimeapi.ContainerConfig, sandboxConfig *runtimeapi.PodSandboxConfig, name string) map[string]string {
 	labels := map[string]string{
 		labelContainerType:    containerTypeContainer,
-		labelManagedBy:        managedByNanokube,
+		labelManagedBy:        name,
 		labelSandboxID:        sandboxID,
 		labelContainerName:    config.GetMetadata().GetName(),
+		labelContainerAttempt: fmt.Sprintf("%d", config.GetMetadata().GetAttempt()),
 		labelSandboxName:      sandboxConfig.GetMetadata().GetName(),
 		labelSandboxNamespace: sandboxConfig.GetMetadata().GetNamespace(),
 		labelSandboxUID:       sandboxConfig.GetMetadata().GetUid(),
@@ -74,7 +74,7 @@ func sandboxContainerName(config *runtimeapi.PodSandboxConfig) string {
 }
 
 // toContainerConfig builds a Docker container config from CRI container config.
-func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, sandboxConfig *runtimeapi.PodSandboxConfig) (*dockercontainer.Config, *dockercontainer.HostConfig) {
+func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, sandboxConfig *runtimeapi.PodSandboxConfig, name string) (*dockercontainer.Config, *dockercontainer.HostConfig) {
 	image := config.GetImage().GetImage()
 
 	envs := make([]string, 0, len(config.GetEnvs()))
@@ -88,7 +88,7 @@ func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, san
 		Cmd:        strslice.StrSlice(config.GetArgs()),
 		Env:        envs,
 		WorkingDir: config.GetWorkingDir(),
-		Labels:     containerLabels(sandboxID, config, sandboxConfig),
+		Labels:     containerLabels(sandboxID, config, sandboxConfig, name),
 		StdinOnce:  config.GetStdinOnce(),
 		OpenStdin:  config.GetStdin(),
 		Tty:        config.GetTty(),
@@ -100,14 +100,13 @@ func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, san
 		PidMode:     dockercontainer.PidMode("container:" + sandboxID),
 	}
 
-	// Mounts
+	// Mounts — use Binds (legacy format) for broader Docker Desktop compatibility
 	for _, m := range config.GetMounts() {
-		hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   m.GetHostPath(),
-			Target:   m.GetContainerPath(),
-			ReadOnly: m.GetReadonly(),
-		})
+		bind := m.GetHostPath() + ":" + m.GetContainerPath()
+		if m.GetReadonly() {
+			bind += ":ro"
+		}
+		hostConfig.Binds = append(hostConfig.Binds, bind)
 	}
 
 	// Linux resources
@@ -144,11 +143,11 @@ func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, san
 }
 
 // toSandboxContainerConfig builds a Docker config for a pause (sandbox) container.
-func toSandboxContainerConfig(config *runtimeapi.PodSandboxConfig) (*dockercontainer.Config, *dockercontainer.HostConfig, *network.NetworkingConfig) {
+func toSandboxContainerConfig(config *runtimeapi.PodSandboxConfig, name string) (*dockercontainer.Config, *dockercontainer.HostConfig, *network.NetworkingConfig) {
 	dockerConfig := &dockercontainer.Config{
 		Image:    defaultPauseImage,
 		Hostname: config.GetHostname(),
-		Labels:   sandboxLabels(config),
+		Labels:   sandboxLabels(config, name),
 	}
 
 	hostConfig := &dockercontainer.HostConfig{
@@ -228,13 +227,25 @@ func dockerImageToRuntimeImage(img dockerimage.Summary) *runtimeapi.Image {
 	}
 }
 
-// extractLabels extracts CRI labels from Docker labels (excluding internal ones).
+// internalLabels are labels managed by the CRI backend that should not be
+// returned to the kubelet as user-supplied labels.
+var internalLabels = map[string]bool{
+	labelContainerType:    true,
+	labelManagedBy:        true,
+	labelSandboxID:        true,
+	labelContainerAttempt: true,
+	labelLogPath:          true,
+}
+
+// extractLabels extracts CRI labels from Docker labels (excluding internal
+// management labels and annotation-prefixed labels).
 func extractLabels(dockerLabels map[string]string) map[string]string {
 	labels := make(map[string]string)
 	for k, v := range dockerLabels {
-		if !strings.HasPrefix(k, labelPrefix) {
-			labels[k] = v
+		if internalLabels[k] || strings.HasPrefix(k, labelAnnotationPrefix) {
+			continue
 		}
+		labels[k] = v
 	}
 	return labels
 }

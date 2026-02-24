@@ -10,25 +10,28 @@ import (
 )
 
 type Options struct {
-	Name    string
-	Verbose bool
-	Clean   bool
-	DataDir string
-	Kubelet bool
+	Name      string
+	Verbosity int
+	Clean     bool
+	DataDir   string
+	Kubelet   bool
 }
 
 func NewOptions() *Options {
 	return &Options{
-		Name:    "nanokube",
-		Verbose: false,
-		Clean:   false,
-		DataDir: "",
-		Kubelet: true,
+		Name:      "nanokube",
+		Verbosity: 0,
+		Clean:     false,
+		DataDir:   "",
+		Kubelet:   true,
 	}
 }
 
 func (o *Options) Validate() error {
-	if o.Verbose {
+	switch {
+	case o.Verbosity >= 2:
+		zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	case o.Verbosity == 1:
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
 	if o.Name == "" {

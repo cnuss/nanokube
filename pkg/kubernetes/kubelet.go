@@ -107,6 +107,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 		runtimeService,
 		containerManager,
 	)
+	hk.KubeletDeps.OSInterface = &ScopedOS{DataDir: k.config.DataDir}
 	go hk.Run(ctx)
 
 	// Wait for kubelet to be healthy

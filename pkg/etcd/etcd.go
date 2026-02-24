@@ -33,7 +33,7 @@ func (e *Etcd) Start(ctx context.Context) error {
 	cfg := embed.NewConfig()
 	cfg.Dir = filepath.Join(e.config.DataDir, "etcd")
 
-	if e.config.Verbose {
+	if e.config.Verbosity > 0 {
 		cfg.LogLevel = "info"
 	} else {
 		cfg.LogLevel = "error"
