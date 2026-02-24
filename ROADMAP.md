@@ -34,35 +34,18 @@ These are skipped by critest itself (not failures), typically platform-specific 
 
 The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs.
 
-### Completed
+### Cadvisor — Container Stats
 
-#### 1. Cadvisor — Machine Info, Version Info, Filesystem Info
+- **Location**: `pkg/cri/cadvisor.go`
+- **Status**: `ContainerInfoV2` and `GetRequestedContainersInfo` still return empty maps.
+- **Fix**: Use Docker `ContainerStats` API for per-container CPU/memory/network/disk I/O. Map Docker container names back to pod sandbox IDs.
+- **Impact**: Enables `kubectl top pods`.
 
-- **Location**: `pkg/cri/cadvisor.go`, `pkg/cri/backend.go`
-- **Status**: Done. All methods backed by the container runtime via the `Backend` interface (no gopsutil dependency).
-- **MachineInfo**: CPU count, memory, boot ID, system UUID, machine ID — all from `Backend.HostInfo()` and `Backend.HostIDs()`. HostIDs runs a privileged busybox probe with host namespaces to read `/proc/sys/kernel/random/boot_id`, `/sys/class/dmi/id/product_uuid` (with device-tree fallbacks), and `/etc/machine-id`.
-- **VersionInfo**: Kernel version and OS from `Backend.HostInfo()` (wraps `docker info`).
-- **FsInfo methods** (`ImagesFsInfo`, `RootFsInfo`, `ContainerFsInfo`, `GetDirFsInfo`): Use `Backend.RunProbe()` to run `stat -f` inside a busybox container with host path bind-mounted. Results cached with 60s TTL.
-- **Remaining stubs**: `ContainerInfoV2` and `GetRequestedContainersInfo` still return empty maps (per-container stats not yet implemented).
-
-#### 2. ContainerManager — Resource Capacity
+### ContainerManager — Node Allocatable
 
 - **Location**: `pkg/kubernetes/kubelet.go`
-- **Status**: Done. `buildContainerManager()` wraps the upstream stub with a `capacityContainerManager` that overrides `GetCapacity()` with real CPU/memory from `cadvisor.MachineInfo()`.
-- **Remaining stubs**: `GetNodeAllocatableAbsolute`, `GetResources`, cgroup methods — delegated to the embedded stub.
-
-#### 3. EventRecorder — Real API Server Events
-
-- **Status**: Done. `hk.KubeletDeps.Recorder` set to `nil` after `NewHollowKubelet()`, causing the kubelet to create a real event broadcaster. Events (node ready, pod scheduled, image pulled) now appear in `kubectl get events`.
-
-#### 4. ProbeManager — Health Check Execution
-
-- **Status**: Done. `hk.KubeletDeps.ProbeManager` set to `nil`, causing the kubelet to create a real probe manager. Liveness, readiness, and startup probes execute via the CRI exec path.
-
-### Future Work
-
-- **Cadvisor container stats**: `ContainerInfoV2` and `GetRequestedContainersInfo` — use Docker `ContainerStats` API for per-container CPU/memory/network/disk I/O. Enables `kubectl top pods`.
-- **ContainerManager allocatable**: `GetNodeAllocatableAbsolute` — derive from host resources minus system-reserved.
+- **Status**: `GetNodeAllocatableAbsolute` delegates to the embedded stub.
+- **Fix**: Derive from host resources minus system-reserved.
 
 ### OS-Level — Keep as Stubs
 
