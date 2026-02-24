@@ -195,8 +195,30 @@ func (c *Config) KubeconfigPath() string {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		clientcmd.WriteToFile(config, path)
 	}
-	// TODO: upsert ~/.kube/config with this cluster
+	c.mergeKubeconfig(config)
 	return path
+}
+
+// mergeKubeconfig upserts this cluster's entries into ~/.kube/config
+// so that kubectl can reach the cluster without --kubeconfig.
+func (c *Config) mergeKubeconfig(src clientcmdapi.Config) {
+	dst, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
+	if err != nil {
+		dst = clientcmdapi.NewConfig()
+	}
+
+	dst.Clusters[c.Name] = src.Clusters[c.Name]
+	dst.AuthInfos[c.Name] = src.AuthInfos[c.Name]
+	dst.Contexts[c.Name] = src.Contexts[c.Name]
+	dst.CurrentContext = c.Name
+
+	if err := os.MkdirAll(filepath.Dir(clientcmd.RecommendedHomeFile), 0755); err != nil {
+		log.Warn().Err(err).Msg("failed to create ~/.kube directory")
+		return
+	}
+	if err := clientcmd.WriteToFile(*dst, clientcmd.RecommendedHomeFile); err != nil {
+		log.Warn().Err(err).Msg("failed to write ~/.kube/config")
+	}
 }
 
 func (c *Config) KubeArgs() []string {
