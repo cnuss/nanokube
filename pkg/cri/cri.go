@@ -7,54 +7,56 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cnuss/nanokube/pkg/cri/docker"
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
-// Server is a CRI gRPC server backed by a container engine.
-type Server struct {
-	socketPath     string
-	backend        Backend
-	grpc           *grpc.Server
-	streamServer   streaming.Server
-	streamRuntime  streaming.Runtime
+type CRI struct {
+	dataDir      string
+	socketPath   string
+	backend      Backend
+	streaming    streaming.Runtime
+	streamServer streaming.Server
+	grpcServer   *grpc.Server
 }
 
-// NewServer creates a CRI server. The socket is placed in dataDir/cri.sock.
-// streamRuntime provides exec/attach/portforward streaming support.
-func NewServer(dataDir string, backend Backend, streamRuntime streaming.Runtime) *Server {
-	return &Server{
-		socketPath:    filepath.Join(dataDir, "cri.sock"),
-		backend:       backend,
-		streamRuntime: streamRuntime,
+func NewCRI(dataDir string) *CRI {
+	socketPath := filepath.Join(dataDir, "cri.sock")
+	backend, streaming := detectBackend()
+	return &CRI{
+		dataDir:    dataDir,
+		socketPath: socketPath,
+		backend:    backend,
+		streaming:  streaming,
 	}
 }
 
-// SocketPath returns the Unix socket path for the CRI endpoint.
-func (s *Server) SocketPath() string {
-	return s.socketPath
-}
+func (c *CRI) Start(ctx context.Context) error {
+	if c.backend == nil {
+		log.Warn().Msg("no container runtime detected; CRI server disabled")
+		return nil
+	}
 
-// Start initialises the backend, creates the Unix socket, registers gRPC
-// services, starts the streaming HTTP server, and begins serving in background goroutines.
-func (s *Server) Start(ctx context.Context) error {
-	if err := s.backend.Init(ctx); err != nil {
+	log.Info().Msg("starting CRI server")
+
+	if err := c.backend.Init(ctx); err != nil {
 		return fmt.Errorf("cri backend init: %w", err)
 	}
 
 	// Start streaming HTTP server for exec/attach/portforward
-	if s.streamRuntime != nil {
+	if c.streaming != nil {
 		streamCfg := streaming.DefaultConfig
-		streamCfg.Addr = "127.0.0.1:0" // random port, localhost only
+		streamCfg.Addr = "127.0.0.1:0"
 		var err error
-		s.streamServer, err = streaming.NewServer(streamCfg, s.streamRuntime)
+		c.streamServer, err = streaming.NewServer(streamCfg, c.streaming)
 		if err != nil {
 			return fmt.Errorf("cri streaming server: %w", err)
 		}
 		go func() {
-			if err := s.streamServer.Start(true); err != nil {
+			if err := c.streamServer.Start(true); err != nil {
 				log.Error().Err(err).Msg("cri streaming server exited")
 			}
 		}()
@@ -62,48 +64,81 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Remove stale socket
-	os.Remove(s.socketPath)
+	os.Remove(c.socketPath)
 
-	lis, err := net.Listen("unix", s.socketPath)
+	lis, err := net.Listen("unix", c.socketPath)
 	if err != nil {
-		return fmt.Errorf("cri listen %s: %w", s.socketPath, err)
+		return fmt.Errorf("cri listen %s: %w", c.socketPath, err)
 	}
 
-	s.grpc = grpc.NewServer()
-	runtimeapi.RegisterRuntimeServiceServer(s.grpc, &runtimeService{backend: s.backend, streamServer: s.streamServer})
-	runtimeapi.RegisterImageServiceServer(s.grpc, &imageService{backend: s.backend})
+	c.grpcServer = grpc.NewServer()
+	runtimeapi.RegisterRuntimeServiceServer(c.grpcServer, &runtimeService{backend: c.backend, streamServer: c.streamServer})
+	runtimeapi.RegisterImageServiceServer(c.grpcServer, &imageService{backend: c.backend})
 
 	go func() {
-		log.Info().Str("socket", s.socketPath).Msg("cri server listening")
-		if err := s.grpc.Serve(lis); err != nil {
+		log.Info().Str("socket", c.socketPath).Msg("cri server listening")
+		if err := c.grpcServer.Serve(lis); err != nil {
 			log.Error().Err(err).Msg("cri server exited")
 		}
 	}()
 
-	// Shut down when context is cancelled
 	go func() {
 		<-ctx.Done()
-		s.Stop()
+		c.stop()
 	}()
 
 	return nil
 }
 
-// Stop gracefully shuts down the gRPC and streaming servers and cleans up.
-func (s *Server) Stop() {
-	if s.streamServer != nil {
-		s.streamServer.Stop()
+func (c *CRI) stop() {
+	if c.streamServer != nil {
+		c.streamServer.Stop()
 	}
-	if s.grpc != nil {
-		s.grpc.GracefulStop()
+	if c.grpcServer != nil {
+		c.grpcServer.GracefulStop()
 	}
-	s.backend.Close()
-	os.Remove(s.socketPath)
+	if c.backend != nil {
+		c.backend.Close()
+	}
+	os.Remove(c.socketPath)
 }
 
-// DetectDockerSocket probes well-known Docker socket paths and returns the
-// first one that exists. Returns "" if none found. OS-agnostic (no exec/shell).
-func DetectDockerSocket() string {
+func (c *CRI) Hostname() string {
+	return "localhost"
+}
+
+func (c *CRI) Endpoint() string {
+	if c.backend != nil {
+		return "unix://" + c.socketPath
+	}
+	return ""
+}
+
+func (c *CRI) Domain() string {
+	return ""
+}
+
+func (c *CRI) Nameservers() []string {
+	return []string{}
+}
+
+// detectBackend probes for Docker then Podman and returns the first available backend
+// along with its streaming runtime (for exec/attach/portforward).
+func detectBackend() (Backend, streaming.Runtime) {
+	if sock := detectDockerSocket(); sock != "" {
+		log.Info().Str("socket", sock).Msg("detected Docker runtime")
+		b := docker.New(sock)
+		return b, docker.NewStreamingRuntime(b)
+	}
+	if sock := detectPodmanSocket(); sock != "" {
+		log.Info().Str("socket", sock).Msg("detected Podman runtime")
+		// TODO: wire podman.New(sock) once backend is implemented
+		_ = sock
+	}
+	return nil, nil
+}
+
+func detectDockerSocket() string {
 	home, _ := os.UserHomeDir()
 	paths := []string{
 		"/var/run/docker.sock",
@@ -114,16 +149,13 @@ func DetectDockerSocket() string {
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
-			log.Debug().Str("socket", p).Msg("found docker socket")
 			return p
 		}
 	}
 	return ""
 }
 
-// DetectPodmanSocket probes well-known Podman socket paths and returns the
-// first one that exists. Returns "" if none found.
-func DetectPodmanSocket() string {
+func detectPodmanSocket() string {
 	home, _ := os.UserHomeDir()
 	xdg := os.Getenv("XDG_RUNTIME_DIR")
 	paths := []string{
@@ -136,7 +168,6 @@ func DetectPodmanSocket() string {
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
-			log.Debug().Str("socket", p).Msg("found podman socket")
 			return p
 		}
 	}

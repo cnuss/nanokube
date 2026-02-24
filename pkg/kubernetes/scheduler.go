@@ -1,6 +1,7 @@
-package internal
+package kubernetes
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
@@ -23,8 +24,7 @@ func NewScheduler(config *pkgconfig.Config) *Scheduler {
 	}
 }
 
-func (s *Scheduler) Start() error {
-	ctx := s.config.Ctx
+func (s *Scheduler) Start(ctx context.Context) error {
 	log.Info().Msg("starting scheduler")
 
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged

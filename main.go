@@ -1,28 +1,19 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 
-	"github.com/cnuss/nanokube/internal"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
-	"github.com/cnuss/nanokube/pkg/cri/docker"
+	"github.com/cnuss/nanokube/pkg/etcd"
+	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
-var (
-	name    string
-	verbose bool
-	clean   bool
-	dataDir string
-)
+var options = config.NewOptions()
 
 var rootCmd = &cobra.Command{
 	Use:           "nanokube [flags]",
@@ -30,69 +21,50 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if verbose {
-			zerolog.SetGlobalLevel(zerolog.DebugLevel)
-		}
-
-		if dataDir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return fmt.Errorf("failed to get home dir: %w", err)
-			}
-			dataDir = filepath.Join(home, ".nanokube")
-		}
-
-		return nil
+		return options.Validate()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
 		log.Debug().Msg("debug logging enabled")
-		log.Info().Str("data", dataDir).Msg("starting nanokube")
 
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		cfg, ctx, stop := options.Config()
 		defer stop()
 
-		cfg := config.NewConfig(ctx, name, dataDir, verbose, clean)
+		cfg.SetCRI(cri.NewCRI(cfg.DataDir))
+		cfg.Components = append(cfg.Components, cfg.CRI)
+		cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
 
-		// Set up CRI server if a Docker socket is available
-		var criServer *cri.Server
-		if dockerSock := cri.DetectDockerSocket(); dockerSock != "" {
-			backend := docker.New(dockerSock)
-			streamRuntime := docker.NewStreamingRuntime(backend)
-			criServer = cri.NewServer(dataDir, backend, streamRuntime)
-			cfg.Runtime.SetCRIEndpoint("unix://" + criServer.SocketPath())
-		}
+		// if options.Kubelet {
+		// 	cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
+		// }
 
-		components := []internal.Component{
-			internal.NewEtcd(cfg),
-			internal.NewAPIServer(cfg),
-			internal.NewControllerManager(cfg),
-			internal.NewScheduler(cfg),
-		}
-
-		if criServer != nil {
-			components = append(components, internal.NewCRI(cfg, criServer))
-		}
-
-		components = append(components, internal.NewKubelet(cfg))
-
-		for _, c := range components {
-			if err := c.Start(); err != nil {
+		for _, c := range cfg.Components {
+			if err := c.Start(ctx); err != nil {
 				return err
 			}
 		}
 
 		<-ctx.Done()
-		cfg.Runtime.Stop()
 		log.Info().Msg("shutting down")
 		return nil
 	},
 }
 
 func init() {
-	rootCmd.Flags().StringVar(&name, "name", "nanokube", "cluster name")
-	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable debug logging")
-	rootCmd.Flags().StringVar(&dataDir, "data", "", "data directory (default: ~/.nanokube)")
-	rootCmd.Flags().BoolVar(&clean, "clean", false, "clean data directory before starting")
+	rootCmd.Flags().StringVar(&options.Name, "name", "nanokube", "cluster name")
+	rootCmd.Flags().BoolVarP(&options.Verbose, "verbose", "v", false, "enable debug logging")
+	rootCmd.Flags().BoolVar(&options.Clean, "clean", false, "clean data directory before starting")
+	rootCmd.Flags().BoolVar(&options.Kubelet, "kubelet", true, "start the kubelet component")
+	rootCmd.Flags().StringVar(&options.DataDir, "data", func() string {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to get home dir")
+		}
+		return filepath.Join(home, ".nanokube")
+	}(), "data directory")
 }
 
 func main() {

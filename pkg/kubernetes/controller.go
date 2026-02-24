@@ -1,11 +1,12 @@
-package internal
+package kubernetes
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
 
-	pkgconfig "github.com/cnuss/nanokube/pkg/config"
+	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -13,18 +14,17 @@ import (
 )
 
 type ControllerManager struct {
-	config *pkgconfig.Config
+	config *config.Config
 	cmd    *cobra.Command
 }
 
-func NewControllerManager(config *pkgconfig.Config) *ControllerManager {
+func NewControllerManager(config *config.Config) *ControllerManager {
 	return &ControllerManager{
 		config: config,
 	}
 }
 
-func (c *ControllerManager) Start() error {
-	ctx := c.config.Ctx
+func (c *ControllerManager) Start(ctx context.Context) error {
 	log.Info().Msg("starting controller-manager")
 
 	// Allow logging reconfiguration since apiserver already configured it
@@ -56,7 +56,6 @@ func (c *ControllerManager) Start() error {
 	)
 
 	c.cmd.SetArgs(args)
-
 	go c.cmd.ExecuteContext(ctx)
 
 	// Wait for controller-manager to be healthy

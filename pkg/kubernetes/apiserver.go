@@ -1,30 +1,30 @@
-package internal
+package kubernetes
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
 
-	pkgconfig "github.com/cnuss/nanokube/pkg/config"
+	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 )
 
 type APIServer struct {
-	config *pkgconfig.Config
+	config *config.Config
 	cmd    *cobra.Command
 }
 
-func NewAPIServer(config *pkgconfig.Config) *APIServer {
+func NewAPIServer(config *config.Config) *APIServer {
 	return &APIServer{
 		config: config,
 	}
 }
 
-func (a *APIServer) Start() error {
-	ctx := a.config.Ctx
-	log.Info().Str("dataDir", a.config.DataDir).Msg("starting apiserver")
+func (a *APIServer) Start(ctx context.Context) error {
+	log.Info().Msg("starting apiserver")
 
 	/*
 		TODO:
@@ -72,7 +72,6 @@ func (a *APIServer) Start() error {
 	)
 
 	a.cmd.SetArgs(args)
-
 	go a.cmd.ExecuteContext(ctx)
 
 	// Wait for API server to be healthy

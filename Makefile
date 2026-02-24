@@ -42,7 +42,7 @@ critest: build
 		trap cleanup EXIT INT TERM HUP; \
 		rm -rf $(CRITEST_DIR); \
 		echo "Starting nanokube for critest..."; \
-		./nanokube --clean --data $(CRITEST_DIR) & \
+		./nanokube --clean --kubelet=false --data $(CRITEST_DIR) & \
 		NANOKUBE_PID=$$!; \
 		echo "Waiting for CRI socket (pid $$NANOKUBE_PID)..."; \
 		for i in $$(seq 1 30); do \

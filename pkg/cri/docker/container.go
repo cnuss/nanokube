@@ -353,7 +353,6 @@ func (b *Backend) ExecSync(ctx context.Context, containerID string, cmd []string
 	return stdout.Bytes(), stderr.Bytes(), nil
 }
 
-
 func (b *Backend) ContainerStats(ctx context.Context, containerID string) (*runtimeapi.ContainerStats, error) {
 	resp, err := b.client.ContainerStatsOneShot(ctx, containerID)
 	if err != nil {
