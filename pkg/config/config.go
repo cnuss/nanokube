@@ -105,6 +105,44 @@ func (c *Config) KubeletConfig() *kubeletconfig.KubeletConfiguration {
 	}
 }
 
+// ApplyKubeletConfig applies nanokube-specific overrides to an already-defaulted
+// KubeletConfiguration (as returned by options.NewKubeletConfiguration).
+func (c *Config) ApplyKubeletConfig(cfg *kubeletconfig.KubeletConfiguration) {
+	cfg.ContainerRuntimeEndpoint = c.CRI.Endpoint()
+	cfg.StaticPodPath = filepath.Join(c.DataDir, "manifests")
+	cfg.PodLogsDir = filepath.Join(c.DataDir, "logs")
+	cfg.ClusterDomain = c.CRI.Domain()
+	cfg.ClusterDNS = c.CRI.Nameservers()
+	cfg.Authentication = kubeletconfig.KubeletAuthentication{
+		Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
+		Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
+	}
+	cfg.Authorization = kubeletconfig.KubeletAuthorization{
+		Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
+	}
+	cfg.EnableServer = true
+	cfg.Port = 10250
+	cfg.ReadOnlyPort = 10255
+	cfg.EnableControllerAttachDetach = false
+	cfg.HairpinMode = kubeletconfig.HairpinVeth
+	cfg.CgroupsPerQOS = false
+	cfg.CgroupDriver = "cgroupfs"
+	cfg.EnforceNodeAllocatable = []string{}
+	cfg.EvictionHard = map[string]string{}
+	cfg.ImageGCHighThresholdPercent = 100
+	cfg.FailSwapOn = false
+	cfg.LocalStorageCapacityIsolation = false
+	cfg.RotateCertificates = false
+	cfg.ServerTLSBootstrap = false
+	cfg.RegisterNode = true
+	cfg.CPUCFSQuota = false
+	cfg.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
+	cfg.ContainerLogMaxFiles = 5
+	cfg.ContainerLogMaxWorkers = 1
+	cfg.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
+	cfg.ProtectKernelDefaults = false
+}
+
 func (c *Config) KubeletConfigPath() string {
 	config := c.KubeletConfig()
 	path := filepath.Join(c.DataDir, "kubelet.yaml")
