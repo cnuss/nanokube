@@ -30,8 +30,8 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 
 	k.cmd = app.NewKubeletCommand(ctx)
-	k.cmd.SilenceUsage = true
-	k.cmd.SilenceErrors = true
+	// k.cmd.SilenceUsage = true
+	// k.cmd.SilenceErrors = true
 	k.cmd.SetContext(ctx)
 
 	args := append(k.config.KubeArgs(),

@@ -37,9 +37,9 @@ var rootCmd = &cobra.Command{
 		cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
 		cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
 
-		// if options.Kubelet {
-		// 	cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
-		// }
+		if options.Kubelet {
+			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
+		}
 
 		for _, c := range cfg.Components {
 			if err := c.Start(ctx); err != nil {

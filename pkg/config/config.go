@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"time"
+
 	"github.com/rs/zerolog/log"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -94,6 +97,10 @@ func (c *Config) KubeletConfig() *kubeletconfig.KubeletConfiguration {
 		ServerTLSBootstrap:            false,
 		RegisterNode:                  true,
 		CPUCFSQuota:                   false,
+		CPUCFSQuotaPeriod:             metav1.Duration{Duration: 100 * time.Millisecond},
+		ContainerLogMaxFiles:          5,
+		ContainerLogMaxWorkers:        1,
+		ContainerLogMonitorInterval:   metav1.Duration{Duration: 10 * time.Second},
 		ProtectKernelDefaults:         false,
 	}
 }
@@ -165,7 +172,7 @@ func (c *Config) KubeArgs() []string {
 	if c.Verbose {
 		args = append(args, "--v=4")
 	} else {
-		args = append(args, "--v=0")
+		args = append(args, "--v=2")
 	}
 	return args
 }

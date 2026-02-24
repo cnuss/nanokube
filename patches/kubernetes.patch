@@ -13,7 +13,7 @@ index 834213e337f..61a7067246b 100644
 @@ -147,13 +146,7 @@ func runCommand(cmd *cobra.Command, opts *options.Options, registryOptions ...Op
  	}
  	cliflag.PrintFlags(cmd.Flags())
-
+ 
 -	ctx, cancel := context.WithCancel(context.Background())
 -	defer cancel()
 -	go func() {
@@ -22,6 +22,28 @@ index 834213e337f..61a7067246b 100644
 -		cancel()
 -	}()
 +	ctx := cmd.Context()
-
+ 
  	cc, sched, err := Setup(ctx, opts, registryOptions...)
  	if err != nil {
+diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
+index 54ff8d6a26b..a125d5ca7af 100644
+--- a/cmd/kubelet/app/server.go
++++ b/cmd/kubelet/app/server.go
+@@ -64,7 +64,6 @@ import (
+ 	"k8s.io/apimachinery/pkg/util/sets"
+ 	"k8s.io/apimachinery/pkg/util/validation/field"
+ 	"k8s.io/apimachinery/pkg/util/wait"
+-	genericapiserver "k8s.io/apiserver/pkg/server"
+ 	"k8s.io/apiserver/pkg/server/flagz"
+ 	"k8s.io/apiserver/pkg/server/healthz"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+@@ -287,8 +286,7 @@ is checked every 20 seconds (also configurable with a flag).`,
+ 			// log the kubelet's config for inspection
+ 			logger.V(5).Info("KubeletConfiguration", "configuration", klog.Format(config))
+ 
+-			// set up signal context for kubelet shutdown
+-			ctx := genericapiserver.SetupSignalContext()
++			ctx := cmd.Context()
+ 
+ 			utilfeature.DefaultMutableFeatureGate.AddMetrics()
+ 			// run the kubelet
