@@ -7,7 +7,6 @@ import (
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/volume"
-	"github.com/rs/zerolog/log"
 )
 
 // CreateVolume creates a Docker named volume.
@@ -20,7 +19,7 @@ func (b *Backend) CreateVolume(ctx context.Context, name string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	log.Debug().Str("name", resp.Name).Msg("created volume")
+	logger.Debug().Str("name", resp.Name).Msg("created volume")
 	return resp.Name, nil
 }
 
@@ -30,7 +29,7 @@ func (b *Backend) RemoveVolume(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	log.Debug().Str("name", name).Msg("removed volume")
+	logger.Debug().Str("name", name).Msg("removed volume")
 	return nil
 }
 
@@ -49,7 +48,7 @@ func (b *Backend) RemoveVolumes(ctx context.Context) ([]string, error) {
 			errs = append(errs, fmt.Errorf("remove volume %s: %w", v, err))
 		} else {
 			removed = append(removed, v)
-			log.Info().Str("name", v).Msg("cleanup: removed volume")
+			logger.Info().Str("name", v).Msg("cleanup: removed volume")
 		}
 	}
 	return removed, errors.Join(errs...)

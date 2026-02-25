@@ -7,14 +7,16 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
-	"github.com/rs/zerolog/log"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+var logger = component.NewLogger("etcd")
 
 type Etcd struct {
 	config *config.Config
@@ -28,7 +30,7 @@ func NewEtcd(config *config.Config) *Etcd {
 }
 
 func (e *Etcd) Start(ctx context.Context) error {
-	log.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
+	logger.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
 	cfg.Dir = filepath.Join(e.config.DataDir, "etcd")
@@ -77,7 +79,7 @@ func (e *Etcd) Start(ctx context.Context) error {
 
 	select {
 	case <-e.server.Server.ReadyNotify():
-		log.Info().Msg("etcd server ready")
+		logger.Info().Msg("etcd server ready")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -112,7 +114,7 @@ func (e *Etcd) Start(ctx context.Context) error {
 			_, err := client.Get(ctxTimeout, "health")
 			cancel()
 			if err == nil {
-				log.Info().Msg("etcd is ready")
+				logger.Info().Msg("etcd is ready")
 				return nil
 			}
 			time.Sleep(100 * time.Millisecond)

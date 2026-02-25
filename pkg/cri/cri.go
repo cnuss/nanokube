@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/cri/docker"
-	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
 )
+
+var logger = component.NewLogger("cri")
 
 type CRI struct {
 	dataDir      string
@@ -41,7 +43,7 @@ func (c *CRI) Start(ctx context.Context) error {
 		return fmt.Errorf("no container runtime detected (checked Docker, Podman)")
 	}
 
-	log.Info().Msg("starting CRI server")
+	logger.Info().Msg("starting CRI server")
 
 	if err := c.backend.Init(ctx); err != nil {
 		return fmt.Errorf("cri backend init: %w", err)
@@ -58,10 +60,10 @@ func (c *CRI) Start(ctx context.Context) error {
 		}
 		go func() {
 			if err := c.streamServer.Start(true); err != nil {
-				log.Error().Err(err).Msg("cri streaming server exited")
+				logger.Error().Err(err).Msg("cri streaming server exited")
 			}
 		}()
-		log.Info().Msg("cri streaming server started")
+		logger.Info().Msg("cri streaming server started")
 	}
 
 	// Remove stale socket
@@ -77,16 +79,16 @@ func (c *CRI) Start(ctx context.Context) error {
 	runtimeapi.RegisterImageServiceServer(c.grpcServer, &imageService{backend: c.backend})
 
 	go func() {
-		log.Info().Str("socket", c.socketPath).Msg("cri server listening")
+		logger.Info().Str("socket", c.socketPath).Msg("cri server listening")
 		if err := c.grpcServer.Serve(lis); err != nil {
-			log.Error().Err(err).Msg("cri server exited")
+			logger.Error().Err(err).Msg("cri server exited")
 		}
 	}()
 
 	go func() {
 		<-ctx.Done()
 		if err := Cleanup(c.backend); err != nil {
-			log.Warn().Err(err).Msg("cleanup: errors during teardown")
+			logger.Warn().Err(err).Msg("cleanup: errors during teardown")
 		}
 		c.stop()
 	}()
@@ -135,12 +137,12 @@ func (c *CRI) RuntimeBackend() Backend {
 // along with its streaming runtime (for exec/attach/portforward).
 func detectBackend(name string) (Backend, streaming.Runtime) {
 	if sock := detectDockerSocket(); sock != "" {
-		log.Info().Str("socket", sock).Msg("detected Docker runtime")
+		logger.Info().Str("socket", sock).Msg("detected Docker runtime")
 		b := docker.New(sock, name)
 		return b, docker.NewStreamingRuntime(b)
 	}
 	if sock := detectPodmanSocket(); sock != "" {
-		log.Info().Str("socket", sock).Msg("detected Podman runtime")
+		logger.Info().Str("socket", sock).Msg("detected Podman runtime")
 		// TODO: wire podman.New(sock) once backend is implemented
 		_ = sock
 	}

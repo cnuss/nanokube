@@ -8,7 +8,6 @@ import (
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
-	"github.com/rs/zerolog/log"
 )
 
 // EnsureNetwork creates or reuses a network for this cluster.
@@ -32,7 +31,7 @@ func (b *Backend) ensureBridgeNetwork(ctx context.Context) (string, error) {
 	resp, err := b.client.NetworkInspect(ctx, name, network.InspectOptions{})
 	if err == nil {
 		b.networkID = resp.ID
-		log.Info().Str("network", name).Str("id", resp.ID[:12]).Msg("reusing existing cluster network")
+		logger.Info().Str("network", name).Str("id", resp.ID[:12]).Msg("reusing existing cluster network")
 		return resp.ID, nil
 	}
 
@@ -60,7 +59,7 @@ func (b *Backend) ensureBridgeNetwork(ctx context.Context) (string, error) {
 	}
 
 	b.networkID = createResp.ID
-	log.Info().Str("network", name).Str("id", createResp.ID[:12]).Msg("created cluster network")
+	logger.Info().Str("network", name).Str("id", createResp.ID[:12]).Msg("created cluster network")
 	return createResp.ID, nil
 }
 
@@ -82,7 +81,7 @@ func (b *Backend) RemoveNetworks(ctx context.Context) ([]string, error) {
 			errs = append(errs, fmt.Errorf("remove network %s: %w", n.ID[:12], err))
 		} else {
 			removed = append(removed, n.ID)
-			log.Info().Str("id", n.ID[:12]).Str("name", n.Name).Msg("cleanup: removed network")
+			logger.Info().Str("id", n.ID[:12]).Str("name", n.Name).Msg("cleanup: removed network")
 		}
 	}
 

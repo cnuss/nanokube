@@ -9,7 +9,6 @@ import (
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -28,7 +27,7 @@ func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandb
 	dockerConfig, hostConfig, netConfig := toSandboxContainerConfig(config, b.name)
 	name := sandboxContainerName(config)
 
-	log.Debug().Str("name", name).Str("uid", config.GetMetadata().GetUid()).Msg("CRI RunPodSandbox")
+	logger.Debug().Str("name", name).Str("uid", config.GetMetadata().GetUid()).Msg("CRI RunPodSandbox")
 
 	// Remove any stale sandbox with the same name from a previous run
 	b.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
@@ -43,12 +42,12 @@ func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandb
 		return "", fmt.Errorf("start sandbox: %w", err)
 	}
 
-	log.Debug().Str("id", resp.ID[:12]).Str("name", name).Msg("CRI sandbox started")
+	logger.Debug().Str("id", resp.ID[:12]).Str("name", name).Msg("CRI sandbox started")
 	return resp.ID, nil
 }
 
 func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error {
-	log.Debug().Str("id", podSandboxID[:12]).Msg("CRI StopPodSandbox")
+	logger.Debug().Str("id", podSandboxID[:12]).Msg("CRI StopPodSandbox")
 	// Stop all containers in this sandbox first
 	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
 		PodSandboxId: podSandboxID,
@@ -69,7 +68,7 @@ func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error
 }
 
 func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) error {
-	log.Debug().Str("id", podSandboxID[:12]).Msg("CRI RemovePodSandbox")
+	logger.Debug().Str("id", podSandboxID[:12]).Msg("CRI RemovePodSandbox")
 
 	// Capture pod UID before removing the sandbox container (for volume cleanup)
 	var podUID string
@@ -99,7 +98,7 @@ func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) err
 		if listErr == nil {
 			for _, v := range volumes {
 				if rmErr := b.RemoveVolume(ctx, v); rmErr != nil {
-					log.Warn().Err(rmErr).Str("volume", v).Msg("failed to remove pod volume")
+					logger.Warn().Err(rmErr).Str("volume", v).Msg("failed to remove pod volume")
 				}
 			}
 		}
@@ -126,7 +125,7 @@ func (b *Backend) RemovePodSandboxes(ctx context.Context) ([]string, error) {
 			errs = append(errs, fmt.Errorf("remove sandbox %s: %w", s.ID[:12], err))
 		} else {
 			removed = append(removed, s.ID)
-			log.Info().Str("id", s.ID[:12]).Msg("cleanup: removed sandbox")
+			logger.Info().Str("id", s.ID[:12]).Msg("cleanup: removed sandbox")
 		}
 	}
 	return removed, errors.Join(errs...)
@@ -213,9 +212,9 @@ func (b *Backend) ListPodSandbox(ctx context.Context, filter *runtimeapi.PodSand
 			Labels:      extractLabels(c.Labels),
 			Annotations: extractAnnotations(c.Labels),
 		})
-		log.Debug().Str("id", c.ID[:12]).Str("uid", c.Labels[labelSandboxUID]).Str("name", c.Labels[labelSandboxName]).Str("state", c.State).Msg("CRI ListPodSandbox entry")
+		logger.Debug().Str("id", c.ID[:12]).Str("uid", c.Labels[labelSandboxUID]).Str("name", c.Labels[labelSandboxName]).Str("state", c.State).Msg("CRI ListPodSandbox entry")
 	}
-	log.Debug().Int("count", len(result)).Msg("CRI ListPodSandbox")
+	logger.Debug().Int("count", len(result)).Msg("CRI ListPodSandbox")
 	return result, nil
 }
 

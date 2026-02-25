@@ -37,7 +37,7 @@ func (c *certs) generate() {
 		if certErr == nil && keyErr == nil {
 			c.CertPEM = certPEM
 			c.KeyPEM = keyPEM
-			log.Info().Msg("certificates loaded from disk")
+			logger.Info().Msg("certificates loaded from disk")
 			return
 		}
 
@@ -84,7 +84,7 @@ func (c *certs) generate() {
 		}
 		c.KeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-		log.Info().Msg("certificates generated")
+		logger.Info().Msg("certificates generated")
 	})
 }
 

@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/config"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 )
+
+var apiserverLog = newLogger("apiserver")
 
 type APIServer struct {
 	config *config.Config
@@ -24,7 +25,7 @@ func NewAPIServer(config *config.Config) *APIServer {
 }
 
 func (a *APIServer) Start(ctx context.Context) error {
-	log.Info().Msg("starting apiserver")
+	apiserverLog.Info().Msg("starting apiserver")
 
 	/*
 		TODO:
@@ -91,7 +92,7 @@ func (a *APIServer) Start(ctx context.Context) error {
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
-					log.Info().Msg("apiserver is ready")
+					apiserverLog.Info().Msg("apiserver is ready")
 					return nil
 				}
 			}

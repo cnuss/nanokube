@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
-
-	"github.com/rs/zerolog"
 )
 
 type Options struct {
@@ -28,12 +26,6 @@ func NewOptions() *Options {
 }
 
 func (o *Options) Validate() error {
-	switch {
-	case o.Verbosity >= 2:
-		zerolog.SetGlobalLevel(zerolog.TraceLevel)
-	case o.Verbosity == 1:
-		zerolog.SetGlobalLevel(zerolog.DebugLevel)
-	}
 	if o.Name == "" {
 		return fmt.Errorf("name cannot be empty")
 	}

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
-	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -102,19 +101,19 @@ func Cleanup(backend Backend) error {
 	var errs []error
 
 	containers, err := backend.RemoveContainers(ctx)
-	log.Info().Strs("ids", containers).Msg("cleanup: removed containers")
+	logger.Info().Strs("ids", containers).Msg("cleanup: removed containers")
 	errs = append(errs, err)
 
 	sandboxes, err := backend.RemovePodSandboxes(ctx)
-	log.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
+	logger.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
 	errs = append(errs, err)
 
 	volumes, err := backend.RemoveVolumes(ctx)
-	log.Info().Strs("ids", volumes).Msg("cleanup: removed volumes")
+	logger.Info().Strs("ids", volumes).Msg("cleanup: removed volumes")
 	errs = append(errs, err)
 
 	networks, err := backend.RemoveNetworks(ctx)
-	log.Info().Strs("ids", networks).Msg("cleanup: removed networks")
+	logger.Info().Strs("ids", networks).Msg("cleanup: removed networks")
 	errs = append(errs, err)
 
 	return errors.Join(errs...)

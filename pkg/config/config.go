@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
-	"github.com/rs/zerolog/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/tools/clientcmd"
@@ -18,6 +17,8 @@ import (
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	kubeletscheme "k8s.io/kubernetes/pkg/kubelet/apis/config/scheme"
 )
+
+var logger = component.NewLogger("config")
 
 type CRIProvider interface {
 	component.Component
@@ -38,7 +39,7 @@ type Config struct {
 }
 
 func NewConfig(options *Options) *Config {
-	log.Info().Str("dir", options.DataDir).Msg("generating configuration")
+	logger.Info().Str("dir", options.DataDir).Msg("generating configuration")
 
 	return &Config{
 		Name:      options.Name,
@@ -205,11 +206,11 @@ func (c *Config) mergeKubeconfig(src clientcmdapi.Config) {
 	dst.CurrentContext = c.Name
 
 	if err := os.MkdirAll(filepath.Dir(clientcmd.RecommendedHomeFile), 0755); err != nil {
-		log.Warn().Err(err).Msg("failed to create ~/.kube directory")
+		logger.Warn().Err(err).Msg("failed to create ~/.kube directory")
 		return
 	}
 	if err := clientcmd.WriteToFile(*dst, clientcmd.RecommendedHomeFile); err != nil {
-		log.Warn().Err(err).Msg("failed to write ~/.kube/config")
+		logger.Warn().Err(err).Msg("failed to write ~/.kube/config")
 	}
 }
 

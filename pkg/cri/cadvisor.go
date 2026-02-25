@@ -10,7 +10,6 @@ import (
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
-	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 )
@@ -49,14 +48,14 @@ func (c *Cadvisor) Start() error {
 func (c *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 	cpus, memBytes, _, _, err := c.backend.HostInfo(c.ctx)
 	if err != nil {
-		log.Warn().Err(err).Msg("cadvisor: HostInfo failed, reporting minimal capacity")
+		logger.Warn().Err(err).Msg("cadvisor: HostInfo failed, reporting minimal capacity")
 		cpus = 1
 		memBytes = 0
 	}
 
 	bootID, systemUUID, machineID, err := c.backend.HostIDs(c.ctx)
 	if err != nil {
-		log.Warn().Err(err).Msg("cadvisor: HostIDs probe failed")
+		logger.Warn().Err(err).Msg("cadvisor: HostIDs probe failed")
 	}
 
 	return &cadvisorapi.MachineInfo{
@@ -72,7 +71,7 @@ func (c *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 func (c *Cadvisor) VersionInfo() (*cadvisorapi.VersionInfo, error) {
 	_, _, kernelVersion, osVersion, err := c.backend.HostInfo(c.ctx)
 	if err != nil {
-		log.Warn().Err(err).Msg("cadvisor: HostInfo failed for VersionInfo")
+		logger.Warn().Err(err).Msg("cadvisor: HostInfo failed for VersionInfo")
 		return &cadvisorapi.VersionInfo{}, nil
 	}
 
@@ -109,14 +108,14 @@ func (c *Cadvisor) ContainerInfoV2(name string, options cadvisorapiv2.RequestOpt
 
 		containers, err := c.backend.ListContainers(ctx, nil)
 		if err != nil {
-			log.Warn().Err(err).Msg("cadvisor: ListContainers failed")
+			logger.Warn().Err(err).Msg("cadvisor: ListContainers failed")
 			return result, nil
 		}
 
 		for _, ctr := range containers {
 			stats, err := c.backend.ContainerStats(ctx, ctr.Id)
 			if err != nil {
-				log.Debug().Err(err).Str("id", ctr.Id[:12]).Msg("cadvisor: ContainerStats failed, skipping")
+				logger.Debug().Err(err).Str("id", ctr.Id[:12]).Msg("cadvisor: ContainerStats failed, skipping")
 				continue
 			}
 			result[ctr.Id] = c.criStatsToV2(ctr.CreatedAt, ctr.Labels, ctr.GetImage().GetImage(), stats)
@@ -237,14 +236,14 @@ func (c *Cadvisor) GetRequestedContainersInfo(containerName string, options cadv
 
 	containers, err := c.backend.ListContainers(ctx, nil)
 	if err != nil {
-		log.Warn().Err(err).Msg("cadvisor: ListContainers failed")
+		logger.Warn().Err(err).Msg("cadvisor: ListContainers failed")
 		return result, nil
 	}
 
 	for _, ctr := range containers {
 		stats, err := c.backend.ContainerStats(ctx, ctr.Id)
 		if err != nil {
-			log.Debug().Err(err).Str("id", ctr.Id[:12]).Msg("cadvisor: ContainerStats failed, skipping")
+			logger.Debug().Err(err).Str("id", ctr.Id[:12]).Msg("cadvisor: ContainerStats failed, skipping")
 			continue
 		}
 		result[ctr.Id] = c.criStatsToV1(ctr, stats)
@@ -346,13 +345,13 @@ func (c *Cadvisor) probeFsInfo(path string) (cadvisorapiv2.FsInfo, error) {
 		[]string{path + ":" + hostMount + ":ro"},
 	)
 	if err != nil {
-		log.Warn().Err(err).Str("path", path).Msg("cadvisor: fs probe failed")
+		logger.Warn().Err(err).Str("path", path).Msg("cadvisor: fs probe failed")
 		return cadvisorapiv2.FsInfo{}, nil
 	}
 
 	info, err := parseStatF(strings.TrimSpace(string(out)))
 	if err != nil {
-		log.Warn().Err(err).Str("output", string(out)).Msg("cadvisor: failed to parse stat -f output")
+		logger.Warn().Err(err).Str("output", string(out)).Msg("cadvisor: failed to parse stat -f output")
 		return cadvisorapiv2.FsInfo{}, nil
 	}
 

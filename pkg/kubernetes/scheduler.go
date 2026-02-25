@@ -7,11 +7,12 @@ import (
 	"time"
 
 	pkgconfig "github.com/cnuss/nanokube/pkg/config"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
 	"k8s.io/kubernetes/cmd/kube-scheduler/app"
 )
+
+var schedulerLog = newLogger("scheduler")
 
 type Scheduler struct {
 	config *pkgconfig.Config
@@ -25,7 +26,7 @@ func NewScheduler(config *pkgconfig.Config) *Scheduler {
 }
 
 func (s *Scheduler) Start(ctx context.Context) error {
-	log.Info().Msg("starting scheduler")
+	schedulerLog.Info().Msg("starting scheduler")
 
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 
@@ -68,7 +69,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
-					log.Info().Msg("scheduler is ready")
+					schedulerLog.Info().Msg("scheduler is ready")
 					return nil
 				}
 			}

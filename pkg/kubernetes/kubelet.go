@@ -11,7 +11,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
-	"github.com/rs/zerolog/log"
+	deps "github.com/cnuss/nanokube/pkg/kubernetes/kubelet"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,6 +24,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
+var kubeletLog = newLogger("kubelet")
+
 type Kubelet struct {
 	config *config.Config
 }
@@ -35,7 +37,7 @@ func NewKubelet(config *config.Config) *Kubelet {
 }
 
 func (k *Kubelet) Start(ctx context.Context) error {
-	log.Info().Msg("starting kubelet")
+	kubeletLog.Info().Msg("starting kubelet")
 
 	// Build KubeletFlags — use a dedicated subdirectory so the kubelet's
 	// internal cleanup doesn't interfere with certs, etcd data, etc.
@@ -84,7 +86,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	// Connect to CRI socket via remote clients
 	endpoint := k.config.CRI.Endpoint()
 	logger := klog.Background()
-	tp := TracerProvider{}
+	tp := deps.TracerProvider{}
 	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
 	if err != nil {
 		return fmt.Errorf("kubelet runtime service: %w", err)
@@ -114,12 +116,12 @@ func (k *Kubelet) Start(ctx context.Context) error {
 		runtimeService,
 		containerManager,
 	)
-	hk.KubeletDeps.OSInterface = &ScopedOS{DataDir: k.config.DataDir}
-	hk.KubeletDeps.Mounter = &ScopedMounter{DataDir: k.config.DataDir}
-	hk.KubeletDeps.Subpather = &ScopedSubpath{DataDir: k.config.DataDir}
-	hk.KubeletDeps.HostUtil = &ScopedHostUtil{DataDir: k.config.DataDir}
-	hk.KubeletDeps.Recorder = EventRecorder{}
-	hk.KubeletDeps.ProbeManager = ProbeManager{}
+	hk.KubeletDeps.OSInterface = &deps.ScopedOS{DataDir: k.config.DataDir}
+	hk.KubeletDeps.Mounter = &deps.ScopedMounter{DataDir: k.config.DataDir}
+	hk.KubeletDeps.Subpather = &deps.ScopedSubpath{DataDir: k.config.DataDir}
+	hk.KubeletDeps.HostUtil = &deps.ScopedHostUtil{DataDir: k.config.DataDir}
+	hk.KubeletDeps.Recorder = deps.EventRecorder{}
+	hk.KubeletDeps.ProbeManager = deps.ProbeManager{}
 	go hk.Run(ctx)
 
 	// Wait for kubelet to be healthy
@@ -139,7 +141,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
-					log.Info().Msg("kubelet is ready")
+					kubeletLog.Info().Msg("kubelet is ready")
 					return nil
 				}
 			}
@@ -169,7 +171,7 @@ func buildContainerManager(cadvisorInterface *cri.Cadvisor) cm.ContainerManager 
 
 	info, err := cadvisorInterface.MachineInfo()
 	if err != nil || info.NumCores == 0 {
-		log.Warn().Err(err).Msg("kubelet: MachineInfo unavailable, using stub container manager")
+		kubeletLog.Warn().Err(err).Msg("kubelet: MachineInfo unavailable, using stub container manager")
 		return stub
 	}
 
@@ -177,7 +179,7 @@ func buildContainerManager(cadvisorInterface *cri.Cadvisor) cm.ContainerManager 
 		v1.ResourceCPU:    *resource.NewQuantity(int64(info.NumCores), resource.DecimalSI),
 		v1.ResourceMemory: *resource.NewQuantity(int64(info.MemoryCapacity), resource.BinarySI),
 	}
-	log.Info().Int("cpus", info.NumCores).Uint64("memory", info.MemoryCapacity).Msg("kubelet: runtime-backed capacity")
+	kubeletLog.Info().Int("cpus", info.NumCores).Uint64("memory", info.MemoryCapacity).Msg("kubelet: runtime-backed capacity")
 
 	return &capacityContainerManager{
 		ContainerManager: stub,

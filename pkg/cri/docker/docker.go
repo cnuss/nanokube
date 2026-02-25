@@ -11,13 +11,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
-	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
+
+var logger = component.NewLogger("docker")
 
 // Backend implements cri.Backend using the Docker Engine API.
 type Backend struct {
@@ -65,7 +67,7 @@ func (b *Backend) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("docker ping: %w", err)
 	}
-	log.Info().Str("api", ping.APIVersion).Msg("docker backend connected")
+	logger.Info().Str("api", ping.APIVersion).Msg("docker backend connected")
 	return nil
 }
 

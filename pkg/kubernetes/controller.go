@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/config"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
 	"k8s.io/kubernetes/cmd/kube-controller-manager/app"
 )
+
+var controllerLog = newLogger("controller")
 
 type ControllerManager struct {
 	config *config.Config
@@ -25,7 +26,7 @@ func NewControllerManager(config *config.Config) *ControllerManager {
 }
 
 func (c *ControllerManager) Start(ctx context.Context) error {
-	log.Info().Msg("starting controller-manager")
+	controllerLog.Info().Msg("starting controller-manager")
 
 	// Allow logging reconfiguration since apiserver already configured it
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
@@ -75,7 +76,7 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
-					log.Info().Msg("controller-manager is ready")
+					controllerLog.Info().Msg("controller-manager is ready")
 					return nil
 				}
 			}

@@ -1,4 +1,4 @@
-package kubernetes
+package kubelet
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"

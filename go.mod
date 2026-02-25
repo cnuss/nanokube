@@ -11,6 +11,7 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.6.8
 	go.etcd.io/etcd/client/v3 v3.6.8
 	go.etcd.io/etcd/server/v3 v3.6.5
+	go.opentelemetry.io/otel v1.36.0
 	go.opentelemetry.io/otel/trace v1.36.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.72.2
@@ -23,6 +24,7 @@ require (
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/kubelet v0.0.0
 	k8s.io/kubernetes v1.35.1
+	k8s.io/mount-utils v0.35.0
 )
 
 require (
@@ -130,7 +132,6 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/github.com/emicklei/go-restful/otelrestful v0.44.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
-	go.opentelemetry.io/otel v1.36.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.34.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.34.0 // indirect
 	go.opentelemetry.io/otel/metric v1.36.0 // indirect
@@ -175,7 +176,6 @@ require (
 	k8s.io/kube-scheduler v0.0.0 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
 	k8s.io/metrics v0.0.0 // indirect
-	k8s.io/mount-utils v0.35.0 // indirect
 	k8s.io/pod-security-admission v0.0.0 // indirect
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect
