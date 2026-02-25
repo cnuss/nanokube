@@ -32,17 +32,17 @@ These are skipped by critest itself (not failures), typically platform-specific 
 
 ## HollowKubelet: Replace Fakes with Real Implementations
 
-The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs.
+The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs. Kubelet deps live in `pkg/kubernetes/kubelet/`.
 
 ### OS-Level Stubs (Need Rethinking)
 
 | Stub | Interface | Status |
 |------|-----------|--------|
-| `ScopedMounter` | `mount.Interface` | Stubbed — all methods return `errNotImplemented` (except `CanSafelySkipMountPointCheck`). Previously had in-memory mount tracking; removed pending redesign. |
+| `ScopedMounter` | `mount.Interface` | Stubbed — all methods return `errNotImplemented`. |
 | `ScopedHostUtil` | `hostutil.HostUtils` | Stubbed — `PathExists`, `GetFileType`, `EvalHostSymlinks`, `GetOwner`, `GetMode` return `errNotImplemented`. No-ops: `MakeRShared`, `DeviceOpened`, `PathIsDevice`, `GetSELinuxSupport`, `GetSELinuxMountContext`. |
 | `ScopedSubpath` | `subpath.Interface` | Partial — `SafeMakeDir` is real (scoped to DataDir). `CleanSubPaths` and `PrepareSafeSubpath` are no-ops. |
 
-All stubbed methods emit `log.Warn()` when called.
+All stubbed methods emit `Warn()` when called.
 
 ### OS-Level — Real Implementations
 
@@ -50,13 +50,36 @@ All stubbed methods emit `log.Warn()` when called.
 |-----------|-----------|-------|
 | `ScopedOS` | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir. |
 | `FakeOOMAdjuster` | `OOMAdjuster` | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
-| `NoopTracerProvider` | `trace.TracerProvider` | No-op is correct unless tracing is explicitly wanted. |
+| `TracerProvider` | `trace.TracerProvider` | No-op wrapping `noop.TracerProvider` with warn logging. |
+
+## Pod Volume Types
+
+Support for non-deprecated volume types in the Pod spec. Requires `ScopedMounter` and `ScopedHostUtil` implementations.
+
+| Volume Type | Status | Notes |
+|-------------|--------|-------|
+| `EmptyDir` | Not started | Temp directory scoped to pod lifetime. Simplest to implement — create dir under DataDir, clean up on pod removal. |
+| `HostPath` | Not started | Direct host file/dir mount into container. Needs `ScopedMounter.Mount` and `ScopedHostUtil.PathExists`/`GetFileType`. |
+| `Secret` | Not started | Kubelet writes secret data to a tmpdir, then bind-mounts it. Needs `ScopedMounter.Mount`. |
+| `ConfigMap` | Not started | Same as Secret — kubelet writes configmap data to tmpdir and bind-mounts. |
+| `DownwardAPI` | Not started | Pod metadata (labels, annotations, resource limits) projected as files. Same mount pattern. |
+| `Projected` | Not started | Combines Secret, ConfigMap, DownwardAPI, and ServiceAccountToken into a single mount. |
+| `PersistentVolumeClaim` | Not started | PVC reference — requires a volume plugin or CSI driver to back it. |
+| `CSI` | Not started | Ephemeral CSI volumes — requires a CSI driver and the CSI node plugin. |
+| `Ephemeral` | Not started | Cluster-driver ephemeral volumes tied to pod lifecycle. Requires CSI infrastructure. |
+| `NFS` | Not started | Network filesystem mount. Needs real `ScopedMounter.Mount` with NFS support. |
+| `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling. |
+| `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. |
 
 ## Docker Volume & Network Support
 
 - **Volumes**: `CreateVolume`, `RemoveVolume`, `RemoveVolumes`, `ListVolumes` on the `Backend` interface. Docker implementation uses named volumes with `managed-by` labels and cluster-name prefix. Pod volumes are cleaned up on sandbox removal.
 - **Network**: `EnsureNetwork`, `RemoveNetworks` on the `Backend` interface. `NetworkType` enum (`bridge`, `host`, `none`) in `pkg/cri/types/`. Bridge creates a dedicated `<cluster>-bridge` network by cloning the built-in bridge config. Host and none are no-ops. Non-host-network sandboxes lazily ensure bridge on `RunPodSandbox`.
 - **Cleanup**: Centralized `Cleanup()` in `pkg/cri/backend.go` — calls `RemoveContainers` → `RemovePodSandboxes` → `RemoveVolumes` → `RemoveNetworks` with 30s timeout. Invoked via `ctx.Done`.
+
+## Logging
+
+Structured logging via `zerolog` with component-scoped loggers. All packages use `component.NewLogger("name")` which delegates to a shared root logger at call time. `component.Setup()` handles bootstrap: flag parsing, log level, data dir clean, and log file mirroring (console + disk). Verbosity: default=info, `-v`=debug, `-vv`=trace.
 
 ## Podman Backend
 
