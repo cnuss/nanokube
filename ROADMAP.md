@@ -38,8 +38,8 @@ The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub d
 
 | Stub             | Interface            | Status                                                                                                                                                                                                             |
 | ---------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ScopedMounter`  | `mount.Interface`    | Stubbed — all methods return `errNotImplemented`.                                                                                                                                                                  |
-| `ScopedHostUtil` | `hostutil.HostUtils` | Stubbed — `PathExists`, `GetFileType`, `EvalHostSymlinks`, `GetOwner`, `GetMode` return `errNotImplemented`. No-ops: `MakeRShared`, `DeviceOpened`, `PathIsDevice`, `GetSELinuxSupport`, `GetSELinuxMountContext`. |
+| `ScopedMounter`  | `mount.Interface`    | Partial — tmpfs mounts tracked via `sync.Map`, `IsLikelyNotMountPoint`/`IsMountPoint` check tracking map. Other fstypes return `errNotImplemented`. Lives in `pkg/kubernetes/kubelet/mounter/`. |
+| `ScopedHostUtil` | `hostutil.HostUtils` | Partial — `PathExists`, `GetFileType`, `EvalHostSymlinks` are real (os.Stat + mode inspection). `GetOwner`, `GetMode` return `errNotImplemented`. No-ops: `MakeRShared`, `DeviceOpened`, `PathIsDevice`, `GetSELinuxSupport`, `GetSELinuxMountContext`. |
 | `ScopedSubpath`  | `subpath.Interface`  | Partial — `SafeMakeDir` is real (scoped to DataDir). `CleanSubPaths` and `PrepareSafeSubpath` are no-ops.                                                                                                          |
 
 All stubbed methods emit `Warn()` when called.
@@ -48,7 +48,7 @@ All stubbed methods emit `Warn()` when called.
 
 | Component         | Interface                   | Notes                                                                           |
 | ----------------- | --------------------------- | ------------------------------------------------------------------------------- |
-| `ScopedOS`        | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir.                      |
+| `ScopedOS`        | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir. `Hostname()` returns `os.Hostname()` — should return the configured node name instead. |
 | `FakeOOMAdjuster` | `OOMAdjuster`               | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
 | `TracerProvider`  | `trace.TracerProvider`      | No-op wrapping `noop.TracerProvider` with warn logging.                         |
 
@@ -60,7 +60,7 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
-| 1 | `EmptyDir` | Not started | Used by nearly every pod (scratch space, init container handoff). Default medium is just a mkdir — no mounter needed. `Medium: Memory` needs tmpfs mount. |
+| 1 | `EmptyDir` | **Done** | Default medium uses bind mount from kubelet dir. `Medium: Memory` uses Docker native tmpfs via `MountLookup` interface. |
 | 2 | `Projected` | Not started | Modern k8s (1.22+) mounts the default ServiceAccount token via Projected. **Every pod with a SA hits this.** Combines Secret, ConfigMap, DownwardAPI, SA token. Needs `ScopedMounter`. |
 | 3 | `Secret` | Not started | SA token (legacy path), TLS certs, registry credentials. Kubelet writes to tmpdir, bind-mounts in. Needs `ScopedMounter`. |
 | 4 | `ConfigMap` | Not started | Application config. Same write-and-mount pattern as Secret. |
@@ -70,7 +70,7 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
 | 5 | `DownwardAPI` | Not started | Pod metadata as files (labels, annotations, resource limits). Same mount pattern as Secret/ConfigMap. |
-| 6 | `HostPath` | Not started | System agents, log collectors, dev mounts. Needs `ScopedMounter.Mount` and `ScopedHostUtil.PathExists`/`GetFileType`. |
+| 6 | `HostPath` | **Done** | System agents, log collectors, dev mounts. HostPath plugin doesn't mount — kubelet passes host path directly as CRI mount source. Required `ScopedHostUtil.PathExists`/`GetFileType`/`EvalHostSymlinks`. |
 | 7 | `PersistentVolumeClaim` | Not started | Stateful workloads (databases, queues). Requires a volume plugin or CSI driver to provision/attach. |
 
 ### P2 — Advanced / infrastructure

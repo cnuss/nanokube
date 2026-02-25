@@ -3,6 +3,7 @@ package kubelet
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 )
@@ -33,18 +34,42 @@ func (h *ScopedHostUtil) MakeRShared(path string) error {
 }
 
 func (h *ScopedHostUtil) GetFileType(pathname string) (hostutil.FileType, error) {
-	hostutilLog.Warn().Str("path", pathname).Msg("GetFileType not implemented")
-	return hostutil.FileTypeUnknown, errHostUtilNotImplemented
+	info, err := os.Stat(pathname)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return hostutil.FileTypeUnknown, fmt.Errorf("path %q does not exist", pathname)
+		}
+		return hostutil.FileTypeUnknown, err
+	}
+	mode := info.Mode()
+	if mode.IsDir() {
+		return hostutil.FileTypeDirectory, nil
+	} else if mode.IsRegular() {
+		return hostutil.FileTypeFile, nil
+	} else if mode&os.ModeSocket == os.ModeSocket {
+		return hostutil.FileTypeSocket, nil
+	} else if mode&os.ModeDevice == os.ModeDevice {
+		if mode&os.ModeCharDevice == os.ModeCharDevice {
+			return hostutil.FileTypeCharDev, nil
+		}
+		return hostutil.FileTypeBlockDev, nil
+	}
+	return hostutil.FileTypeUnknown, fmt.Errorf("unknown file type for %q", pathname)
 }
 
 func (h *ScopedHostUtil) PathExists(pathname string) (bool, error) {
-	hostutilLog.Warn().Str("path", pathname).Msg("PathExists not implemented")
-	return false, errHostUtilNotImplemented
+	_, err := os.Stat(pathname)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (h *ScopedHostUtil) EvalHostSymlinks(pathname string) (string, error) {
-	hostutilLog.Warn().Str("path", pathname).Msg("EvalHostSymlinks not implemented")
-	return "", errHostUtilNotImplemented
+	return filepath.EvalSymlinks(pathname)
 }
 
 func (h *ScopedHostUtil) GetOwner(pathname string) (int64, int64, error) {
