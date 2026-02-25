@@ -17,51 +17,71 @@ type ScopedMounter struct {
 }
 
 func (m *ScopedMounter) Mount(source string, target string, fstype string, options []string) error {
-	mounterLog.Warn().Str("source", source).Str("target", target).Msg("Mount not implemented")
+	switch fstype {
+	case "tmpfs":
+		mounterLog.Trace().Str("source", source).Str("target", target).Strs("options", options).Msg("Mount tmpfs (todo: emptydir)")
+	default:
+		mounterLog.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("Mount not implemented")
+	}
 	return errMounterNotImplemented
 }
 
 func (m *ScopedMounter) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	mounterLog.Warn().Str("source", source).Str("target", target).Msg("MountSensitive not implemented")
+	switch fstype {
+	case "tmpfs":
+		mounterLog.Trace().Str("source", source).Str("target", target).Strs("options", options).Int("sensitiveCount", len(sensitiveOptions)).Msg("MountSensitive tmpfs (todo: emptydir)")
+	default:
+		mounterLog.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Int("sensitiveCount", len(sensitiveOptions)).Msg("MountSensitive not implemented")
+	}
 	return errMounterNotImplemented
 }
 
 func (m *ScopedMounter) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	mounterLog.Warn().Str("source", source).Str("target", target).Msg("MountSensitiveWithoutSystemd not implemented")
+	switch fstype {
+	case "tmpfs":
+		mounterLog.Trace().Str("source", source).Str("target", target).Strs("options", options).Int("sensitiveCount", len(sensitiveOptions)).Msg("MountSensitiveWithoutSystemd tmpfs (todo: emptydir)")
+	default:
+		mounterLog.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Int("sensitiveCount", len(sensitiveOptions)).Msg("MountSensitiveWithoutSystemd not implemented")
+	}
 	return errMounterNotImplemented
 }
 
 func (m *ScopedMounter) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	mounterLog.Warn().Str("source", source).Str("target", target).Msg("MountSensitiveWithoutSystemdWithMountFlags not implemented")
+	switch fstype {
+	case "tmpfs":
+		mounterLog.Trace().Str("source", source).Str("target", target).Strs("options", options).Int("sensitiveCount", len(sensitiveOptions)).Strs("mountFlags", mountFlags).Msg("MountSensitiveWithoutSystemdWithMountFlags tmpfs (todo: emptydir)")
+	default:
+		mounterLog.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Int("sensitiveCount", len(sensitiveOptions)).Strs("mountFlags", mountFlags).Msg("MountSensitiveWithoutSystemdWithMountFlags not implemented")
+	}
 	return errMounterNotImplemented
 }
 
 func (m *ScopedMounter) Unmount(target string) error {
-	mounterLog.Warn().Str("target", target).Msg("Unmount not implemented")
+	mounterLog.Trace().Str("target", target).Msg("Unmount")
 	return errMounterNotImplemented
 }
 
 func (m *ScopedMounter) List() ([]mount.MountPoint, error) {
-	mounterLog.Warn().Msg("List not implemented")
+	mounterLog.Trace().Msg("List")
 	return nil, errMounterNotImplemented
 }
 
 func (m *ScopedMounter) IsLikelyNotMountPoint(file string) (bool, error) {
-	mounterLog.Warn().Str("file", file).Msg("IsLikelyNotMountPoint not implemented")
+	mounterLog.Trace().Str("file", file).Msg("IsLikelyNotMountPoint")
 	return true, errMounterNotImplemented
 }
 
 func (m *ScopedMounter) CanSafelySkipMountPointCheck() bool {
-	mounterLog.Warn().Msg("CanSafelySkipMountPointCheck not implemented")
+	mounterLog.Trace().Msg("CanSafelySkipMountPointCheck")
 	return false
 }
 
 func (m *ScopedMounter) IsMountPoint(file string) (bool, error) {
-	mounterLog.Warn().Str("file", file).Msg("IsMountPoint not implemented")
+	mounterLog.Trace().Str("file", file).Msg("IsMountPoint")
 	return false, errMounterNotImplemented
 }
 
 func (m *ScopedMounter) GetMountRefs(pathname string) ([]string, error) {
-	mounterLog.Warn().Str("path", pathname).Msg("GetMountRefs not implemented")
+	mounterLog.Trace().Str("path", pathname).Msg("GetMountRefs")
 	return nil, errMounterNotImplemented
 }

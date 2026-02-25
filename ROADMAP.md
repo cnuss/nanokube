@@ -36,40 +36,52 @@ The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub d
 
 ### OS-Level Stubs (Need Rethinking)
 
-| Stub | Interface | Status |
-|------|-----------|--------|
-| `ScopedMounter` | `mount.Interface` | Stubbed — all methods return `errNotImplemented`. |
+| Stub             | Interface            | Status                                                                                                                                                                                                             |
+| ---------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ScopedMounter`  | `mount.Interface`    | Stubbed — all methods return `errNotImplemented`.                                                                                                                                                                  |
 | `ScopedHostUtil` | `hostutil.HostUtils` | Stubbed — `PathExists`, `GetFileType`, `EvalHostSymlinks`, `GetOwner`, `GetMode` return `errNotImplemented`. No-ops: `MakeRShared`, `DeviceOpened`, `PathIsDevice`, `GetSELinuxSupport`, `GetSELinuxMountContext`. |
-| `ScopedSubpath` | `subpath.Interface` | Partial — `SafeMakeDir` is real (scoped to DataDir). `CleanSubPaths` and `PrepareSafeSubpath` are no-ops. |
+| `ScopedSubpath`  | `subpath.Interface`  | Partial — `SafeMakeDir` is real (scoped to DataDir). `CleanSubPaths` and `PrepareSafeSubpath` are no-ops.                                                                                                          |
 
 All stubbed methods emit `Warn()` when called.
 
 ### OS-Level — Real Implementations
 
-| Component | Interface | Notes |
-|-----------|-----------|-------|
-| `ScopedOS` | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir. |
-| `FakeOOMAdjuster` | `OOMAdjuster` | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
-| `TracerProvider` | `trace.TracerProvider` | No-op wrapping `noop.TracerProvider` with warn logging. |
+| Component         | Interface                   | Notes                                                                           |
+| ----------------- | --------------------------- | ------------------------------------------------------------------------------- |
+| `ScopedOS`        | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir.                      |
+| `FakeOOMAdjuster` | `OOMAdjuster`               | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
+| `TracerProvider`  | `trace.TracerProvider`      | No-op wrapping `noop.TracerProvider` with warn logging.                         |
 
 ## Pod Volume Types
 
-Support for non-deprecated volume types in the Pod spec. Requires `ScopedMounter` and `ScopedHostUtil` implementations.
+Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact — what unblocks the most real workloads with the least effort.
 
-| Volume Type | Status | Notes |
-|-------------|--------|-------|
-| `EmptyDir` | Not started | Temp directory scoped to pod lifetime. Simplest to implement — create dir under DataDir, clean up on pod removal. |
-| `HostPath` | Not started | Direct host file/dir mount into container. Needs `ScopedMounter.Mount` and `ScopedHostUtil.PathExists`/`GetFileType`. |
-| `Secret` | Not started | Kubelet writes secret data to a tmpdir, then bind-mounts it. Needs `ScopedMounter.Mount`. |
-| `ConfigMap` | Not started | Same as Secret — kubelet writes configmap data to tmpdir and bind-mounts. |
-| `DownwardAPI` | Not started | Pod metadata (labels, annotations, resource limits) projected as files. Same mount pattern. |
-| `Projected` | Not started | Combines Secret, ConfigMap, DownwardAPI, and ServiceAccountToken into a single mount. |
-| `PersistentVolumeClaim` | Not started | PVC reference — requires a volume plugin or CSI driver to back it. |
-| `CSI` | Not started | Ephemeral CSI volumes — requires a CSI driver and the CSI node plugin. |
-| `Ephemeral` | Not started | Cluster-driver ephemeral volumes tied to pod lifecycle. Requires CSI infrastructure. |
-| `NFS` | Not started | Network filesystem mount. Needs real `ScopedMounter.Mount` with NFS support. |
-| `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling. |
-| `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. |
+### P0 — Required for basic pods
+
+| # | Volume Type | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | `EmptyDir` | Not started | Used by nearly every pod (scratch space, init container handoff). Default medium is just a mkdir — no mounter needed. `Medium: Memory` needs tmpfs mount. |
+| 2 | `Projected` | Not started | Modern k8s (1.22+) mounts the default ServiceAccount token via Projected. **Every pod with a SA hits this.** Combines Secret, ConfigMap, DownwardAPI, SA token. Needs `ScopedMounter`. |
+| 3 | `Secret` | Not started | SA token (legacy path), TLS certs, registry credentials. Kubelet writes to tmpdir, bind-mounts in. Needs `ScopedMounter`. |
+| 4 | `ConfigMap` | Not started | Application config. Same write-and-mount pattern as Secret. |
+
+### P1 — Common workloads
+
+| # | Volume Type | Status | Notes |
+|---|-------------|--------|-------|
+| 5 | `DownwardAPI` | Not started | Pod metadata as files (labels, annotations, resource limits). Same mount pattern as Secret/ConfigMap. |
+| 6 | `HostPath` | Not started | System agents, log collectors, dev mounts. Needs `ScopedMounter.Mount` and `ScopedHostUtil.PathExists`/`GetFileType`. |
+| 7 | `PersistentVolumeClaim` | Not started | Stateful workloads (databases, queues). Requires a volume plugin or CSI driver to provision/attach. |
+
+### P2 — Advanced / infrastructure
+
+| # | Volume Type | Status | Notes |
+|---|-------------|--------|-------|
+| 8 | `CSI` | Not started | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
+| 9 | `Ephemeral` | Not started | Cluster-driver ephemeral volumes. Built on CSI. |
+| 10 | `NFS` | Not started | Network filesystem. Needs real `ScopedMounter.Mount` with NFS support and host nfs-utils. |
+| 11 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
+| 12 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
 
 ## Docker Volume & Network Support
 
