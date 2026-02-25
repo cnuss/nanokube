@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/rs/zerolog/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
@@ -19,12 +19,8 @@ import (
 	kubeletscheme "k8s.io/kubernetes/pkg/kubelet/apis/config/scheme"
 )
 
-type Component interface {
-	Start(ctx context.Context) error
-}
-
 type CRIProvider interface {
-	Component
+	component.Component
 	Hostname() string
 	Endpoint() string
 	Domain() string
@@ -37,7 +33,7 @@ type Config struct {
 	Verbosity    int
 	Certs        *certs
 	FeatureGates map[string]bool
-	Components   []Component
+	Components   []component.Component
 	CRI          CRIProvider
 }
 
@@ -53,7 +49,7 @@ func NewConfig(options *Options) *Config {
 			"RuntimeClassInImageCriApi": false,
 		},
 		Certs:      &certs{Name: options.Name, DataDir: options.DataDir},
-		Components: []Component{},
+		Components: []component.Component{},
 	}
 }
 

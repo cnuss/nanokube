@@ -44,8 +44,10 @@ submodules:
 fmt:
 	go fmt ./...
 
+ARGS ?= --clean
+
 run: fmt build
-	./nanokube --clean
+	./nanokube $(ARGS)
 
 init:
 	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)

@@ -8,7 +8,7 @@ import (
 
 var (
 	errMounterNotImplemented = fmt.Errorf("scoped mounter not yet implemented")
-	mounterLog               = component("mounter")
+	mounterLog               = newLogger("mounter")
 )
 
 // ScopedMounter is a stub mount.Interface that returns not-implemented errors.

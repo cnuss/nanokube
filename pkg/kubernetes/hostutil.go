@@ -9,7 +9,7 @@ import (
 
 var (
 	errHostUtilNotImplemented = fmt.Errorf("scoped host util not yet implemented")
-	hostutilLog               = component("hostutil")
+	hostutilLog               = newLogger("hostutil")
 )
 
 // ScopedHostUtil is a stub hostutil.HostUtils that returns not-implemented errors.

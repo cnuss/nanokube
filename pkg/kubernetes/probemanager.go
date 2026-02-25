@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-var probeLog = component("probemanager")
+var probeLog = newLogger("probemanager")
 
 // ProbeManager implements prober.Manager with no-op probe workers.
 // All containers are marked Ready in UpdatePodStatus.

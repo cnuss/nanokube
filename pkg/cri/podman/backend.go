@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
-	"github.com/cnuss/nanokube/pkg/logging"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 var (
 	errNotImplemented = fmt.Errorf("podman backend not yet implemented")
-	logger            = logging.Component("podman")
+	logger            = component.NewLogger("podman")
 )
 
 // Backend implements cri.Backend using the Podman API.

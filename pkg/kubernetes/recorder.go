@@ -4,7 +4,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-var recorderLog = component("recorder")
+var recorderLog = newLogger("recorder")
 
 // EventRecorder implements record.EventRecorder with warn logging.
 type EventRecorder struct{}

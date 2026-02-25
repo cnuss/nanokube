@@ -1,5 +1,5 @@
 package kubernetes
 
-import "github.com/cnuss/nanokube/pkg/logging"
+import "github.com/cnuss/nanokube/pkg/component"
 
-var component = logging.Component
+var newLogger = component.NewLogger

@@ -9,7 +9,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 )
 
-var subpathLog = component("subpath")
+var subpathLog = newLogger("subpath")
 
 // ScopedSubpath implements subpath.Interface with real os.MkdirAll calls,
 // remapping absolute paths outside DataDir into it.

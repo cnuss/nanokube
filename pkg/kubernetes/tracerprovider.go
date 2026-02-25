@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-var tracerLog = component("tracer")
+var tracerLog = newLogger("tracer")
 
 // TracerProvider wraps the no-op tracer provider with warn logging.
 type TracerProvider struct {
