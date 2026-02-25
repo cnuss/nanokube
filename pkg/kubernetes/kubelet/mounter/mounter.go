@@ -2,6 +2,7 @@ package mounter
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -97,6 +98,10 @@ func (m *ScopedMounter) GetMountRefs(pathname string) ([]string, error) {
 
 // GetTmpfs returns the comma-joined options for a tracked tmpfs mount.
 // Satisfies docker.MountLookup so the Docker backend can use native tmpfs.
+//
+// If the directory already contains files (e.g. written by AtomicWriter for
+// Projected/Secret/DownwardAPI volumes), we return false so the CRI falls
+// back to a bind mount, making those files visible inside the container.
 func (m *ScopedMounter) GetTmpfs(path string) (string, bool) {
 	v, ok := m.mounts.Load(path)
 	if !ok {
@@ -104,6 +109,11 @@ func (m *ScopedMounter) GetTmpfs(path string) (string, bool) {
 	}
 	pt := v.(mount.MountPoint)
 	if pt.Type != "tmpfs" {
+		return "", false
+	}
+	entries, err := os.ReadDir(path)
+	if err == nil && len(entries) > 0 {
+		logger.Debug().Str("path", path).Int("entries", len(entries)).Msg("tmpfs has pre-written content, falling back to bind mount")
 		return "", false
 	}
 	return strings.Join(pt.Opts, ","), true
