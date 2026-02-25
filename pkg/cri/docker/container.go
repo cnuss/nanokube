@@ -20,7 +20,7 @@ import (
 )
 
 func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, config *runtimeapi.ContainerConfig, sandboxConfig *runtimeapi.PodSandboxConfig) (string, error) {
-	dockerConfig, hostConfig := toContainerConfig(config, podSandboxID, sandboxConfig, b.name)
+	dockerConfig, hostConfig := toContainerConfig(config, podSandboxID, sandboxConfig, b.name, b.Mounts)
 	name := containerName(sandboxConfig, config)
 
 	logger.Debug().Str("name", name).Str("image", config.GetImage().GetImage()).Str("sandbox", podSandboxID[:12]).Msg("CRI CreateContainer")

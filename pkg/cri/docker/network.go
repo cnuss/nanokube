@@ -47,7 +47,6 @@ func (b *Backend) ensureBridgeNetwork(ctx context.Context) (string, error) {
 		EnableIPv4: &builtin.EnableIPv4,
 		EnableIPv6: &builtin.EnableIPv6,
 		Internal:   builtin.Internal,
-		Options:    builtin.Options,
 		IPAM: &network.IPAM{
 			Driver:  builtin.IPAM.Driver,
 			Options: builtin.IPAM.Options,

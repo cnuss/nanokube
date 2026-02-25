@@ -9,6 +9,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/cri/docker"
+	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
@@ -131,6 +132,14 @@ func (c *CRI) Nameservers() []string {
 // RuntimeBackend returns the underlying container runtime backend, or nil.
 func (c *CRI) RuntimeBackend() Backend {
 	return c.backend
+}
+
+// SetMountLookup passes a MountLookup to the backend so it can use native
+// tmpfs mounts instead of bind mounts for tracked paths.
+func (c *CRI) SetMountLookup(ml critypes.MountLookup) {
+	if db, ok := c.backend.(*docker.Backend); ok {
+		db.Mounts = ml
+	}
 }
 
 // detectBackend probes for Docker then Podman and returns the first available backend

@@ -12,6 +12,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
 	deps "github.com/cnuss/nanokube/pkg/kubernetes/kubelet"
+	"github.com/cnuss/nanokube/pkg/kubernetes/kubelet/mounter"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -98,7 +99,8 @@ func (k *Kubelet) Start(ctx context.Context) error {
 
 	// Get the runtime backend from CRI for cadvisor + capacity
 	var backend cri.Backend
-	if criImpl, ok := k.config.CRI.(*cri.CRI); ok {
+	criImpl, _ := k.config.CRI.(*cri.CRI)
+	if criImpl != nil {
 		backend = criImpl.RuntimeBackend()
 	}
 
@@ -117,7 +119,11 @@ func (k *Kubelet) Start(ctx context.Context) error {
 		containerManager,
 	)
 	hk.KubeletDeps.OSInterface = &deps.ScopedOS{DataDir: k.config.DataDir}
-	hk.KubeletDeps.Mounter = &deps.ScopedMounter{DataDir: k.config.DataDir}
+	scopedMounter := &mounter.ScopedMounter{DataDir: k.config.DataDir}
+	hk.KubeletDeps.Mounter = scopedMounter
+	if criImpl != nil {
+		criImpl.SetMountLookup(scopedMounter)
+	}
 	hk.KubeletDeps.Subpather = &deps.ScopedSubpath{DataDir: k.config.DataDir}
 	hk.KubeletDeps.HostUtil = &deps.ScopedHostUtil{DataDir: k.config.DataDir}
 	hk.KubeletDeps.Recorder = deps.EventRecorder{}

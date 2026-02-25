@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
+	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
@@ -27,6 +28,7 @@ type Backend struct {
 	name         string // cluster name, used as managed-by label value
 	client       *dockerclient.Client
 	networkID    string // cluster bridge network ID
+	Mounts       critypes.MountLookup
 
 	logMu      sync.Mutex
 	logWriters map[string]context.CancelFunc // containerID -> cancel

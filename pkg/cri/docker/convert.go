@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -74,7 +75,7 @@ func sandboxContainerName(config *runtimeapi.PodSandboxConfig) string {
 }
 
 // toContainerConfig builds a Docker container config from CRI container config.
-func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, sandboxConfig *runtimeapi.PodSandboxConfig, name string) (*dockercontainer.Config, *dockercontainer.HostConfig) {
+func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, sandboxConfig *runtimeapi.PodSandboxConfig, name string, mounts critypes.MountLookup) (*dockercontainer.Config, *dockercontainer.HostConfig) {
 	image := config.GetImage().GetImage()
 
 	envs := make([]string, 0, len(config.GetEnvs()))
@@ -100,8 +101,18 @@ func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, san
 		PidMode:     dockercontainer.PidMode("container:" + sandboxID),
 	}
 
-	// Mounts — use Binds (legacy format) for broader Docker Desktop compatibility
+	// Mounts — check if host path is a tracked tmpfs; if so use Docker native
+	// tmpfs instead of a bind mount. Everything else uses Binds (legacy format).
 	for _, m := range config.GetMounts() {
+		if mounts != nil {
+			if opts, ok := mounts.GetTmpfs(m.GetHostPath()); ok {
+				if hostConfig.Tmpfs == nil {
+					hostConfig.Tmpfs = make(map[string]string)
+				}
+				hostConfig.Tmpfs[m.GetContainerPath()] = opts
+				continue
+			}
+		}
 		bind := m.GetHostPath() + ":" + m.GetContainerPath()
 		if m.GetReadonly() {
 			bind += ":ro"
