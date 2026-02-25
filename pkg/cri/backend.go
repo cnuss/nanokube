@@ -2,8 +2,11 @@ package cri
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	critypes "github.com/cnuss/nanokube/pkg/cri/types"
+	"github.com/rs/zerolog/log"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -23,6 +26,7 @@ type Backend interface {
 	RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandboxConfig, runtimeHandler string) (string, error)
 	StopPodSandbox(ctx context.Context, podSandboxID string) error
 	RemovePodSandbox(ctx context.Context, podSandboxID string) error
+	RemovePodSandboxes(ctx context.Context) ([]string, error)
 	PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error)
 	ListPodSandbox(ctx context.Context, filter *runtimeapi.PodSandboxFilter) ([]*runtimeapi.PodSandbox, error)
 
@@ -31,6 +35,7 @@ type Backend interface {
 	StartContainer(ctx context.Context, containerID string) error
 	StopContainer(ctx context.Context, containerID string, timeout int64) error
 	RemoveContainer(ctx context.Context, containerID string) error
+	RemoveContainers(ctx context.Context) ([]string, error)
 	ListContainers(ctx context.Context, filter *runtimeapi.ContainerFilter) ([]*runtimeapi.Container, error)
 	ContainerStatus(ctx context.Context, containerID string, verbose bool) (*runtimeapi.ContainerStatusResponse, error)
 	UpdateContainerResources(ctx context.Context, containerID string, resources *runtimeapi.ContainerResources) error
@@ -75,4 +80,42 @@ type Backend interface {
 	// HostIDs returns the host's boot ID, system UUID, and machine ID by
 	// probing the host's /proc, /sys, and /etc via namespace sharing.
 	HostIDs(ctx context.Context) (bootID string, systemUUID string, machineID string, err error)
+
+	// Volume lifecycle
+	CreateVolume(ctx context.Context, name string) (string, error)
+	RemoveVolume(ctx context.Context, name string) error
+	RemoveVolumes(ctx context.Context) ([]string, error)
+	ListVolumes(ctx context.Context, labelFilter map[string]string) ([]string, error)
+
+	// Network lifecycle
+	EnsureNetwork(ctx context.Context, networkType critypes.NetworkType) (string, error)
+	RemoveNetworks(ctx context.Context) ([]string, error)
+}
+
+// Cleanup performs centralized teardown by calling the backend's Remove
+// functions. It is invoked automatically via ctx.Done, not called directly.
+// Order: containers → sandboxes → volumes → networks.
+func Cleanup(backend Backend) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var errs []error
+
+	containers, err := backend.RemoveContainers(ctx)
+	log.Info().Strs("ids", containers).Msg("cleanup: removed containers")
+	errs = append(errs, err)
+
+	sandboxes, err := backend.RemovePodSandboxes(ctx)
+	log.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
+	errs = append(errs, err)
+
+	volumes, err := backend.RemoveVolumes(ctx)
+	log.Info().Strs("ids", volumes).Msg("cleanup: removed volumes")
+	errs = append(errs, err)
+
+	networks, err := backend.RemoveNetworks(ctx)
+	log.Info().Strs("ids", networks).Msg("cleanup: removed networks")
+	errs = append(errs, err)
+
+	return errors.Join(errs...)
 }

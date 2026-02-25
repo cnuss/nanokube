@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -167,6 +168,31 @@ func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error
 		return nil
 	}
 	return err
+}
+
+// RemoveContainers removes all containers managed by this backend.
+func (b *Backend) RemoveContainers(ctx context.Context) ([]string, error) {
+	f := filters.NewArgs()
+	f.Add("label", labelContainerType+"="+containerTypeContainer)
+	f.Add("label", labelManagedBy+"="+b.name)
+
+	containers, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, fmt.Errorf("list managed containers: %w", err)
+	}
+
+	var removed []string
+	var errs []error
+	for _, c := range containers {
+		b.stopLogWriter(c.ID)
+		if err := b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			errs = append(errs, fmt.Errorf("remove container %s: %w", c.ID[:12], err))
+		} else {
+			removed = append(removed, c.ID)
+			log.Info().Str("id", c.ID[:12]).Msg("cleanup: removed container")
+		}
+	}
+	return removed, errors.Join(errs...)
 }
 
 func (b *Backend) ListContainers(ctx context.Context, filter *runtimeapi.ContainerFilter) ([]*runtimeapi.Container, error) {

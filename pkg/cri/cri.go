@@ -85,6 +85,9 @@ func (c *CRI) Start(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
+		if err := Cleanup(c.backend); err != nil {
+			log.Warn().Err(err).Msg("cleanup: errors during teardown")
+		}
 		c.stop()
 	}()
 

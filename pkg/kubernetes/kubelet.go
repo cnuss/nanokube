@@ -12,7 +12,6 @@ import (
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
 	"github.com/rs/zerolog/log"
-	"go.opentelemetry.io/otel/trace/noop"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +84,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	// Connect to CRI socket via remote clients
 	endpoint := k.config.CRI.Endpoint()
 	logger := klog.Background()
-	tp := noop.NewTracerProvider()
+	tp := TracerProvider{}
 	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
 	if err != nil {
 		return fmt.Errorf("kubelet runtime service: %w", err)
@@ -116,9 +115,11 @@ func (k *Kubelet) Start(ctx context.Context) error {
 		containerManager,
 	)
 	hk.KubeletDeps.OSInterface = &ScopedOS{DataDir: k.config.DataDir}
-	// Let the kubelet create a real event broadcaster and probe manager
-	hk.KubeletDeps.Recorder = nil
-	hk.KubeletDeps.ProbeManager = nil
+	hk.KubeletDeps.Mounter = &ScopedMounter{DataDir: k.config.DataDir}
+	hk.KubeletDeps.Subpather = &ScopedSubpath{DataDir: k.config.DataDir}
+	hk.KubeletDeps.HostUtil = &ScopedHostUtil{DataDir: k.config.DataDir}
+	hk.KubeletDeps.Recorder = EventRecorder{}
+	hk.KubeletDeps.ProbeManager = ProbeManager{}
 	go hk.Run(ctx)
 
 	// Wait for kubelet to be healthy

@@ -2,9 +2,11 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/rs/zerolog/log"
@@ -12,6 +14,17 @@ import (
 )
 
 func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandboxConfig, runtimeHandler string) (string, error) {
+	// Ensure the bridge network exists for non-host-network sandboxes
+	hostNetwork := false
+	if ns := config.GetLinux().GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
+		hostNetwork = true
+	}
+	if !hostNetwork {
+		if _, err := b.EnsureNetwork(ctx, critypes.NetworkBridge); err != nil {
+			return "", fmt.Errorf("ensure network: %w", err)
+		}
+	}
+
 	dockerConfig, hostConfig, netConfig := toSandboxContainerConfig(config, b.name)
 	name := sandboxContainerName(config)
 
@@ -57,6 +70,13 @@ func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error
 
 func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) error {
 	log.Debug().Str("id", podSandboxID[:12]).Msg("CRI RemovePodSandbox")
+
+	// Capture pod UID before removing the sandbox container (for volume cleanup)
+	var podUID string
+	if inspect, err := b.client.ContainerInspect(ctx, podSandboxID); err == nil {
+		podUID = inspect.Config.Labels[labelSandboxUID]
+	}
+
 	// Remove all containers in this sandbox first
 	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
 		PodSandboxId: podSandboxID,
@@ -69,10 +89,47 @@ func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) err
 	}
 
 	err = b.client.ContainerRemove(ctx, podSandboxID, container.RemoveOptions{Force: true})
-	if err != nil && isNotFoundOrNotRunning(err) {
-		return nil
+	if err != nil && !isNotFoundOrNotRunning(err) {
+		return err
 	}
-	return err
+
+	// Clean up volumes associated with this pod
+	if podUID != "" {
+		volumes, listErr := b.ListVolumes(ctx, map[string]string{labelSandboxUID: podUID})
+		if listErr == nil {
+			for _, v := range volumes {
+				if rmErr := b.RemoveVolume(ctx, v); rmErr != nil {
+					log.Warn().Err(rmErr).Str("volume", v).Msg("failed to remove pod volume")
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// RemovePodSandboxes removes all sandboxes managed by this backend.
+func (b *Backend) RemovePodSandboxes(ctx context.Context) ([]string, error) {
+	f := filters.NewArgs()
+	f.Add("label", labelContainerType+"="+containerTypeSandbox)
+	f.Add("label", labelManagedBy+"="+b.name)
+
+	sandboxes, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, fmt.Errorf("list managed sandboxes: %w", err)
+	}
+
+	var removed []string
+	var errs []error
+	for _, s := range sandboxes {
+		if err := b.client.ContainerRemove(ctx, s.ID, container.RemoveOptions{Force: true}); err != nil {
+			errs = append(errs, fmt.Errorf("remove sandbox %s: %w", s.ID[:12], err))
+		} else {
+			removed = append(removed, s.ID)
+			log.Info().Str("id", s.ID[:12]).Msg("cleanup: removed sandbox")
+		}
+	}
+	return removed, errors.Join(errs...)
 }
 
 func (b *Backend) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error) {

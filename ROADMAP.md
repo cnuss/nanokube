@@ -34,18 +34,29 @@ These are skipped by critest itself (not failures), typically platform-specific 
 
 The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs.
 
-### OS-Level — Keep as Stubs
+### OS-Level Stubs (Need Rethinking)
 
-These fakes operate at the OS/kernel level and have no Docker API equivalent. They are appropriate stubs for NanoKube's single-process architecture.
+| Stub | Interface | Status |
+|------|-----------|--------|
+| `ScopedMounter` | `mount.Interface` | Stubbed — all methods return `errNotImplemented` (except `CanSafelySkipMountPointCheck`). Previously had in-memory mount tracking; removed pending redesign. |
+| `ScopedHostUtil` | `hostutil.HostUtils` | Stubbed — `PathExists`, `GetFileType`, `EvalHostSymlinks`, `GetOwner`, `GetMode` return `errNotImplemented`. No-ops: `MakeRShared`, `DeviceOpened`, `PathIsDevice`, `GetSELinuxSupport`, `GetSELinuxMountContext`. |
+| `ScopedSubpath` | `subpath.Interface` | Partial — `SafeMakeDir` is real (scoped to DataDir). `CleanSubPaths` and `PrepareSafeSubpath` are no-ops. |
 
-| Fake | Interface | Why Keep |
-|------|-----------|----------|
-| `ScopedOS` | `kubecontainer.OSInterface` | Filesystem ops scoped to DataDir. Docker doesn't manage kubelet's volume mount paths. |
-| `FakeOOMAdjuster` | `OOMAdjuster` | Linux cgroup OOM score adjustment. Kernel-level, not exposed via Docker. |
-| `FakeMounter` | `mount.Interface` | OS mount/unmount syscalls. Docker manages container mounts internally. |
-| `FakeSubpath` | `subpath.Interface` | Bind-mount subpaths within volumes. Pure kubelet filesystem logic. |
-| `FakeHostUtil` | `hostutil.HostUtils` | Device checks, SELinux support, file type queries. OS-level. |
-| `NoopTracerProvider` | `trace.TracerProvider` | OpenTelemetry tracing. No-op is correct unless tracing is explicitly wanted. |
+All stubbed methods emit `log.Warn()` when called.
+
+### OS-Level — Real Implementations
+
+| Component | Interface | Notes |
+|-----------|-----------|-------|
+| `ScopedOS` | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir. |
+| `FakeOOMAdjuster` | `OOMAdjuster` | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
+| `NoopTracerProvider` | `trace.TracerProvider` | No-op is correct unless tracing is explicitly wanted. |
+
+## Docker Volume & Network Support
+
+- **Volumes**: `CreateVolume`, `RemoveVolume`, `RemoveVolumes`, `ListVolumes` on the `Backend` interface. Docker implementation uses named volumes with `managed-by` labels and cluster-name prefix. Pod volumes are cleaned up on sandbox removal.
+- **Network**: `EnsureNetwork`, `RemoveNetworks` on the `Backend` interface. `NetworkType` enum (`bridge`, `host`, `none`) in `pkg/cri/types/`. Bridge creates a dedicated `<cluster>-bridge` network by cloning the built-in bridge config. Host and none are no-ops. Non-host-network sandboxes lazily ensure bridge on `RunPodSandbox`.
+- **Cleanup**: Centralized `Cleanup()` in `pkg/cri/backend.go` — calls `RemoveContainers` → `RemovePodSandboxes` → `RemoveVolumes` → `RemoveNetworks` with 30s timeout. Invoked via `ctx.Done`.
 
 ## Podman Backend
 

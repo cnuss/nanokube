@@ -1,4 +1,6 @@
-.PHONY: build clean test submodules run fmt patch-save critest
+.PHONY: build clean test submodules run fmt patch-save critest init
+
+CRITEST_VERSION := v1.35.0
 
 VERSION_PKG := k8s.io/component-base/version
 KUBE_GIT_VERSION := $(shell cd kubernetes && git describe --tags --match='v*' 2>/dev/null | sed 's/-g/-/')
@@ -40,10 +42,13 @@ submodules:
 	git submodule update --init --recursive
 
 fmt:
-	gofmt -w .
+	go fmt ./...
 
 run: fmt build
 	./nanokube --clean
+
+init:
+	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)
 
 critest: build
 	@D=$$(mktemp -d); \

@@ -192,7 +192,16 @@ func toSandboxContainerConfig(config *runtimeapi.PodSandboxConfig, name string) 
 		}
 	}
 
-	return dockerConfig, hostConfig, &network.NetworkingConfig{}
+	// Connect non-host-network sandboxes to the cluster bridge network
+	netConfig := &network.NetworkingConfig{}
+	if hostConfig.NetworkMode != "host" {
+		clusterNet := name + "-bridge"
+		netConfig.EndpointsConfig = map[string]*network.EndpointSettings{
+			clusterNet: {},
+		}
+	}
+
+	return dockerConfig, hostConfig, netConfig
 }
 
 // dockerStateToContainerState converts Docker container state to CRI state.

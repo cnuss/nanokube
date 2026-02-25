@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
@@ -25,6 +24,7 @@ type Backend struct {
 	dockerSocket string
 	name         string // cluster name, used as managed-by label value
 	client       *dockerclient.Client
+	networkID    string // cluster bridge network ID
 
 	logMu      sync.Mutex
 	logWriters map[string]context.CancelFunc // containerID -> cancel
@@ -70,36 +70,19 @@ func (b *Backend) Init(ctx context.Context) error {
 }
 
 func (b *Backend) Close() error {
-	if b.client != nil {
-		b.Cleanup()
-		return b.client.Close()
+	if b.client == nil {
+		return nil
 	}
-	return nil
-}
 
-// Cleanup force-removes all containers managed by this backend.
-func (b *Backend) Cleanup() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	f := filters.NewArgs()
-	f.Add("label", labelManagedBy+"="+b.name)
-
-	log.Info().Str("label", labelManagedBy+"="+b.name).Msg("cleanup: removing managed containers")
-
-	containers, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
-	if err != nil {
-		log.Warn().Err(err).Msg("cleanup: failed to list containers")
-		return
+	// Stop all active log writers
+	b.logMu.Lock()
+	for id, cancel := range b.logWriters {
+		cancel()
+		delete(b.logWriters, id)
 	}
-	for _, c := range containers {
-		b.stopLogWriter(c.ID)
-		if err := b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-			log.Warn().Err(err).Str("id", c.ID[:12]).Msg("cleanup: failed to remove container")
-		} else {
-			log.Info().Str("id", c.ID[:12]).Msg("cleanup: removed container")
-		}
-	}
+	b.logMu.Unlock()
+
+	return b.client.Close()
 }
 
 func (b *Backend) Version(ctx context.Context) (*runtimeapi.VersionResponse, error) {

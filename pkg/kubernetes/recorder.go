@@ -1,0 +1,21 @@
+package kubernetes
+
+import (
+	"github.com/rs/zerolog/log"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+// EventRecorder implements record.EventRecorder with warn logging.
+type EventRecorder struct{}
+
+func (EventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
+	log.Warn().Str("type", eventtype).Str("reason", reason).Str("message", message).Msg("Event not implemented")
+}
+
+func (EventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	log.Warn().Str("type", eventtype).Str("reason", reason).Str("messageFmt", messageFmt).Msg("Eventf not implemented")
+}
+
+func (EventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+	log.Warn().Str("type", eventtype).Str("reason", reason).Str("messageFmt", messageFmt).Msg("AnnotatedEventf not implemented")
+}
