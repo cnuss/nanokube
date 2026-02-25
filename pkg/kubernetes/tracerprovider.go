@@ -3,12 +3,13 @@ package kubernetes
 import (
 	"context"
 
-	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
+
+var tracerLog = component("tracer")
 
 // TracerProvider wraps the no-op tracer provider with warn logging.
 type TracerProvider struct {
@@ -16,7 +17,7 @@ type TracerProvider struct {
 }
 
 func (TracerProvider) Tracer(name string, options ...trace.TracerOption) trace.Tracer {
-	log.Warn().Str("name", name).Msg("Tracer not implemented")
+	tracerLog.Debug().Str("name", name).Msg("Tracer not implemented")
 	return Tracer{}
 }
 
@@ -26,7 +27,7 @@ type Tracer struct {
 }
 
 func (Tracer) Start(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
-	log.Warn().Str("span", spanName).Msg("Start not implemented")
+	tracerLog.Debug().Str("span", spanName).Msg("Start not implemented")
 	return ctx, Span{}
 }
 
@@ -36,34 +37,34 @@ type Span struct {
 }
 
 func (Span) End(options ...trace.SpanEndOption) {
-	log.Warn().Msg("End not implemented")
+	tracerLog.Debug().Msg("End not implemented")
 }
 
 func (Span) SetName(name string) {
-	log.Warn().Str("name", name).Msg("SetName not implemented")
+	tracerLog.Debug().Str("name", name).Msg("SetName not implemented")
 }
 
 func (Span) SetStatus(code codes.Code, description string) {
-	log.Warn().Str("code", code.String()).Str("description", description).Msg("SetStatus not implemented")
+	tracerLog.Debug().Str("code", code.String()).Str("description", description).Msg("SetStatus not implemented")
 }
 
 func (Span) SetAttributes(kv ...attribute.KeyValue) {
-	log.Warn().Msg("SetAttributes not implemented")
+	tracerLog.Debug().Msg("SetAttributes not implemented")
 }
 
 func (Span) RecordError(err error, options ...trace.EventOption) {
-	log.Warn().Err(err).Msg("RecordError not implemented")
+	tracerLog.Debug().Err(err).Msg("RecordError not implemented")
 }
 
 func (Span) AddEvent(name string, options ...trace.EventOption) {
-	log.Warn().Str("name", name).Msg("AddEvent not implemented")
+	tracerLog.Debug().Str("name", name).Msg("AddEvent not implemented")
 }
 
 func (Span) AddLink(link trace.Link) {
-	log.Warn().Msg("AddLink not implemented")
+	tracerLog.Debug().Msg("AddLink not implemented")
 }
 
 func (Span) IsRecording() bool {
-	log.Warn().Msg("IsRecording not implemented")
+	tracerLog.Debug().Msg("IsRecording not implemented")
 	return false
 }

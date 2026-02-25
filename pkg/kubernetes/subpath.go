@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rs/zerolog/log"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 )
+
+var subpathLog = component("subpath")
 
 // ScopedSubpath implements subpath.Interface with real os.MkdirAll calls,
 // remapping absolute paths outside DataDir into it.
@@ -24,12 +25,12 @@ func (s *ScopedSubpath) remap(path string) string {
 }
 
 func (s *ScopedSubpath) CleanSubPaths(podDir string, volumeName string) error {
-	log.Warn().Str("podDir", podDir).Str("volume", volumeName).Msg("CleanSubPaths not implemented")
+	subpathLog.Debug().Str("podDir", podDir).Str("volume", volumeName).Msg("CleanSubPaths not implemented")
 	return nil
 }
 
 func (s *ScopedSubpath) PrepareSafeSubpath(sub subpath.Subpath) (string, func(), error) {
-	log.Warn().Str("path", sub.Path).Msg("PrepareSafeSubpath not implemented")
+	subpathLog.Debug().Str("path", sub.Path).Msg("PrepareSafeSubpath not implemented")
 	return sub.Path, nil, nil
 }
 
