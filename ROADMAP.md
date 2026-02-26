@@ -83,6 +83,12 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 | 11 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
 | 12 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
 
+## Etcd Compaction
+
+- **Bug**: etcd's background `purgeFile` goroutine crashes with `open .../member/snap: no such file or directory` when the data directory is cleaned while etcd is running. This happens because `--clean` removes the data dir but etcd's compaction/snap purge loop still references the old path.
+- **Status**: Not started
+- **Fix**: Disable etcd auto-compaction (`--auto-compaction-retention=0`) or ensure the snap directory exists before etcd starts. For a single-node ephemeral cluster, compaction adds no value.
+
 ## Kubelet Streaming (exec/attach/portforward)
 
 - **Bug**: `kubectl exec` fails with `http: server gave HTTP response to HTTPS client`. The apiserver dials the kubelet streaming endpoint over HTTPS (`:10250/exec/...`) but the HollowKubelet serves plain HTTP.
