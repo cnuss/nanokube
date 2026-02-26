@@ -126,5 +126,7 @@ func (e *Etcd) Stop() {
 	if e.server != nil {
 		logger.Info().Msg("stopping etcd")
 		e.server.Close()
+		component.AwaitClose("tcp", "127.0.0.1:2379", 5*time.Second)
+		logger.Info().Msg("etcd stopped")
 	}
 }

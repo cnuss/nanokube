@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/spf13/cobra"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
@@ -101,4 +102,7 @@ func (a *APIServer) Start(ctx context.Context) error {
 	}
 }
 
-func (a *APIServer) Stop() {}
+func (a *APIServer) Stop() {
+	component.AwaitClose("tcp", "127.0.0.1:6443", 5*time.Second)
+	apiserverLog.Info().Msg("apiserver stopped")
+}

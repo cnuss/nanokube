@@ -3,8 +3,10 @@ package component
 import (
 	"context"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -92,6 +94,20 @@ func (c Logger) Warn() *zerolog.Event {
 
 func (c Logger) Error() *zerolog.Event {
 	return rootLog.Error().Str("component", c.component)
+}
+
+// AwaitClose polls until a network endpoint stops accepting connections.
+// network is "tcp" or "unix"; address is host:port or socket path.
+func AwaitClose(network, address string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout(network, address, 200*time.Millisecond)
+		if err != nil {
+			return // port/socket is gone
+		}
+		conn.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // teeFile creates a pipe that copies writes to both orig and logFile.

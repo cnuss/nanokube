@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
 	deps "github.com/cnuss/nanokube/pkg/kubernetes/kubelet"
@@ -38,7 +39,10 @@ func NewKubelet(config *config.Config) *Kubelet {
 	}
 }
 
-func (k *Kubelet) Stop() {}
+func (k *Kubelet) Stop() {
+	component.AwaitClose("tcp", "127.0.0.1:10250", 5*time.Second)
+	kubeletLog.Info().Msg("kubelet stopped")
+}
 
 func (k *Kubelet) Start(ctx context.Context) error {
 	kubeletLog.Info().Msg("starting kubelet")

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -85,4 +86,7 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 	}
 }
 
-func (c *ControllerManager) Stop() {}
+func (c *ControllerManager) Stop() {
+	component.AwaitClose("tcp", "127.0.0.1:10257", 5*time.Second)
+	controllerLog.Info().Msg("controller-manager stopped")
+}

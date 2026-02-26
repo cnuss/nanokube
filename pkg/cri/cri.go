@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/cri/docker"
@@ -108,6 +109,8 @@ func (c *CRI) Stop() {
 		logger.Warn().Err(err).Msg("cleanup: errors during teardown")
 	}
 	c.stop()
+	component.AwaitClose("unix", c.socketPath, 5*time.Second)
+	logger.Info().Msg("cri stopped")
 }
 
 func (c *CRI) stop() {

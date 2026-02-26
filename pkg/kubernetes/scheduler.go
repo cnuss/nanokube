@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	pkgconfig "github.com/cnuss/nanokube/pkg/config"
 	"github.com/spf13/cobra"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -78,4 +79,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 }
 
-func (s *Scheduler) Stop() {}
+func (s *Scheduler) Stop() {
+	component.AwaitClose("tcp", "127.0.0.1:10259", 5*time.Second)
+	schedulerLog.Info().Msg("scheduler stopped")
+}
