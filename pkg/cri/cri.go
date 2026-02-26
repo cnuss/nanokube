@@ -113,7 +113,7 @@ func (c *CRI) Stop() component.Stopped {
 			c.streamServer.Stop()
 		}
 		if c.grpcServer != nil {
-			c.grpcServer.GracefulStop()
+			c.grpcServer.Stop()
 		}
 		os.Remove(c.socketPath)
 	})

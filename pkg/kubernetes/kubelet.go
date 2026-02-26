@@ -19,10 +19,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
+	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/record"
 	remote "k8s.io/cri-client/pkg"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
+	legacyscheme "k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
@@ -31,7 +34,8 @@ import (
 var kubeletLog = newLogger("kubelet")
 
 type Kubelet struct {
-	config *config.Config
+	config           *config.Config
+	eventBroadcaster record.EventBroadcaster
 }
 
 func NewKubelet(config *config.Config) *Kubelet {
@@ -41,7 +45,11 @@ func NewKubelet(config *config.Config) *Kubelet {
 }
 
 func (k *Kubelet) Stop() component.Stopped {
-	return component.Closed("tcp", "127.0.0.1:10250", nil)
+	return component.Closed("tcp", "127.0.0.1:10250", func() {
+		if k.eventBroadcaster != nil {
+			k.eventBroadcaster.Shutdown()
+		}
+	})
 }
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
@@ -92,6 +100,10 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		return nil, fmt.Errorf("kubelet heartbeat client: %w", err)
 	}
 
+	// Event broadcaster — records Kubernetes Events to the API server
+	k.eventBroadcaster = record.NewBroadcaster(record.WithContext(ctx))
+	k.eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
+
 	// Connect to CRI socket via remote clients
 	endpoint := k.config.CRI.Endpoint()
 	logger := klog.Background()
@@ -132,7 +144,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.Mounter = volumePlugin.Mounter
 	hk.KubeletDeps.Subpather = &deps.ScopedSubpath{DataDir: k.config.DataDir}
 	hk.KubeletDeps.HostUtil = &deps.ScopedHostUtil{DataDir: k.config.DataDir}
-	hk.KubeletDeps.Recorder = deps.EventRecorder{}
+	hk.KubeletDeps.Recorder = k.eventBroadcaster.NewRecorder(legacyscheme.Scheme, v1.EventSource{Component: "kubelet", Host: f.HostnameOverride})
 	hk.KubeletDeps.ProbeManager = deps.NewProbeManager(backend)
 	hk.KubeletDeps.TLSOptions = &server.TLSOptions{
 		Config:   &tls.Config{MinVersion: tls.VersionTLS12},

@@ -14,6 +14,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
@@ -181,10 +183,114 @@ func (b *Backend) CheckpointContainer(ctx context.Context, containerID, location
 }
 
 func (b *Backend) GetContainerEvents(ctx context.Context, eventsCh chan *runtimeapi.ContainerEventResponse) error {
-	logger.Warn().Msg("GetContainerEvents not implemented, falling back to generic PLEG")
-	<-ctx.Done()
-	close(eventsCh)
-	return nil
+	logger.Info().Msg("starting Docker event stream for evented PLEG")
+	defer close(eventsCh)
+
+	// Use a child context so we can cancel Docker's event stream independently.
+	eventsCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Subscribe to container events from Docker, filtered to our managed containers.
+	f := filters.NewArgs()
+	f.Add("type", "container")
+	f.Add("label", labelManagedBy+"="+b.name)
+
+	msgCh, errCh := b.client.Events(eventsCtx, events.ListOptions{Filters: f})
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-errCh:
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("docker event stream: %w", err)
+		case msg, ok := <-msgCh:
+			if !ok {
+				return nil
+			}
+			eventType, mapped := dockerActionToCRIEvent(msg.Action)
+			if !mapped {
+				continue
+			}
+			// Only process events for workload containers (not sandboxes).
+			if msg.Actor.Attributes[labelContainerType] != containerTypeContainer {
+				continue
+			}
+			sandboxID := msg.Actor.Attributes[labelSandboxID]
+			if sandboxID == "" {
+				continue
+			}
+
+			resp, err := b.buildContainerEvent(ctx, msg.Actor.ID, sandboxID, eventType, msg.TimeNano)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				logger.Debug().Err(err).Str("container", msg.Actor.ID[:12]).Str("action", string(msg.Action)).Msg("skipping event")
+				continue
+			}
+			select {
+			case eventsCh <- resp:
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}
+}
+
+// dockerActionToCRIEvent maps Docker container actions to CRI event types.
+func dockerActionToCRIEvent(action events.Action) (runtimeapi.ContainerEventType, bool) {
+	switch action {
+	case events.ActionCreate:
+		return runtimeapi.ContainerEventType_CONTAINER_CREATED_EVENT, true
+	case events.ActionStart, events.ActionRestart, events.ActionUnPause:
+		return runtimeapi.ContainerEventType_CONTAINER_STARTED_EVENT, true
+	case events.ActionDie, events.ActionStop, events.ActionKill, events.ActionOOM, events.ActionPause:
+		return runtimeapi.ContainerEventType_CONTAINER_STOPPED_EVENT, true
+	case events.ActionDestroy, events.ActionRemove:
+		return runtimeapi.ContainerEventType_CONTAINER_DELETED_EVENT, true
+	default:
+		return 0, false
+	}
+}
+
+// buildContainerEvent constructs a ContainerEventResponse by fetching current
+// sandbox and container state from Docker.
+func (b *Backend) buildContainerEvent(ctx context.Context, containerID, sandboxID string, eventType runtimeapi.ContainerEventType, timeNano int64) (*runtimeapi.ContainerEventResponse, error) {
+	// Fetch pod sandbox status (must not be nil for evented PLEG).
+	sbResp, err := b.PodSandboxStatus(ctx, sandboxID, false)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox status %s: %w", sandboxID[:12], err)
+	}
+
+	// Fetch all container statuses in this sandbox.
+	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
+		PodSandboxId: sandboxID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list containers for sandbox %s: %w", sandboxID[:12], err)
+	}
+	var statuses []*runtimeapi.ContainerStatus
+	for _, c := range containers {
+		csResp, err := b.ContainerStatus(ctx, c.Id, false)
+		if err != nil {
+			continue
+		}
+		statuses = append(statuses, csResp.Status)
+	}
+
+	if timeNano == 0 {
+		timeNano = time.Now().UnixNano()
+	}
+
+	return &runtimeapi.ContainerEventResponse{
+		ContainerId:        containerID,
+		ContainerEventType: eventType,
+		CreatedAt:          timeNano,
+		PodSandboxStatus:   sbResp.Status,
+		ContainersStatuses: statuses,
+	}, nil
 }
 
 func (b *Backend) UpdatePodSandboxResources(ctx context.Context, req *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {

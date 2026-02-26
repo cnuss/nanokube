@@ -56,28 +56,13 @@ All stubbed methods emit `Warn()` when called.
 
 Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact — what unblocks the most real workloads with the least effort.
 
-### P1 — Common workloads
-
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
-| 1 | `PersistentVolumeClaim` | Done | Local PVs backed by Docker named volumes. ScopedMounter tracks bind mounts, CRI pre-creates volumes. |
-| 2 | `PVC` auto-provisioning | Done | Default StorageClass created in `volumePlugin.Init()`. Watch-based provisioner in `kubelet.go` creates HostPath PVs backed by Docker named volumes for pending PVCs. |
-
-### P2 — Advanced / infrastructure
-
-| # | Volume Type | Status | Notes |
-|---|-------------|--------|-------|
-| 3 | `CSI` | Not started | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
-| 4 | `Ephemeral` | Not started | Cluster-driver ephemeral volumes. Built on CSI. |
-| 5 | `NFS` | Not started | Network filesystem. Needs real `ScopedMounter.Mount` with NFS support and host nfs-utils. |
-| 6 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
-| 7 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
-
-## Etcd Compaction
-
-- **Bug**: etcd's background `purgeFile` goroutine crashes with `open .../member/snap: no such file or directory` when the data directory is cleaned while etcd is running. This happens because `--clean` removes the data dir but etcd's compaction/snap purge loop still references the old path.
-- **Status**: Not started
-- **Fix**: Disable etcd auto-compaction (`--auto-compaction-retention=0`) or ensure the snap directory exists before etcd starts. For a single-node ephemeral cluster, compaction adds no value.
+| 1 | `CSI` | Not started | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
+| 2 | `Ephemeral` | Not started | Cluster-driver ephemeral volumes. Built on CSI. |
+| 3 | `NFS` | Not started | Network filesystem. Needs real `ScopedMounter.Mount` with NFS support and host nfs-utils. |
+| 4 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
+| 5 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
 
 ## ClusterDNS Configuration
 
@@ -85,26 +70,26 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 - **Status**: Not started
 - **Fix**: Set `cfg.ClusterDNS` in `ApplyKubeletConfig` to the cluster DNS service IP (typically `10.96.0.10`). Optionally deploy CoreDNS as a static pod or in-process DNS server so ClusterFirst resolution actually works.
 
-## Kubelet Streaming (exec/attach/portforward)
+## Evented PLEG (GetContainerEvents)
 
-- **Bug**: `kubectl exec` fails with `http: server gave HTTP response to HTTPS client`. The apiserver dials the kubelet streaming endpoint over HTTPS (`:10250/exec/...`) but the HollowKubelet serves plain HTTP.
-- **Status**: Done — set `KubeletDeps.TLSOptions` with the node cert/key from `pkg/config/` so the kubelet serves HTTPS on port 10250. `kubectl exec` now works.
+- **Bug**: `GetContainerEvents` was a no-op, causing kubelet to fall back to generic PLEG polling (~1s intervals). This resulted in slow pod termination detection and namespace deletion failures.
+- **Status**: In progress — Docker event stream implementation added (`client.Events()` → CRI `ContainerEventResponse`), `EventedPLEG` feature gate enabled. Needs validation.
 
-## Docker Volume & Network Support
-
-- **Volumes**: `CreateVolume`, `RemoveVolume`, `RemoveVolumes`, `ListVolumes` on the `Backend` interface. Docker implementation uses named volumes with `managed-by` labels and cluster-name prefix. Pod volumes are cleaned up on sandbox removal.
-- **Network**: `EnsureNetwork`, `RemoveNetworks` on the `Backend` interface. `NetworkType` enum (`bridge`, `host`, `none`) in `pkg/cri/types/`. Bridge creates a dedicated `<cluster>-bridge` network by cloning the built-in bridge config. Host and none are no-ops. Non-host-network sandboxes lazily ensure bridge on `RunPodSandbox`.
-- **Cleanup**: Centralized `Cleanup()` in `pkg/cri/backend.go` — calls `RemoveContainers` → `RemovePodSandboxes` → `RemoveVolumes` → `RemoveNetworks` with 30s timeout. Invoked via `ctx.Done`. Volume cleanup should be conditional based on the PV reclaim policy (Retain vs Delete) — currently all volumes are removed unconditionally.
-
-## Logging
-
-Structured logging via `zerolog` with component-scoped loggers. All packages use `component.NewLogger("name")` which delegates to a shared root logger at call time. `component.Setup()` handles bootstrap: flag parsing, log level, data dir clean, and log file mirroring (console + disk). Verbosity: default=info, `-v`=debug, `-vv`=trace.
-
-## Testing
+## Probes as Docker Healthchecks
 
 - **Status**: Not started
-- **Approach**: Replace ad-hoc shell-based smoke tests (`tests/pods/`) with a Go integration test suite using `k8s.io/client-go` and the real nanokube control plane. Tests start nanokube in-process, apply resources via the API, and assert on pod status, volume contents (via `docker exec`), and container state.
-- **Scope**: Volume types, pod lifecycle, CRI conformance regression, cleanup behavior.
+- **Approach**: Map Kubernetes liveness/readiness/startup probes to Docker `HEALTHCHECK` configs on container creation, instead of running them via CRI ExecSync. More native to Docker, avoids probe container overhead, and lets Docker manage probe lifecycle directly.
+
+## Stub Implementations (from e2e WRN analysis)
+
+Prioritized by noise/impact from `make e2e` runs:
+
+| Priority | Stub | Warns/run | Notes |
+|----------|------|-----------|-------|
+| P1 | TracerProvider | 232 | Revert to trace level or true no-op. Kubelet instruments every CRI gRPC call with OpenTelemetry spans. |
+| P1 | EventRecorder | 102 | Implement real event recording to API server, or drop to debug. Events like Started/Pulled/Created are useful for debugging. |
+| P2 | CleanSubPaths | 17 | During pod teardown, one per volume. Harmless. |
+| P2 | MakeRShared | 1 | Kubelet startup. Harmless on macOS. |
 
 ## Podman Backend
 

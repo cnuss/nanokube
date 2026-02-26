@@ -48,6 +48,7 @@ func NewConfig(options *Options) *Config {
 		FeatureGates: map[string]bool{
 			"APIServerIdentity":         false,
 			"RuntimeClassInImageCriApi": false,
+			"EventedPLEG":               true,
 		},
 		Certs:      &certs{Name: options.Name, DataDir: options.DataDir},
 		Components: []component.Component{},
@@ -134,6 +135,7 @@ func (c *Config) ApplyKubeletConfig(cfg *kubeletconfig.KubeletConfiguration) {
 	cfg.ContainerLogMaxWorkers = 1
 	cfg.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
 	cfg.ProtectKernelDefaults = false
+	cfg.FeatureGates = c.FeatureGates
 }
 
 func (c *Config) KubeletConfigPath() string {
