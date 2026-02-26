@@ -92,4 +92,3 @@ type Backend interface {
 	EnsureNetwork(ctx context.Context, networkType critypes.NetworkType) (string, error)
 	RemoveNetworks(ctx context.Context) ([]string, error)
 }
-
