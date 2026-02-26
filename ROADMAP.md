@@ -63,7 +63,7 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 | 1 | `EmptyDir` | **Done** | Default medium uses bind mount from kubelet dir. `Medium: Memory` uses Docker native tmpfs via `MountLookup` interface. |
 | 2 | `Projected` | **Done** | SA token + `kube-root-ca.crt` ConfigMap + namespace DownwardAPI. Plugin wraps EmptyDir with `StorageMediumMemory`, AtomicWriter pre-writes files; `GetTmpfs` detects content and falls back to bind mount. |
 | 3 | `Secret` | **Done** | Same write-then-mount pattern as Projected. `GetTmpfs` content check handles it. |
-| 4 | `ConfigMap` | Not started | Application config. Same write-and-mount pattern as Secret. |
+| 4 | `ConfigMap` | **Done** | Application config. Uses default (disk-based) EmptyDir — AtomicWriter pre-writes data, CRI creates bind mount naturally. Same write-and-mount pattern as Secret. |
 
 ### P1 — Common workloads
 
