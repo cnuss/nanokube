@@ -115,7 +115,7 @@ func (c *Config) ApplyKubeletConfig(cfg *kubeletconfig.KubeletConfiguration) {
 	cfg.TLSPrivateKeyFile = c.Certs.KeyPath()
 	cfg.EnableServer = true
 	cfg.Port = 10250
-	cfg.ReadOnlyPort = 10255
+	cfg.ReadOnlyPort = 0
 	cfg.EnableControllerAttachDetach = false
 	cfg.HairpinMode = kubeletconfig.HairpinVeth
 	cfg.CgroupsPerQOS = false
