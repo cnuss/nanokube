@@ -24,6 +24,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
+	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
@@ -133,6 +134,11 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.HostUtil = &deps.ScopedHostUtil{DataDir: k.config.DataDir}
 	hk.KubeletDeps.Recorder = deps.EventRecorder{}
 	hk.KubeletDeps.ProbeManager = deps.NewProbeManager(backend)
+	hk.KubeletDeps.TLSOptions = &server.TLSOptions{
+		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
+		CertFile: c.TLSCertFile,
+		KeyFile:  c.TLSPrivateKeyFile,
+	}
 	go hk.Run(ctx)
 
 	// Wait for kubelet to be healthy
@@ -148,10 +154,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
-			resp, err := httpClient.Get("http://127.0.0.1:10250/healthz")
-			if err != nil {
-				resp, err = httpClient.Get("https://127.0.0.1:10250/healthz")
-			}
+			resp, err := httpClient.Get("https://127.0.0.1:10250/healthz")
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
