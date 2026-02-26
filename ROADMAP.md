@@ -56,32 +56,21 @@ All stubbed methods emit `Warn()` when called.
 
 Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact — what unblocks the most real workloads with the least effort.
 
-### P0 — Required for basic pods
-
-| # | Volume Type | Status | Notes |
-|---|-------------|--------|-------|
-| 1 | `EmptyDir` | **Done** | Default medium uses bind mount from kubelet dir. `Medium: Memory` uses Docker native tmpfs via `MountLookup` interface. |
-| 2 | `Projected` | **Done** | SA token + `kube-root-ca.crt` ConfigMap + namespace DownwardAPI. Plugin wraps EmptyDir with `StorageMediumMemory`, AtomicWriter pre-writes files; `GetTmpfs` detects content and falls back to bind mount. |
-| 3 | `Secret` | **Done** | Same write-then-mount pattern as Projected. `GetTmpfs` content check handles it. |
-| 4 | `ConfigMap` | **Done** | Application config. Uses default (disk-based) EmptyDir — AtomicWriter pre-writes data, CRI creates bind mount naturally. Same write-and-mount pattern as Secret. |
-
 ### P1 — Common workloads
 
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
-| 5 | `DownwardAPI` | Not started | Pod metadata as files (labels, annotations, resource limits). Same mount pattern as Secret/ConfigMap. |
-| 6 | `HostPath` | **Done** | System agents, log collectors, dev mounts. HostPath plugin doesn't mount — kubelet passes host path directly as CRI mount source. Required `ScopedHostUtil.PathExists`/`GetFileType`/`EvalHostSymlinks`. |
-| 7 | `PersistentVolumeClaim` | Not started | Stateful workloads (databases, queues). Requires a volume plugin or CSI driver to provision/attach. |
+| 1 | `PersistentVolumeClaim` | Not started | Stateful workloads (databases, queues). Requires a volume plugin or CSI driver to provision/attach. |
 
 ### P2 — Advanced / infrastructure
 
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
-| 8 | `CSI` | Not started | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
-| 9 | `Ephemeral` | Not started | Cluster-driver ephemeral volumes. Built on CSI. |
-| 10 | `NFS` | Not started | Network filesystem. Needs real `ScopedMounter.Mount` with NFS support and host nfs-utils. |
-| 11 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
-| 12 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
+| 3 | `CSI` | Not started | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
+| 4 | `Ephemeral` | Not started | Cluster-driver ephemeral volumes. Built on CSI. |
+| 5 | `NFS` | Not started | Network filesystem. Needs real `ScopedMounter.Mount` with NFS support and host nfs-utils. |
+| 6 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
+| 7 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
 
 ## Etcd Compaction
 

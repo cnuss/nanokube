@@ -29,6 +29,8 @@ metadata:
   labels:
     app: all-volumes
     test: "true"
+  annotations:
+    description: "volume smoke test"
 spec:
   containers:
   - name: busybox
@@ -59,7 +61,7 @@ spec:
       show "token" "$(cat /mnt/projected/token 2>/dev/null | cut -c1-32)..."
       show "namespace" "$(cat /mnt/projected/namespace 2>/dev/null)"
       echo "  labels:"
-      sed 's/^/                         /' /mnt/projected/labels 2>/dev/null; echo ""
+      sed 's/^/    /' /mnt/projected/labels 2>/dev/null; echo ""
       show "configmap/color" "$(cat /mnt/projected/configmap/color 2>/dev/null)"
       show "configmap/lang" "$(cat /mnt/projected/configmap/lang 2>/dev/null)"
       echo "  writable: $(writable /mnt/projected)"
@@ -77,6 +79,16 @@ spec:
       show "greeting" "$(cat /mnt/configmap/greeting 2>/dev/null)"
       show "target" "$(cat /mnt/configmap/target 2>/dev/null)"
       echo "  writable: $(writable /mnt/configmap)"
+      echo ""
+
+      echo "=== DownwardAPI ==="
+      echo "  mount: /mnt/downwardapi"
+      show "pod-name" "$(cat /mnt/downwardapi/pod-name 2>/dev/null)"
+      show "pod-namespace" "$(cat /mnt/downwardapi/pod-namespace 2>/dev/null)"
+      echo "  labels:"
+      sed 's/^/    /' /mnt/downwardapi/labels 2>/dev/null; echo ""
+      show "annotation" "$(grep '^description=' /mnt/downwardapi/annotations 2>/dev/null)"
+      echo "  writable: $(writable /mnt/downwardapi)"
       echo ""
 
       echo "=== HostPath ==="
@@ -106,6 +118,9 @@ spec:
       readOnly: true
     - name: configmap
       mountPath: /mnt/configmap
+      readOnly: true
+    - name: downwardapi
+      mountPath: /mnt/downwardapi
       readOnly: true
     - name: hostpath
       mountPath: /mnt/hostpath
@@ -143,6 +158,21 @@ spec:
   - name: configmap
     configMap:
       name: test-cm
+  - name: downwardapi
+    downwardAPI:
+      items:
+      - path: pod-name
+        fieldRef:
+          fieldPath: metadata.name
+      - path: pod-namespace
+        fieldRef:
+          fieldPath: metadata.namespace
+      - path: labels
+        fieldRef:
+          fieldPath: metadata.labels
+      - path: annotations
+        fieldRef:
+          fieldPath: metadata.annotations
   - name: hostpath
     hostPath:
       path: /tmp/nanokube-hostpath-test
