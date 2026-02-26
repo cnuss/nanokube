@@ -57,9 +57,6 @@ func (c *CRI) Start(ctx context.Context) error {
 	// Cleanup removes containers + sandboxes + networks; volumes are removed
 	// separately since they intentionally persist across normal restarts.
 	if c.clean {
-		if err := Cleanup(c.backend); err != nil {
-			logger.Warn().Err(err).Msg("clean: errors during teardown")
-		}
 		if volumes, err := c.backend.RemoveVolumes(ctx); err != nil {
 			logger.Warn().Err(err).Msg("clean: failed to remove volumes")
 		} else if len(volumes) > 0 {
@@ -103,15 +100,14 @@ func (c *CRI) Start(ctx context.Context) error {
 		}
 	}()
 
-	go func() {
-		<-ctx.Done()
-		if err := Cleanup(c.backend); err != nil {
-			logger.Warn().Err(err).Msg("cleanup: errors during teardown")
-		}
-		c.stop()
-	}()
-
 	return nil
+}
+
+func (c *CRI) Stop() {
+	if err := Cleanup(c.backend); err != nil {
+		logger.Warn().Err(err).Msg("cleanup: errors during teardown")
+	}
+	c.stop()
 }
 
 func (c *CRI) stop() {

@@ -121,3 +121,10 @@ func (e *Etcd) Start(ctx context.Context) error {
 		}
 	}
 }
+
+func (e *Etcd) Stop() {
+	if e.server != nil {
+		logger.Info().Msg("stopping etcd")
+		e.server.Close()
+	}
+}

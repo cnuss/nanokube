@@ -84,3 +84,5 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 		}
 	}
 }
+
+func (c *ControllerManager) Stop() {}

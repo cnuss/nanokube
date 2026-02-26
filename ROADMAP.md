@@ -61,7 +61,7 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
 | 1 | `PersistentVolumeClaim` | Done | Local PVs backed by Docker named volumes. ScopedMounter tracks bind mounts, CRI pre-creates volumes. |
-| 2 | `PVC` auto-provisioning | Not started | Pre-create a `local` StorageClass so PVs can omit `spec.local.path` — infer it from `$DataDir/volumes/<pv-name>`. Explore a lightweight provisioner or admission webhook that auto-creates the PV directory and sets the path. |
+| 2 | `PVC` auto-provisioning | Done | Default StorageClass created in `volumePlugin.Init()`. Watch-based provisioner in `kubelet.go` creates HostPath PVs backed by Docker named volumes for pending PVCs. |
 
 ### P2 — Advanced / infrastructure
 
@@ -89,7 +89,7 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 
 - **Volumes**: `CreateVolume`, `RemoveVolume`, `RemoveVolumes`, `ListVolumes` on the `Backend` interface. Docker implementation uses named volumes with `managed-by` labels and cluster-name prefix. Pod volumes are cleaned up on sandbox removal.
 - **Network**: `EnsureNetwork`, `RemoveNetworks` on the `Backend` interface. `NetworkType` enum (`bridge`, `host`, `none`) in `pkg/cri/types/`. Bridge creates a dedicated `<cluster>-bridge` network by cloning the built-in bridge config. Host and none are no-ops. Non-host-network sandboxes lazily ensure bridge on `RunPodSandbox`.
-- **Cleanup**: Centralized `Cleanup()` in `pkg/cri/backend.go` — calls `RemoveContainers` → `RemovePodSandboxes` → `RemoveVolumes` → `RemoveNetworks` with 30s timeout. Invoked via `ctx.Done`.
+- **Cleanup**: Centralized `Cleanup()` in `pkg/cri/backend.go` — calls `RemoveContainers` → `RemovePodSandboxes` → `RemoveVolumes` → `RemoveNetworks` with 30s timeout. Invoked via `ctx.Done`. Volume cleanup should be conditional based on the PV reclaim policy (Retain vs Delete) — currently all volumes are removed unconditionally.
 
 ## Logging
 

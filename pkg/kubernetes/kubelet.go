@@ -38,6 +38,8 @@ func NewKubelet(config *config.Config) *Kubelet {
 	}
 }
 
+func (k *Kubelet) Stop() {}
+
 func (k *Kubelet) Start(ctx context.Context) error {
 	kubeletLog.Info().Msg("starting kubelet")
 

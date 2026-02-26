@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
@@ -24,11 +27,11 @@ var rootCmd = &cobra.Command{
 		return options.Validate()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
 		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
 		log.Debug().Msg("debug logging enabled")
 
-		cfg, ctx, stop := options.Config()
-		defer stop()
+		cfg := config.NewConfig(options)
 
 		cfg.SetCRI(cri.NewCRI(cfg.DataDir, cfg.Name, options.Clean))
 		cfg.Components = append(cfg.Components, cfg.CRI)
@@ -49,6 +52,10 @@ var rootCmd = &cobra.Command{
 
 		<-ctx.Done()
 		log.Info().Msg("shutting down")
+
+		for i := len(cfg.Components) - 1; i >= 0; i-- {
+			cfg.Components[i].Stop()
+		}
 		return nil
 	},
 }
@@ -68,7 +75,11 @@ func init() {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	rootCmd, logger, cleanup := component.Setup(rootCmd)
+	rootCmd.SetContext(ctx)
 	log.Logger = logger
 	defer cleanup()
 

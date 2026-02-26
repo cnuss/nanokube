@@ -1,10 +1,7 @@
 package config
 
 import (
-	"context"
 	"fmt"
-	"os/signal"
-	"syscall"
 )
 
 type Options struct {
@@ -33,9 +30,4 @@ func (o *Options) Validate() error {
 		return fmt.Errorf("data-dir cannot be empty")
 	}
 	return nil
-}
-
-func (o *Options) Config() (*Config, context.Context, context.CancelFunc) {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	return NewConfig(o), ctx, stop
 }

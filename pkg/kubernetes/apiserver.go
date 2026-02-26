@@ -100,3 +100,5 @@ func (a *APIServer) Start(ctx context.Context) error {
 		}
 	}
 }
+
+func (a *APIServer) Stop() {}

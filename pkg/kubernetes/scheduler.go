@@ -77,3 +77,5 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		}
 	}
 }
+
+func (s *Scheduler) Stop() {}

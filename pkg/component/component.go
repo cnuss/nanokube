@@ -15,6 +15,7 @@ var rootLog = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestam
 // Component is the lifecycle interface for nanokube subsystems.
 type Component interface {
 	Start(ctx context.Context) error
+	Stop()
 }
 
 // Logger delegates to the package-level root logger with a baked-in component field.
