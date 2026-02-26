@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-cm
+data:
+  greeting: hello
+  target: world
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-secret
+stringData:
+  username: admin
+  password: s3cret
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: all-volumes
+spec:
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      echo "=== EmptyDir (default) ==="
+      ls -la /mnt/emptydir-default
+      echo ""
+      echo "=== EmptyDir (memory) ==="
+      ls -la /mnt/emptydir-memory
+      mount | grep emptydir-memory
+      echo ""
+      echo "=== Projected ==="
+      find /mnt/projected -type f -o -type l | while read f; do
+        echo "--- $f ---"
+        cat "$f" 2>/dev/null | head -5
+      done
+      echo ""
+      echo "=== Secret ==="
+      find /mnt/secret -type f -o -type l | while read f; do
+        echo "--- $f ---"
+        cat "$f" 2>/dev/null | head -5
+      done
+      echo ""
+      echo "=== ConfigMap ==="
+      find /mnt/configmap -type f -o -type l | while read f; do
+        echo "--- $f ---"
+        cat "$f" 2>/dev/null | head -5
+      done
+      echo ""
+      echo "=== HostPath ==="
+      ls -la /mnt/hostpath
+      echo ""
+      echo "=== All volumes OK ==="
+      sleep 3600
+    volumeMounts:
+    - name: emptydir-default
+      mountPath: /mnt/emptydir-default
+    - name: emptydir-memory
+      mountPath: /mnt/emptydir-memory
+    - name: projected
+      mountPath: /mnt/projected
+      readOnly: true
+    - name: secret
+      mountPath: /mnt/secret
+      readOnly: true
+    - name: configmap
+      mountPath: /mnt/configmap
+      readOnly: true
+    - name: hostpath
+      mountPath: /mnt/hostpath
+      readOnly: true
+  volumes:
+  - name: emptydir-default
+    emptyDir: {}
+  - name: emptydir-memory
+    emptyDir:
+      medium: Memory
+  - name: projected
+    projected:
+      sources:
+      - serviceAccountToken:
+          path: token
+          expirationSeconds: 3600
+      - configMap:
+          name: test-cm
+          items:
+          - key: greeting
+            path: configmap/greeting
+      - downwardAPI:
+          items:
+          - path: labels
+            fieldRef:
+              fieldPath: metadata.labels
+          - path: namespace
+            fieldRef:
+              fieldPath: metadata.namespace
+  - name: secret
+    secret:
+      secretName: test-secret
+  - name: configmap
+    configMap:
+      name: test-cm
+  - name: hostpath
+    hostPath:
+      path: /tmp/nanokube-hostpath-test
+      type: DirectoryOrCreate
