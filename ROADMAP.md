@@ -60,7 +60,8 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 
 | # | Volume Type | Status | Notes |
 |---|-------------|--------|-------|
-| 1 | `PersistentVolumeClaim` | Not started | Stateful workloads (databases, queues). Requires a volume plugin or CSI driver to provision/attach. |
+| 1 | `PersistentVolumeClaim` | Done | Local PVs backed by Docker named volumes. ScopedMounter tracks bind mounts, CRI pre-creates volumes. |
+| 2 | `PVC` auto-provisioning | Not started | Pre-create a `local` StorageClass so PVs can omit `spec.local.path` — infer it from `$DataDir/volumes/<pv-name>`. Explore a lightweight provisioner or admission webhook that auto-creates the PV directory and sets the path. |
 
 ### P2 — Advanced / infrastructure
 

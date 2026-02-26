@@ -20,6 +20,7 @@ var logger = component.NewLogger("cri")
 type CRI struct {
 	dataDir      string
 	name         string
+	clean        bool
 	socketPath   string
 	backend      Backend
 	streaming    streaming.Runtime
@@ -27,12 +28,13 @@ type CRI struct {
 	grpcServer   *grpc.Server
 }
 
-func NewCRI(dataDir, name string) *CRI {
+func NewCRI(dataDir, name string, clean bool) *CRI {
 	socketPath := filepath.Join(dataDir, "cri.sock")
 	backend, streamingRT := detectBackend(name)
 	return &CRI{
 		dataDir:    dataDir,
 		name:       name,
+		clean:      clean,
 		socketPath: socketPath,
 		backend:    backend,
 		streaming:  streamingRT,
@@ -48,6 +50,22 @@ func (c *CRI) Start(ctx context.Context) error {
 
 	if err := c.backend.Init(ctx); err != nil {
 		return fmt.Errorf("cri backend init: %w", err)
+	}
+
+	// When --clean is active, remove all managed Docker resources from a
+	// previous run. os.RemoveAll(dataDir) only wipes local files; containers,
+	// volumes, and networks live in Docker and must be removed via the API.
+	// Cleanup removes containers + sandboxes + networks; volumes are removed
+	// separately since they intentionally persist across normal restarts.
+	if c.clean {
+		if err := Cleanup(c.backend); err != nil {
+			logger.Warn().Err(err).Msg("clean: errors during teardown")
+		}
+		if volumes, err := c.backend.RemoveVolumes(ctx); err != nil {
+			logger.Warn().Err(err).Msg("clean: failed to remove volumes")
+		} else if len(volumes) > 0 {
+			logger.Info().Strs("volumes", volumes).Msg("clean: removed volumes")
+		}
 	}
 
 	// Start streaming HTTP server for exec/attach/portforward

@@ -20,6 +20,19 @@ import (
 )
 
 func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, config *runtimeapi.ContainerConfig, sandboxConfig *runtimeapi.PodSandboxConfig) (string, error) {
+	// Pre-create Docker volumes for any mounts that the ScopedMounter tracks
+	// as PVC-backed volumes. This ensures the named volume exists before the
+	// container is created with volumeName:/path bind syntax.
+	if b.Mounts != nil {
+		for _, m := range config.GetMounts() {
+			if volName, ok := b.Mounts.GetVolume(m.GetHostPath()); ok {
+				if _, err := b.CreateVolume(ctx, volName); err != nil {
+					logger.Warn().Err(err).Str("volume", volName).Msg("failed to pre-create Docker volume")
+				}
+			}
+		}
+	}
+
 	dockerConfig, hostConfig := toContainerConfig(config, podSandboxID, sandboxConfig, b.name, b.Mounts)
 	name := containerName(sandboxConfig, config)
 

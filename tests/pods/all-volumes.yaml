@@ -1,3 +1,42 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local
+  local:
+    path: NANOKUBE_DATADIR/volumes/test-pvc
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: Exists
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -91,6 +130,11 @@ spec:
       echo "  writable: $(writable /mnt/downwardapi)"
       echo ""
 
+      echo "=== PVC ==="
+      echo "  mount: /mnt/pvc"
+      echo "  writable: $(writable /mnt/pvc)"
+      echo ""
+
       echo "=== HostPath ==="
       echo "  mount: /mnt/hostpath"
       echo "  type:  directory"
@@ -122,6 +166,8 @@ spec:
     - name: downwardapi
       mountPath: /mnt/downwardapi
       readOnly: true
+    - name: pvc
+      mountPath: /mnt/pvc
     - name: hostpath
       mountPath: /mnt/hostpath
       readOnly: true
@@ -173,6 +219,9 @@ spec:
       - path: annotations
         fieldRef:
           fieldPath: metadata.annotations
+  - name: pvc
+    persistentVolumeClaim:
+      claimName: test-pvc
   - name: hostpath
     hostPath:
       path: /tmp/nanokube-hostpath-test

@@ -45,6 +45,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	kubeletRoot := filepath.Join(k.config.DataDir, "kubelet")
 	os.MkdirAll(kubeletRoot, 0755)
 	os.MkdirAll(filepath.Join(k.config.DataDir, "manifests"), 0755)
+	os.MkdirAll(filepath.Join(k.config.DataDir, "volumes"), 0755)
 
 	f := options.NewKubeletFlags()
 	f.RootDirectory = kubeletRoot

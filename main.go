@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 		cfg, ctx, stop := options.Config()
 		defer stop()
 
-		cfg.SetCRI(cri.NewCRI(cfg.DataDir, cfg.Name))
+		cfg.SetCRI(cri.NewCRI(cfg.DataDir, cfg.Name, options.Clean))
 		cfg.Components = append(cfg.Components, cfg.CRI)
 		cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
 		cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))

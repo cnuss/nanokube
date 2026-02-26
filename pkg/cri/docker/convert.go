@@ -101,8 +101,9 @@ func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, san
 		PidMode:     dockercontainer.PidMode("container:" + sandboxID),
 	}
 
-	// Mounts — check if host path is a tracked tmpfs; if so use Docker native
-	// tmpfs instead of a bind mount. Everything else uses Binds (legacy format).
+	// Mounts — check if host path is a tracked tmpfs or named volume; if so
+	// use Docker native tmpfs/volume instead of a host bind mount. Everything
+	// else uses Binds (legacy format).
 	for _, m := range config.GetMounts() {
 		if mounts != nil {
 			if opts, ok := mounts.GetTmpfs(m.GetHostPath()); ok {
@@ -110,6 +111,14 @@ func toContainerConfig(config *runtimeapi.ContainerConfig, sandboxID string, san
 					hostConfig.Tmpfs = make(map[string]string)
 				}
 				hostConfig.Tmpfs[m.GetContainerPath()] = opts
+				continue
+			}
+			if volName, ok := mounts.GetVolume(m.GetHostPath()); ok {
+				bind := name + "-" + volName + ":" + m.GetContainerPath()
+				if m.GetReadonly() {
+					bind += ":ro"
+				}
+				hostConfig.Binds = append(hostConfig.Binds, bind)
 				continue
 			}
 		}

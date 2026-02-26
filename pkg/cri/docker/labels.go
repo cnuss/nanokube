@@ -19,7 +19,10 @@ const (
 	labelContainerAttempt = labelPrefix + "container.attempt"
 	labelLogPath          = labelPrefix + "container.logPath"
 
-	// Managed-by label to identify CRI-created containers
+	// Volume labels
+	labelVolumeName = labelPrefix + "volume.name"
+
+	// Managed-by label to identify CRI-created resources
 	labelManagedBy = labelPrefix + "managed-by"
 
 	// Annotations stored as labels with this prefix

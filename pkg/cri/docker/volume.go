@@ -13,8 +13,11 @@ import (
 // Returns the prefixed volume name that can be used for subsequent operations.
 func (b *Backend) CreateVolume(ctx context.Context, name string) (string, error) {
 	resp, err := b.client.VolumeCreate(ctx, volume.CreateOptions{
-		Name:   b.name + "-" + name,
-		Labels: map[string]string{labelManagedBy: b.name},
+		Name: b.name + "-" + name,
+		Labels: map[string]string{
+			labelManagedBy:  b.name,
+			labelVolumeName: name,
+		},
 	})
 	if err != nil {
 		return "", err

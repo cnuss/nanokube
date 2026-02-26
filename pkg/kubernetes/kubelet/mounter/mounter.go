@@ -16,17 +16,20 @@ var (
 )
 
 // ScopedMounter implements mount.Interface for unprivileged operation.
-// Each fstype is handled by a dedicated implementation file (e.g. tmpfs.go).
+// Each fstype is handled by a dedicated implementation file (e.g. tmpfs.go, bind.go).
 // Unrecognized fstypes return errNotImplemented.
 type ScopedMounter struct {
 	DataDir string
 	mounts  sync.Map // target path → mount.MountPoint
+	volumes sync.Map // target path → Docker volume name
 }
 
 func (m *ScopedMounter) Mount(source string, target string, fstype string, options []string) error {
-	switch fstype {
-	case "tmpfs":
+	switch {
+	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "Mount", options)
+	case isBind(fstype, options):
+		return m.mountBind(source, target, "Mount", options)
 	default:
 		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("Mount not implemented")
 		return errNotImplemented
@@ -34,9 +37,11 @@ func (m *ScopedMounter) Mount(source string, target string, fstype string, optio
 }
 
 func (m *ScopedMounter) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	switch fstype {
-	case "tmpfs":
+	switch {
+	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "MountSensitive", options)
+	case isBind(fstype, options):
+		return m.mountBind(source, target, "MountSensitive", options)
 	default:
 		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitive not implemented")
 		return errNotImplemented
@@ -44,9 +49,11 @@ func (m *ScopedMounter) MountSensitive(source string, target string, fstype stri
 }
 
 func (m *ScopedMounter) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	switch fstype {
-	case "tmpfs":
+	switch {
+	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "MountSensitiveWithoutSystemd", options)
+	case isBind(fstype, options):
+		return m.mountBind(source, target, "MountSensitiveWithoutSystemd", options)
 	default:
 		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitiveWithoutSystemd not implemented")
 		return errNotImplemented
@@ -54,9 +61,11 @@ func (m *ScopedMounter) MountSensitiveWithoutSystemd(source string, target strin
 }
 
 func (m *ScopedMounter) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	switch fstype {
-	case "tmpfs":
+	switch {
+	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "MountSensitiveWithoutSystemdWithMountFlags", options)
+	case isBind(fstype, options):
+		return m.mountBind(source, target, "MountSensitiveWithoutSystemdWithMountFlags", options)
 	default:
 		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitiveWithoutSystemdWithMountFlags not implemented")
 		return errNotImplemented
@@ -66,7 +75,25 @@ func (m *ScopedMounter) MountSensitiveWithoutSystemdWithMountFlags(source string
 func (m *ScopedMounter) Unmount(target string) error {
 	logger.Info().Str("target", target).Msg("Unmount")
 	m.mounts.Delete(target)
+	m.volumes.Delete(target)
 	return nil
+}
+
+// isBind returns true if the mount is a bind mount (empty or "bind" fstype
+// with "bind" in options).
+func isBind(fstype string, options []string) bool {
+	if fstype == "bind" {
+		return true
+	}
+	if fstype != "" {
+		return false
+	}
+	for _, o := range options {
+		if o == "bind" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *ScopedMounter) List() ([]mount.MountPoint, error) {

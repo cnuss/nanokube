@@ -108,10 +108,6 @@ func Cleanup(backend Backend) error {
 	logger.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
 	errs = append(errs, err)
 
-	volumes, err := backend.RemoveVolumes(ctx)
-	logger.Info().Strs("ids", volumes).Msg("cleanup: removed volumes")
-	errs = append(errs, err)
-
 	networks, err := backend.RemoveNetworks(ctx)
 	logger.Info().Strs("ids", networks).Msg("cleanup: removed networks")
 	errs = append(errs, err)

@@ -42,8 +42,9 @@ test: build
 	@trap 'kill $$PID 2>/dev/null; wait 2>/dev/null' EXIT; \
 	./nanokube --clean & PID=$$!; \
 	export KUBECONFIG=$$HOME/.nanokube/kubeconfig; \
+	mkdir -p $$HOME/.nanokube/volumes/test-pvc; \
 	for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 1; done; \
-	kubectl apply -f tests/pods/all-volumes.yaml; \
+	sed "s|NANOKUBE_DATADIR|$$HOME/.nanokube|g" tests/pods/all-volumes.yaml | kubectl apply -f -; \
 	for i in $$(seq 1 30); do [ "$$(kubectl get pod all-volumes -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] && break; sleep 1; done; \
 	CID=$$(docker ps --filter "label=io.kubernetes.pod.name=all-volumes" --filter "label=io.kubernetes.container.name=busybox" --format '{{.ID}}'); \
 	docker logs "$$CID"; \
