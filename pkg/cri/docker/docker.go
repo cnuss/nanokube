@@ -51,7 +51,7 @@ func (b *Backend) PluginName() string {
 	return "docker.io/" + b.name
 }
 
-func (b *Backend) Init(ctx context.Context) error {
+func (b *Backend) Start(ctx context.Context) (component.Started, error) {
 	httpClient := &http.Client{
 		Transport: &loggingTransport{
 			inner: &http.Transport{
@@ -68,22 +68,44 @@ func (b *Backend) Init(ctx context.Context) error {
 		dockerclient.WithHTTPClient(httpClient),
 	)
 	if err != nil {
-		return fmt.Errorf("docker client: %w", err)
+		return nil, fmt.Errorf("docker client: %w", err)
 	}
 	// Validate connectivity
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	ping, err := b.client.Ping(pctx)
 	if err != nil {
-		return fmt.Errorf("docker ping: %w", err)
+		return nil, fmt.Errorf("docker ping: %w", err)
 	}
 	logger.Info().Str("api", ping.APIVersion).Msg("docker backend connected")
-	return nil
+	return component.Ready(), nil
 }
 
-func (b *Backend) Close() error {
+func (b *Backend) Stop() component.Stopped {
 	if b.client == nil {
-		return nil
+		return component.Done()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Cleanup: containers → sandboxes → networks
+	containers, err := b.RemoveContainers(ctx)
+	logger.Info().Strs("ids", containers).Msg("cleanup: removed containers")
+	if err != nil {
+		logger.Warn().Err(err).Msg("cleanup: container removal errors")
+	}
+
+	sandboxes, err := b.RemovePodSandboxes(ctx)
+	logger.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
+	if err != nil {
+		logger.Warn().Err(err).Msg("cleanup: sandbox removal errors")
+	}
+
+	networks, err := b.RemoveNetworks(ctx)
+	logger.Info().Strs("ids", networks).Msg("cleanup: removed networks")
+	if err != nil {
+		logger.Warn().Err(err).Msg("cleanup: network removal errors")
 	}
 
 	// Stop all active log writers
@@ -94,7 +116,8 @@ func (b *Backend) Close() error {
 	}
 	b.logMu.Unlock()
 
-	return b.client.Close()
+	b.client.Close()
+	return component.Done()
 }
 
 func (b *Backend) Version(ctx context.Context) (*runtimeapi.VersionResponse, error) {

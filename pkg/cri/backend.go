@@ -2,22 +2,20 @@ package cri
 
 import (
 	"context"
-	"errors"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 // Backend abstracts a container engine (Docker, Podman) behind the CRI interface.
 type Backend interface {
+	component.Component
+
 	// Identity
 	Name() string
 	PluginName() string
-
-	// Lifecycle
-	Init(ctx context.Context) error
-	Close() error
 
 	// Version / Status
 	Version(ctx context.Context) (*runtimeapi.VersionResponse, error)
@@ -95,26 +93,3 @@ type Backend interface {
 	RemoveNetworks(ctx context.Context) ([]string, error)
 }
 
-// Cleanup performs centralized teardown by calling the backend's Remove
-// functions. It is invoked automatically via ctx.Done, not called directly.
-// Order: containers → sandboxes → volumes → networks.
-func Cleanup(backend Backend) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	var errs []error
-
-	containers, err := backend.RemoveContainers(ctx)
-	logger.Info().Strs("ids", containers).Msg("cleanup: removed containers")
-	errs = append(errs, err)
-
-	sandboxes, err := backend.RemovePodSandboxes(ctx)
-	logger.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
-	errs = append(errs, err)
-
-	networks, err := backend.RemoveNetworks(ctx)
-	logger.Info().Strs("ids", networks).Msg("cleanup: removed networks")
-	errs = append(errs, err)
-
-	return errors.Join(errs...)
-}

@@ -3,16 +3,16 @@ package cri
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/cri/docker"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
-	"net"
-	"os"
-	"path/filepath"
 )
 
 var logger = component.NewLogger("cri")
@@ -48,7 +48,7 @@ func (c *CRI) Start(ctx context.Context) (component.Started, error) {
 
 	logger.Info().Msg("starting CRI server")
 
-	if err := c.backend.Init(ctx); err != nil {
+	if _, err := c.backend.Start(ctx); err != nil {
 		return nil, fmt.Errorf("cri backend init: %w", err)
 	}
 
@@ -106,24 +106,17 @@ func (c *CRI) Start(ctx context.Context) (component.Started, error) {
 
 func (c *CRI) Stop() component.Stopped {
 	return component.Closed("unix", c.socketPath, func() {
-		if err := Cleanup(c.backend); err != nil {
-			logger.Warn().Err(err).Msg("cleanup: errors during teardown")
+		if c.backend != nil {
+			<-c.backend.Stop()
 		}
-		c.stop()
+		if c.streamServer != nil {
+			c.streamServer.Stop()
+		}
+		if c.grpcServer != nil {
+			c.grpcServer.GracefulStop()
+		}
+		os.Remove(c.socketPath)
 	})
-}
-
-func (c *CRI) stop() {
-	if c.streamServer != nil {
-		c.streamServer.Stop()
-	}
-	if c.grpcServer != nil {
-		c.grpcServer.GracefulStop()
-	}
-	if c.backend != nil {
-		c.backend.Close()
-	}
-	os.Remove(c.socketPath)
 }
 
 func (c *CRI) Hostname() string {
