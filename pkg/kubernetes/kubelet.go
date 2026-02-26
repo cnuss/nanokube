@@ -132,7 +132,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.Subpather = &deps.ScopedSubpath{DataDir: k.config.DataDir}
 	hk.KubeletDeps.HostUtil = &deps.ScopedHostUtil{DataDir: k.config.DataDir}
 	hk.KubeletDeps.Recorder = deps.EventRecorder{}
-	hk.KubeletDeps.ProbeManager = deps.ProbeManager{}
+	hk.KubeletDeps.ProbeManager = deps.NewProbeManager()
 	go hk.Run(ctx)
 
 	// Wait for kubelet to be healthy
