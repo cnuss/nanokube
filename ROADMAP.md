@@ -94,6 +94,12 @@ Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact 
 
 Structured logging via `zerolog` with component-scoped loggers. All packages use `component.NewLogger("name")` which delegates to a shared root logger at call time. `component.Setup()` handles bootstrap: flag parsing, log level, data dir clean, and log file mirroring (console + disk). Verbosity: default=info, `-v`=debug, `-vv`=trace.
 
+## Testing
+
+- **Status**: Not started
+- **Approach**: Replace ad-hoc shell-based smoke tests (`tests/pods/`) with a Go integration test suite using `k8s.io/client-go` and the real nanokube control plane. Tests start nanokube in-process, apply resources via the API, and assert on pod status, volume contents (via `docker exec`), and container state.
+- **Scope**: Volume types, pod lifecycle, CRI conformance regression, cleanup behavior.
+
 ## Podman Backend
 
 - **Status**: Not started

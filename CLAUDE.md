@@ -26,10 +26,9 @@ Build uses `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
 ## Testing
 
 ```bash
-make test       # runs go test ./...
+make test        # build, start nanokube, apply all-volumes pod, print logs, wait for Ctrl+C
+make unit-test   # runs go test ./...
 ```
-
-No test files exist yet.
 
 ## Formatting
 
@@ -48,7 +47,8 @@ No linter is configured.
 | `make patch-save` | Save current Kubernetes changes back to patch file |
 | `make build` | Patch + build the binary |
 | `make clean` | Remove the binary |
-| `make test` | Run all tests |
+| `make test` | Smoke test: build, start, apply all-volumes pod, print logs, wait for Ctrl+C |
+| `make unit-test` | Run Go unit tests |
 | `make fmt` | Format Go code |
 | `make run` | Format, build, and run |
 
