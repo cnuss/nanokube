@@ -56,8 +56,7 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 	cfg.ListenPeerUrls = []url.URL{*peerURL}
 	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
 	cfg.InitialCluster = "default=" + peerURL.String()
-	cfg.AutoCompactionMode = "periodic"
-	cfg.AutoCompactionRetention = "43200m" // 30 days
+	cfg.AutoCompactionRetention = "0"
 
 	// Client TLS
 	cfg.ClientTLSInfo = transport.TLSInfo{
