@@ -39,12 +39,11 @@ func NewKubelet(config *config.Config) *Kubelet {
 	}
 }
 
-func (k *Kubelet) Stop() {
-	component.AwaitClose("tcp", "127.0.0.1:10250", 5*time.Second)
-	kubeletLog.Info().Msg("kubelet stopped")
+func (k *Kubelet) Stop() component.Stopped {
+	return component.Closed("tcp", "127.0.0.1:10250", nil)
 }
 
-func (k *Kubelet) Start(ctx context.Context) error {
+func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	kubeletLog.Info().Msg("starting kubelet")
 
 	// Build KubeletFlags — use a dedicated subdirectory so the kubelet's
@@ -65,7 +64,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	// Build KubeletConfiguration with upstream defaults, then apply our overrides
 	c, err := options.NewKubeletConfiguration()
 	if err != nil {
-		return fmt.Errorf("kubelet config: %w", err)
+		return nil, fmt.Errorf("kubelet config: %w", err)
 	}
 	k.config.ApplyKubeletConfig(c)
 
@@ -73,11 +72,11 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	kubeconfigPath := k.config.KubeconfigPath()
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
-		return fmt.Errorf("kubelet kubeconfig: %w", err)
+		return nil, fmt.Errorf("kubelet kubeconfig: %w", err)
 	}
 	client, err := clientset.NewForConfig(restConfig)
 	if err != nil {
-		return fmt.Errorf("kubelet client: %w", err)
+		return nil, fmt.Errorf("kubelet client: %w", err)
 	}
 
 	heartbeatConfig := *restConfig
@@ -89,7 +88,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	heartbeatConfig.QPS = float32(-1)
 	heartbeatClient, err := clientset.NewForConfig(&heartbeatConfig)
 	if err != nil {
-		return fmt.Errorf("kubelet heartbeat client: %w", err)
+		return nil, fmt.Errorf("kubelet heartbeat client: %w", err)
 	}
 
 	// Connect to CRI socket via remote clients
@@ -98,11 +97,11 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	tp := deps.TracerProvider{}
 	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
 	if err != nil {
-		return fmt.Errorf("kubelet runtime service: %w", err)
+		return nil, fmt.Errorf("kubelet runtime service: %w", err)
 	}
 	imageService, err := remote.NewRemoteImageService(endpoint, 30*time.Second, tp, &logger)
 	if err != nil {
-		return fmt.Errorf("kubelet image service: %w", err)
+		return nil, fmt.Errorf("kubelet image service: %w", err)
 	}
 
 	// Get the runtime backend from CRI for cadvisor + capacity
@@ -147,7 +146,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		default:
 			resp, err := httpClient.Get("http://127.0.0.1:10250/healthz")
 			if err != nil {
@@ -158,7 +157,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 				if resp.StatusCode == http.StatusOK {
 					kubeletLog.Info().Msg("kubelet is ready")
 					go runProvisioner(ctx, client, k.config.DataDir, backend, volumePlugin.GetPluginName())
-					return nil
+					return component.Ready(), nil
 				}
 			}
 			time.Sleep(100 * time.Millisecond)

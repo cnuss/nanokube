@@ -3,16 +3,16 @@ package cri
 import (
 	"context"
 	"fmt"
-	"net"
-	"os"
-	"path/filepath"
-	"time"
+	"net/http"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/cri/docker"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
+	"net"
+	"os"
+	"path/filepath"
 )
 
 var logger = component.NewLogger("cri")
@@ -41,15 +41,15 @@ func NewCRI(dataDir, name string, clean bool) *CRI {
 	}
 }
 
-func (c *CRI) Start(ctx context.Context) error {
+func (c *CRI) Start(ctx context.Context) (component.Started, error) {
 	if c.backend == nil {
-		return fmt.Errorf("no container runtime detected (checked Docker, Podman)")
+		return nil, fmt.Errorf("no container runtime detected (checked Docker, Podman)")
 	}
 
 	logger.Info().Msg("starting CRI server")
 
 	if err := c.backend.Init(ctx); err != nil {
-		return fmt.Errorf("cri backend init: %w", err)
+		return nil, fmt.Errorf("cri backend init: %w", err)
 	}
 
 	// When --clean is active, remove all managed Docker resources from a
@@ -72,10 +72,10 @@ func (c *CRI) Start(ctx context.Context) error {
 		var err error
 		c.streamServer, err = streaming.NewServer(streamCfg, c.streaming)
 		if err != nil {
-			return fmt.Errorf("cri streaming server: %w", err)
+			return nil, fmt.Errorf("cri streaming server: %w", err)
 		}
 		go func() {
-			if err := c.streamServer.Start(true); err != nil {
+			if err := c.streamServer.Start(true); err != nil && err != http.ErrServerClosed {
 				logger.Error().Err(err).Msg("cri streaming server exited")
 			}
 		}()
@@ -87,7 +87,7 @@ func (c *CRI) Start(ctx context.Context) error {
 
 	lis, err := net.Listen("unix", c.socketPath)
 	if err != nil {
-		return fmt.Errorf("cri listen %s: %w", c.socketPath, err)
+		return nil, fmt.Errorf("cri listen %s: %w", c.socketPath, err)
 	}
 
 	c.grpcServer = grpc.NewServer()
@@ -101,16 +101,16 @@ func (c *CRI) Start(ctx context.Context) error {
 		}
 	}()
 
-	return nil
+	return component.Ready(), nil
 }
 
-func (c *CRI) Stop() {
-	if err := Cleanup(c.backend); err != nil {
-		logger.Warn().Err(err).Msg("cleanup: errors during teardown")
-	}
-	c.stop()
-	component.AwaitClose("unix", c.socketPath, 5*time.Second)
-	logger.Info().Msg("cri stopped")
+func (c *CRI) Stop() component.Stopped {
+	return component.Closed("unix", c.socketPath, func() {
+		if err := Cleanup(c.backend); err != nil {
+			logger.Warn().Err(err).Msg("cleanup: errors during teardown")
+		}
+		c.stop()
+	})
 }
 
 func (c *CRI) stop() {

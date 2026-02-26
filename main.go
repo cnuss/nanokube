@@ -27,7 +27,7 @@ var rootCmd = &cobra.Command{
 		return options.Validate()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
+		sigCtx := cmd.Context()
 		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
 		log.Debug().Msg("debug logging enabled")
 
@@ -44,17 +44,26 @@ var rootCmd = &cobra.Command{
 			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
 		}
 
-		for _, c := range cfg.Components {
-			if err := c.Start(ctx); err != nil {
+		// Each component gets its own context so we can cancel them
+		// in reverse order during shutdown, keeping dependencies alive.
+		cancels := make([]context.CancelFunc, len(cfg.Components))
+		for i, c := range cfg.Components {
+			compCtx, cancel := context.WithCancel(context.Background())
+			cancels[i] = cancel
+			started, err := c.Start(compCtx)
+			if err != nil {
+				cancel()
 				return err
 			}
+			<-started
 		}
 
-		<-ctx.Done()
+		<-sigCtx.Done()
 		log.Info().Msg("shutting down")
 
 		for i := len(cfg.Components) - 1; i >= 0; i-- {
-			cfg.Components[i].Stop()
+			cancels[i]()
+			<-cfg.Components[i].Stop()
 		}
 		return nil
 	},

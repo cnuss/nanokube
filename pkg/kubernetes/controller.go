@@ -2,9 +2,6 @@ package kubernetes
 
 import (
 	"context"
-	"crypto/tls"
-	"net/http"
-	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
@@ -26,7 +23,7 @@ func NewControllerManager(config *config.Config) *ControllerManager {
 	}
 }
 
-func (c *ControllerManager) Start(ctx context.Context) error {
+func (c *ControllerManager) Start(ctx context.Context) (component.Started, error) {
 	controllerLog.Info().Msg("starting controller-manager")
 
 	// Allow logging reconfiguration since apiserver already configured it
@@ -58,35 +55,12 @@ func (c *ControllerManager) Start(ctx context.Context) error {
 	)
 
 	c.cmd.SetArgs(args)
-	go c.cmd.ExecuteContext(ctx)
 
-	// Wait for controller-manager to be healthy
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			resp, err := client.Get("https://127.0.0.1:10257/healthz")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					controllerLog.Info().Msg("controller-manager is ready")
-					return nil
-				}
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
+	return component.Opened("tcp", "127.0.0.1:10257", func() {
+		go c.cmd.ExecuteContext(ctx)
+	}), nil
 }
 
-func (c *ControllerManager) Stop() {
-	component.AwaitClose("tcp", "127.0.0.1:10257", 5*time.Second)
-	controllerLog.Info().Msg("controller-manager stopped")
+func (c *ControllerManager) Stop() component.Stopped {
+	return component.Closed("tcp", "127.0.0.1:10257", nil)
 }

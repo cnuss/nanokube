@@ -2,9 +2,6 @@ package kubernetes
 
 import (
 	"context"
-	"crypto/tls"
-	"net/http"
-	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
@@ -25,7 +22,7 @@ func NewAPIServer(config *config.Config) *APIServer {
 	}
 }
 
-func (a *APIServer) Start(ctx context.Context) error {
+func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 	apiserverLog.Info().Msg("starting apiserver")
 
 	/*
@@ -74,35 +71,12 @@ func (a *APIServer) Start(ctx context.Context) error {
 	)
 
 	a.cmd.SetArgs(args)
-	go a.cmd.ExecuteContext(ctx)
 
-	// Wait for API server to be healthy
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			resp, err := client.Get("https://127.0.0.1:6443/healthz")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					apiserverLog.Info().Msg("apiserver is ready")
-					return nil
-				}
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
+	return component.Opened("tcp", "127.0.0.1:6443", func() {
+		go a.cmd.ExecuteContext(ctx)
+	}), nil
 }
 
-func (a *APIServer) Stop() {
-	component.AwaitClose("tcp", "127.0.0.1:6443", 5*time.Second)
-	apiserverLog.Info().Msg("apiserver stopped")
+func (a *APIServer) Stop() component.Stopped {
+	return component.Closed("tcp", "127.0.0.1:6443", nil)
 }

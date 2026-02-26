@@ -29,7 +29,7 @@ func NewEtcd(config *config.Config) *Etcd {
 	}
 }
 
-func (e *Etcd) Start(ctx context.Context) error {
+func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 	logger.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
@@ -43,7 +43,7 @@ func (e *Etcd) Start(ctx context.Context) error {
 		zapCfg.Level = zap.NewAtomicLevelAt(zapcore.PanicLevel)
 		logger, err := zapCfg.Build()
 		if err != nil {
-			return fmt.Errorf("failed to create logger: %w", err)
+			return nil, fmt.Errorf("failed to create logger: %w", err)
 		}
 		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
 	}
@@ -74,14 +74,14 @@ func (e *Etcd) Start(ctx context.Context) error {
 	var err error
 	e.server, err = embed.StartEtcd(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to start etcd: %w", err)
+		return nil, fmt.Errorf("failed to start etcd: %w", err)
 	}
 
 	select {
 	case <-e.server.Server.ReadyNotify():
 		logger.Info().Msg("etcd server ready")
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 
 	// Wait for client connectivity
@@ -92,7 +92,7 @@ func (e *Etcd) Start(ctx context.Context) error {
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
-		return fmt.Errorf("failed to create tls config: %w", err)
+		return nil, fmt.Errorf("failed to create tls config: %w", err)
 	}
 
 	client, err := clientv3.New(clientv3.Config{
@@ -101,32 +101,30 @@ func (e *Etcd) Start(ctx context.Context) error {
 		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create etcd client: %w", err)
+		return nil, fmt.Errorf("failed to create etcd client: %w", err)
 	}
 	defer client.Close()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		default:
 			ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
 			_, err := client.Get(ctxTimeout, "health")
 			cancel()
 			if err == nil {
 				logger.Info().Msg("etcd is ready")
-				return nil
+				return component.Ready(), nil
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
-func (e *Etcd) Stop() {
-	if e.server != nil {
-		logger.Info().Msg("stopping etcd")
-		e.server.Close()
-		component.AwaitClose("tcp", "127.0.0.1:2379", 5*time.Second)
-		logger.Info().Msg("etcd stopped")
-	}
+func (e *Etcd) Stop() component.Stopped {
+	// Don't call e.server.Close() — etcd runs in-process and exits with us.
+	// Closing it before K8s gRPC clients fully drain causes a flood of
+	// "connection refused" retries from orphaned channels.
+	return component.Done()
 }

@@ -14,10 +14,13 @@ import (
 
 var rootLog = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
+type Started <-chan struct{}
+type Stopped <-chan struct{}
+
 // Component is the lifecycle interface for nanokube subsystems.
 type Component interface {
-	Start(ctx context.Context) error
-	Stop()
+	Start(ctx context.Context) (Started, error)
+	Stop() Stopped
 }
 
 // Logger delegates to the package-level root logger with a baked-in component field.
@@ -96,18 +99,76 @@ func (c Logger) Error() *zerolog.Event {
 	return rootLog.Error().Str("component", c.component)
 }
 
-// AwaitClose polls until a network endpoint stops accepting connections.
-// network is "tcp" or "unix"; address is host:port or socket path.
-func AwaitClose(network, address string, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout(network, address, 200*time.Millisecond)
-		if err != nil {
-			return // port/socket is gone
+// Ready returns an already-closed Started channel for components that
+// block in Start() until healthy.
+func Ready() Started {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+// Done returns an already-closed Stopped channel for components that
+// need no shutdown work.
+func Done() Stopped {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+// Opened runs setup (if non-nil), then polls until the network endpoint
+// starts accepting connections. Returns a Started channel that closes when ready.
+func Opened(network, address string, setup func()) Started {
+	ch := make(chan struct{})
+	go func() {
+		defer close(ch)
+		if setup != nil {
+			setup()
 		}
-		conn.Close()
-		time.Sleep(50 * time.Millisecond)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				conn, err := net.DialTimeout(network, address, 200*time.Millisecond)
+				if err == nil {
+					conn.Close()
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+	}()
+	return ch
+}
+
+// Closed runs shutdown (if non-nil), then polls until the network endpoint
+// stops accepting connections. Returns a Stopped channel that closes when done.
+func Closed(network, address string, shutdown func()) Stopped {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if shutdown != nil {
+			shutdown()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				conn, err := net.DialTimeout(network, address, 200*time.Millisecond)
+				if err != nil {
+					return
+				}
+				conn.Close()
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+	}()
+	return done
 }
 
 // teeFile creates a pipe that copies writes to both orig and logFile.
