@@ -10,7 +10,6 @@ kind: Pod
 metadata:
   name: projected-test
 spec:
-  terminationGracePeriodSeconds: 1
   containers:
   - name: busybox
     image: busybox:latest

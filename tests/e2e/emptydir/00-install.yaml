@@ -3,7 +3,6 @@ kind: Pod
 metadata:
   name: emptydir-test
 spec:
-  terminationGracePeriodSeconds: 1
   containers:
   - name: busybox
     image: busybox:latest
