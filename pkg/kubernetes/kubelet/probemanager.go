@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/cri"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubernetes/pkg/probe"
-	httpprobe "k8s.io/kubernetes/pkg/probe/http"
-	tcpprobe "k8s.io/kubernetes/pkg/probe/tcp"
 )
 
 var probeLog = newLogger("probemanager")
@@ -50,28 +50,26 @@ type resultState struct {
 
 type trackedPod struct {
 	pod            *v1.Pod
-	podIP          string
 	cancel         context.CancelFunc // cancels all workers
 	livenessCancel context.CancelFunc // cancels liveness workers only
 	startupCancel  context.CancelFunc // cancels startup workers only
 }
 
-// ProbeManager implements prober.Manager with real HTTP/TCP probe execution.
+// ProbeManager implements prober.Manager by executing all probes inside the
+// target container via the CRI backend's ExecSync.
 type ProbeManager struct {
 	mu      sync.RWMutex
 	pods    map[types.UID]*trackedPod
 	results map[resultKey]*resultState
 
-	httpProber httpprobe.Prober
-	tcpProber  tcpprobe.Prober
+	backend cri.Backend
 }
 
-func NewProbeManager() *ProbeManager {
+func NewProbeManager(backend cri.Backend) *ProbeManager {
 	return &ProbeManager{
-		pods:       make(map[types.UID]*trackedPod),
-		results:    make(map[resultKey]*resultState),
-		httpProber: httpprobe.New(true),
-		tcpProber:  tcpprobe.New(),
+		pods:    make(map[types.UID]*trackedPod),
+		results: make(map[resultKey]*resultState),
+		backend: backend,
 	}
 }
 
@@ -164,13 +162,6 @@ func (pm *ProbeManager) StopLivenessAndStartup(pod *v1.Pod) {
 }
 
 func (pm *ProbeManager) UpdatePodStatus(_ context.Context, pod *v1.Pod, podStatus *v1.PodStatus) {
-	pm.mu.Lock()
-	// cache the pod IP from the status
-	if tp, exists := pm.pods[pod.UID]; exists && podStatus.PodIP != "" {
-		tp.podIP = podStatus.PodIP
-	}
-	pm.mu.Unlock()
-
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
@@ -244,7 +235,7 @@ func (pm *ProbeManager) worker(ctx context.Context, uid types.UID, container *v1
 
 	// run immediately on first tick, then at period intervals
 	for {
-		pm.runProbe(uid, container, probeSpec, pt, successThreshold, failureThreshold)
+		pm.runProbe(ctx, uid, container, probeSpec, pt, successThreshold, failureThreshold)
 
 		select {
 		case <-ctx.Done():
@@ -254,20 +245,15 @@ func (pm *ProbeManager) worker(ctx context.Context, uid types.UID, container *v1
 	}
 }
 
-func (pm *ProbeManager) runProbe(uid types.UID, container *v1.Container, probeSpec *v1.Probe, pt probeType, successThreshold, failureThreshold int) {
+func (pm *ProbeManager) runProbe(ctx context.Context, uid types.UID, container *v1.Container, probeSpec *v1.Probe, pt probeType, successThreshold, failureThreshold int) {
 	pm.mu.RLock()
 	tp, exists := pm.pods[uid]
 	if !exists {
 		pm.mu.RUnlock()
 		return
 	}
-	podIP := tp.podIP
 	podName := tp.pod.Name
 	pm.mu.RUnlock()
-
-	if podIP == "" {
-		return // IP not yet assigned
-	}
 
 	// If this is a readiness or liveness probe, check that startup probe passed first
 	if pt == probeReadiness || pt == probeLiveness {
@@ -283,7 +269,7 @@ func (pm *ProbeManager) runProbe(uid types.UID, container *v1.Container, probeSp
 		}
 	}
 
-	result := pm.executeProbe(probeSpec, container, podIP, podName)
+	result := pm.executeProbe(ctx, probeSpec, container, uid, podName)
 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -324,32 +310,78 @@ func (pm *ProbeManager) runProbe(uid types.UID, container *v1.Container, probeSp
 	}
 }
 
-func (pm *ProbeManager) executeProbe(probeSpec *v1.Probe, container *v1.Container, podIP, podName string) probe.Result {
+// resolveContainerID finds the running container ID for a given pod UID and
+// container name by querying the CRI backend with label selectors.
+func (pm *ProbeManager) resolveContainerID(ctx context.Context, podUID types.UID, containerName string) (string, error) {
+	if pm.backend == nil {
+		return "", fmt.Errorf("no CRI backend available")
+	}
+	state := runtimeapi.ContainerState_CONTAINER_RUNNING
+	containers, err := pm.backend.ListContainers(ctx, &runtimeapi.ContainerFilter{
+		State: &runtimeapi.ContainerStateValue{State: state},
+		LabelSelector: map[string]string{
+			"io.kubernetes.pod.uid":        string(podUID),
+			"io.kubernetes.container.name": containerName,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("list containers: %w", err)
+	}
+	if len(containers) == 0 {
+		return "", fmt.Errorf("no running container found for %s/%s", podUID, containerName)
+	}
+	return containers[0].Id, nil
+}
+
+func (pm *ProbeManager) executeProbe(ctx context.Context, probeSpec *v1.Probe, container *v1.Container, podUID types.UID, podName string) probe.Result {
 	handler := probeSpec.ProbeHandler
+	timeout := time.Duration(probeSpec.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 1 * time.Second
+	}
+	timeoutSec := int(timeout.Seconds())
+	if timeoutSec <= 0 {
+		timeoutSec = 1
+	}
+
+	containerID, err := pm.resolveContainerID(ctx, podUID, container.Name)
+	if err != nil {
+		probeLog.Debug().Err(err).Str("pod", podName).Str("container", container.Name).Msg("resolve container for probe")
+		return probe.Failure
+	}
+
+	var cmd []string
 
 	switch {
+	case handler.Exec != nil:
+		cmd = handler.Exec.Command
+
 	case handler.HTTPGet != nil:
-		req, err := httpprobe.NewRequestForHTTPGetAction(handler.HTTPGet, container, podIP, "probe")
-		if err != nil {
-			probeLog.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("http probe request error")
-			return probe.Failure
+		scheme := "http"
+		if handler.HTTPGet.Scheme == v1.URISchemeHTTPS {
+			scheme = "https"
 		}
-		timeout := time.Duration(probeSpec.TimeoutSeconds) * time.Second
-		if timeout <= 0 {
-			timeout = 1 * time.Second
+		port := handler.HTTPGet.Port.IntValue()
+		if port == 0 {
+			port, err = probe.ResolveContainerPort(handler.HTTPGet.Port, container)
+			if err != nil {
+				probeLog.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("http probe port error")
+				return probe.Failure
+			}
 		}
-		result, output, err := pm.httpProber.Probe(req, timeout)
-		if result != probe.Success {
-			probeLog.Debug().
-				Str("pod", podName).
-				Str("container", container.Name).
-				Str("url", req.URL.String()).
-				Str("result", string(result)).
-				Str("output", truncate(output, 200)).
-				Err(err).
-				Msg("http probe")
+		path := handler.HTTPGet.Path
+		if path == "" {
+			path = "/"
 		}
-		return result
+		url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
+		cmd = []string{"wget", "-q", "-O", "/dev/null", "-S", fmt.Sprintf("--timeout=%d", timeoutSec)}
+		if host := handler.HTTPGet.Host; host != "" {
+			cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
+		}
+		for _, h := range handler.HTTPGet.HTTPHeaders {
+			cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
+		}
+		cmd = append(cmd, url)
 
 	case handler.TCPSocket != nil:
 		port, err := probe.ResolveContainerPort(handler.TCPSocket.Port, container)
@@ -357,29 +389,7 @@ func (pm *ProbeManager) executeProbe(probeSpec *v1.Probe, container *v1.Containe
 			probeLog.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("tcp probe port error")
 			return probe.Failure
 		}
-		host := handler.TCPSocket.Host
-		if host == "" {
-			host = podIP
-		}
-		timeout := time.Duration(probeSpec.TimeoutSeconds) * time.Second
-		if timeout <= 0 {
-			timeout = 1 * time.Second
-		}
-		result, _, err := pm.tcpProber.Probe(host, port, timeout)
-		if result != probe.Success {
-			probeLog.Debug().
-				Str("pod", podName).
-				Str("container", container.Name).
-				Str("host", fmt.Sprintf("%s:%d", host, port)).
-				Str("result", string(result)).
-				Err(err).
-				Msg("tcp probe")
-		}
-		return result
-
-	case handler.Exec != nil:
-		probeLog.Warn().Str("pod", podName).Str("container", container.Name).Msg("exec probe not supported, treating as success")
-		return probe.Success
+		cmd = []string{"nc", "-z", fmt.Sprintf("-w%d", timeoutSec), "localhost", fmt.Sprintf("%d", port)}
 
 	case handler.GRPC != nil:
 		probeLog.Warn().Str("pod", podName).Str("container", container.Name).Msg("grpc probe not supported, treating as success")
@@ -388,6 +398,19 @@ func (pm *ProbeManager) executeProbe(probeSpec *v1.Probe, container *v1.Containe
 	default:
 		return probe.Success
 	}
+
+	stdout, stderr, execErr := pm.backend.ExecSync(ctx, containerID, cmd, timeout)
+	if execErr != nil {
+		probeLog.Debug().
+			Err(execErr).
+			Str("pod", podName).
+			Str("container", container.Name).
+			Str("stdout", truncate(string(stdout), 200)).
+			Str("stderr", truncate(string(stderr), 200)).
+			Msg("probe exec failed")
+		return probe.Failure
+	}
+	return probe.Success
 }
 
 func truncate(s string, max int) string {
