@@ -7,6 +7,14 @@ data:
   target: world
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-projected-cm
+data:
+  color: blue
+  lang: go
+---
+apiVersion: v1
 kind: Secret
 metadata:
   name: test-secret
@@ -18,6 +26,9 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: all-volumes
+  labels:
+    app: all-volumes
+    test: "true"
 spec:
   containers:
   - name: busybox
@@ -25,34 +36,61 @@ spec:
     command: ["/bin/sh", "-c"]
     args:
     - |
+      show() {
+        printf "  %-20s = %s\n" "$1" "$2"
+      }
+      writable() {
+        if touch "$1/.probe" 2>/dev/null; then rm "$1/.probe"; echo yes; else echo no; fi
+      }
+
       echo "=== EmptyDir (default) ==="
-      ls -la /mnt/emptydir-default
+      echo "  mount: /mnt/emptydir-default"
+      echo "  writable: $(writable /mnt/emptydir-default)"
       echo ""
+
       echo "=== EmptyDir (memory) ==="
-      ls -la /mnt/emptydir-memory
-      mount | grep emptydir-memory
+      echo "  mount: /mnt/emptydir-memory"
+      echo "  type:  $(mount | grep emptydir-memory | awk '{print $5}')"
+      echo "  writable: $(writable /mnt/emptydir-memory)"
       echo ""
+
       echo "=== Projected ==="
-      find /mnt/projected -type f -o -type l | while read f; do
-        echo "--- $f ---"
-        cat "$f" 2>/dev/null | head -5
-      done
+      echo "  mount: /mnt/projected"
+      show "token" "$(cat /mnt/projected/token 2>/dev/null | cut -c1-32)..."
+      show "namespace" "$(cat /mnt/projected/namespace 2>/dev/null)"
+      echo "  labels:"
+      sed 's/^/                         /' /mnt/projected/labels 2>/dev/null; echo ""
+      show "configmap/color" "$(cat /mnt/projected/configmap/color 2>/dev/null)"
+      show "configmap/lang" "$(cat /mnt/projected/configmap/lang 2>/dev/null)"
+      echo "  writable: $(writable /mnt/projected)"
       echo ""
+
       echo "=== Secret ==="
-      find /mnt/secret -type f -o -type l | while read f; do
-        echo "--- $f ---"
-        cat "$f" 2>/dev/null | head -5
-      done
+      echo "  mount: /mnt/secret"
+      show "username" "$(cat /mnt/secret/username 2>/dev/null)"
+      show "password" "$(cat /mnt/secret/password 2>/dev/null)"
+      echo "  writable: $(writable /mnt/secret)"
       echo ""
+
       echo "=== ConfigMap ==="
-      find /mnt/configmap -type f -o -type l | while read f; do
-        echo "--- $f ---"
-        cat "$f" 2>/dev/null | head -5
+      echo "  mount: /mnt/configmap"
+      show "greeting" "$(cat /mnt/configmap/greeting 2>/dev/null)"
+      show "target" "$(cat /mnt/configmap/target 2>/dev/null)"
+      echo "  writable: $(writable /mnt/configmap)"
+      echo ""
+
+      echo "=== HostPath ==="
+      echo "  mount: /mnt/hostpath"
+      echo "  type:  directory"
+      echo "  writable: $(writable /mnt/hostpath)"
+      echo ""
+
+      echo "=== Mounts ==="
+      mount | grep /mnt/ | while read line; do
+        printf "  %s\n" "$line"
       done
       echo ""
-      echo "=== HostPath ==="
-      ls -la /mnt/hostpath
-      echo ""
+
       echo "=== All volumes OK ==="
       sleep 3600
     volumeMounts:
@@ -85,10 +123,12 @@ spec:
           path: token
           expirationSeconds: 3600
       - configMap:
-          name: test-cm
+          name: test-projected-cm
           items:
-          - key: greeting
-            path: configmap/greeting
+          - key: color
+            path: configmap/color
+          - key: lang
+            path: configmap/lang
       - downwardAPI:
           items:
           - path: labels
