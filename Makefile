@@ -1,4 +1,4 @@
-.PHONY: build clean test unit-test submodules run fmt patch-save critest init
+.PHONY: build clean test submodules run fmt patch-save critest init e2e
 
 CRITEST_VERSION := v1.35.0
 
@@ -35,21 +35,8 @@ build: patch
 clean:
 	rm -f nanokube
 
-unit-test:
+test:
 	go test ./...
-
-test: build
-	@trap 'kill $$PID 2>/dev/null; wait 2>/dev/null' EXIT; \
-	./nanokube --clean & PID=$$!; \
-	export KUBECONFIG=$$HOME/.nanokube/kubeconfig; \
-	mkdir -p $$HOME/.nanokube/volumes/test-pvc; \
-	for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 1; done; \
-	sed "s|NANOKUBE_DATADIR|$$HOME/.nanokube|g" tests/pods/all-volumes.yaml | kubectl apply -f -; \
-	for i in $$(seq 1 30); do [ "$$(kubectl get pod all-volumes -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] && break; sleep 1; done; \
-	CID=$$(docker ps --filter "label=io.kubernetes.pod.name=all-volumes" --filter "label=io.kubernetes.container.name=busybox" --format '{{.ID}}'); \
-	docker logs "$$CID"; \
-	echo ""; echo "Press Ctrl+C to stop"; \
-	wait
 
 submodules:
 	git submodule update --init --recursive
@@ -64,6 +51,14 @@ run: fmt build
 
 init:
 	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)
+	go install sigs.k8s.io/kuttl/cmd/kubectl-kuttl@latest
+
+e2e: build
+	@trap 'kill $$PID 2>/dev/null; wait 2>/dev/null' EXIT; \
+	./nanokube --clean & PID=$$!; \
+	export KUBECONFIG=$$HOME/.nanokube/kubeconfig; \
+	for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 1; done; \
+	kubectl kuttl test --config tests/kuttl-test.yaml
 
 critest: build
 	@D=$$(mktemp -d); \

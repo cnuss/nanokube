@@ -176,17 +176,19 @@ func (b *Backend) ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodS
 }
 
 func (b *Backend) CheckpointContainer(ctx context.Context, containerID, location string, timeout int64) error {
+	logger.Warn().Str("container", containerID).Msg("CheckpointContainer not implemented")
 	return fmt.Errorf("checkpoint not supported")
 }
 
 func (b *Backend) GetContainerEvents(ctx context.Context, eventsCh chan *runtimeapi.ContainerEventResponse) error {
-	// Block until context is done; events are not implemented for Docker backend
+	logger.Warn().Msg("GetContainerEvents not implemented, falling back to generic PLEG")
 	<-ctx.Done()
 	close(eventsCh)
 	return nil
 }
 
 func (b *Backend) UpdatePodSandboxResources(ctx context.Context, req *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
+	logger.Warn().Msg("UpdatePodSandboxResources not implemented")
 	return &runtimeapi.UpdatePodSandboxResourcesResponse{}, nil
 }
 

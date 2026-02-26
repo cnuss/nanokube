@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: emptydir-test
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: default
+      mountPath: /mnt/default
+    - name: memory
+      mountPath: /mnt/memory
+  volumes:
+  - name: default
+    emptyDir: {}
+  - name: memory
+    emptyDir:
+      medium: Memory

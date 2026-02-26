@@ -143,29 +143,13 @@ func Opened(network, address string, setup func()) Started {
 	return ch
 }
 
-// Closed runs shutdown (if non-nil), then polls until the network endpoint
-// stops accepting connections. Returns a Stopped channel that closes when done.
+// Closed runs shutdown (if non-nil), then signals done immediately.
 func Closed(network, address string, shutdown func()) Stopped {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		if shutdown != nil {
 			shutdown()
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				conn, err := net.DialTimeout(network, address, 200*time.Millisecond)
-				if err != nil {
-					return
-				}
-				conn.Close()
-				time.Sleep(50 * time.Millisecond)
-			}
 		}
 	}()
 	return done

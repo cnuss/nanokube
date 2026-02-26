@@ -275,7 +275,7 @@ func (m *mounter) Mount(source string, target string, fstype string, options []s
 	case fstype == "bind" || (fstype == "" && slices.Contains(options, "bind")):
 		return m.mountBind(source, target, "Mount", options)
 	default:
-		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("Mount not implemented")
+		logger.Warn().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("Mount not implemented")
 		return errNotImplemented
 	}
 }
@@ -288,7 +288,7 @@ func (m *mounter) MountSensitive(source string, target string, fstype string, op
 	case fstype == "bind" || (fstype == "" && slices.Contains(options, "bind")):
 		return m.mountBind(source, target, "MountSensitive", options)
 	default:
-		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitive not implemented")
+		logger.Warn().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitive not implemented")
 		return errNotImplemented
 	}
 }
@@ -301,7 +301,7 @@ func (m *mounter) MountSensitiveWithoutSystemd(source string, target string, fst
 	case fstype == "bind" || (fstype == "" && slices.Contains(options, "bind")):
 		return m.mountBind(source, target, "MountSensitiveWithoutSystemd", options)
 	default:
-		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitiveWithoutSystemd not implemented")
+		logger.Warn().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitiveWithoutSystemd not implemented")
 		return errNotImplemented
 	}
 }
@@ -314,7 +314,7 @@ func (m *mounter) MountSensitiveWithoutSystemdWithMountFlags(source string, targ
 	case fstype == "bind" || (fstype == "" && slices.Contains(options, "bind")):
 		return m.mountBind(source, target, "MountSensitiveWithoutSystemdWithMountFlags", options)
 	default:
-		logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitiveWithoutSystemdWithMountFlags not implemented")
+		logger.Warn().Str("source", source).Str("target", target).Str("fstype", fstype).Strs("options", options).Msg("MountSensitiveWithoutSystemdWithMountFlags not implemented")
 		return errNotImplemented
 	}
 }

@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: projected-cm
+data:
+  color: blue
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: projected-test
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: proj
+      mountPath: /mnt/projected
+      readOnly: true
+  volumes:
+  - name: proj
+    projected:
+      sources:
+      - serviceAccountToken:
+          path: token
+          expirationSeconds: 3600
+      - configMap:
+          name: projected-cm
+          items:
+          - key: color
+            path: configmap/color
+      - downwardAPI:
+          items:
+          - path: namespace
+            fieldRef:
+              fieldPath: metadata.namespace

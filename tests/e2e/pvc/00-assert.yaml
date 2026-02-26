@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+status:
+  phase: Bound
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-test
+status:
+  phase: Running

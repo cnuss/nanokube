@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostpath-test
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: hp
+      mountPath: /mnt/hostpath
+      readOnly: true
+  volumes:
+  - name: hp
+    hostPath:
+      path: /tmp/nanokube-hostpath-test
+      type: DirectoryOrCreate

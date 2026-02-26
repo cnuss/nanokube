@@ -1,0 +1,4 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  - script: kubectl exec --namespace $NAMESPACE downwardapi-test -- cat /mnt/downwardapi/pod-name | grep -q downwardapi-test
