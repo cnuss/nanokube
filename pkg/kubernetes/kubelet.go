@@ -151,7 +151,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					kubeletLog.Info().Msg("kubelet is ready")
-					go runProvisioner(ctx, client, k.config.DataDir, backend)
+					go runProvisioner(ctx, client, k.config.DataDir, backend, volumePlugin.GetPluginName())
 					return nil
 				}
 			}
@@ -161,7 +161,7 @@ func (k *Kubelet) Start(ctx context.Context) error {
 }
 
 // runProvisioner watches for PVCs annotated with our provisioner and creates PVs.
-func runProvisioner(ctx context.Context, client clientset.Interface, dataDir string, backend cri.Backend) {
+func runProvisioner(ctx context.Context, client clientset.Interface, dataDir string, backend cri.Backend, pluginName string) {
 	for {
 		watcher, err := client.CoreV1().PersistentVolumeClaims("").Watch(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -178,8 +178,8 @@ func runProvisioner(ctx context.Context, client clientset.Interface, dataDir str
 				continue
 			}
 			ann := pvc.Annotations
-			if ann["volume.kubernetes.io/storage-provisioner"] != cri.PluginName &&
-				ann["volume.beta.kubernetes.io/storage-provisioner"] != cri.PluginName {
+			if ann["volume.kubernetes.io/storage-provisioner"] != pluginName &&
+				ann["volume.beta.kubernetes.io/storage-provisioner"] != pluginName {
 				continue
 			}
 

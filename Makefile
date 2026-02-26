@@ -57,7 +57,7 @@ submodules:
 fmt:
 	go fmt ./...
 
-ARGS ?= --clean -vv
+ARGS ?= --clean
 
 run: fmt build
 	./nanokube $(ARGS)

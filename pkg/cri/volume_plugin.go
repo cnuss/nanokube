@@ -20,8 +20,6 @@ import (
 	"k8s.io/mount-utils"
 )
 
-const PluginName = "nanokube.io/volume"
-
 var errNotImplemented = fmt.Errorf("mounter: not yet implemented")
 
 type mounter struct {
@@ -60,17 +58,18 @@ func NewVolumePlugin(ctx context.Context, backend Backend, dataDir string) *volu
 }
 
 func (p *volumePlugin) Init(host volume.VolumeHost) error {
+	logger.Trace().Msg("Init")
 	p.host = host
 
 	if client := host.GetKubeClient(); client != nil {
 		sc := &storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "nanokube",
+				Name: p.backend.Name(),
 				Annotations: map[string]string{
 					"storageclass.kubernetes.io/is-default-class": "true",
 				},
 			},
-			Provisioner: PluginName,
+			Provisioner: p.backend.PluginName(),
 		}
 		if _, err := client.StorageV1().StorageClasses().Create(p.ctx, sc, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
 			logger.Warn().Err(err).Msg("failed to create default StorageClass")
@@ -80,10 +79,12 @@ func (p *volumePlugin) Init(host volume.VolumeHost) error {
 }
 
 func (p *volumePlugin) GetPluginName() string {
-	return PluginName
+	logger.Trace().Msg("GetPluginName")
+	return p.backend.PluginName()
 }
 
 func (p *volumePlugin) GetVolumeName(spec *volume.Spec) (string, error) {
+	logger.Trace().Msg("GetVolumeName")
 	if spec == nil {
 		return "", fmt.Errorf("nil volume spec")
 	}
@@ -91,10 +92,12 @@ func (p *volumePlugin) GetVolumeName(spec *volume.Spec) (string, error) {
 }
 
 func (p *volumePlugin) CanSupport(spec *volume.Spec) bool {
+	logger.Trace().Msg("CanSupport")
 	return false // provisioning is handled by runProvisioner; mount is handled by built-in plugins
 }
 
 func (p *volumePlugin) RequiresRemount(spec *volume.Spec) bool {
+	logger.Trace().Msg("RequiresRemount")
 	return false
 }
 
@@ -128,6 +131,7 @@ func (p *volumePlugin) NewUnmounter(name string, uid types.UID) (volume.Unmounte
 }
 
 func (p *volumePlugin) ConstructVolumeSpec(volumeName, volumePath string) (volume.ReconstructedVolume, error) {
+	logger.Trace().Str("volumeName", volumeName).Str("volumePath", volumePath).Msg("ConstructVolumeSpec")
 	pv := &v1.PersistentVolume{}
 	pv.Name = volumeName
 	pv.Spec.PersistentVolumeSource.Local = &v1.LocalVolumeSource{Path: volumePath}
@@ -137,16 +141,19 @@ func (p *volumePlugin) ConstructVolumeSpec(volumeName, volumePath string) (volum
 }
 
 func (p *volumePlugin) SupportsMountOption() bool {
+	logger.Trace().Msg("SupportsMountOption")
 	return false
 }
 
 func (p *volumePlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	logger.Trace().Msg("SupportsSELinuxContextMount")
 	return false, nil
 }
 
 // --- ProvisionableVolumePlugin / DeletableVolumePlugin ---
 
 func (p *volumePlugin) NewProvisioner(_ klog.Logger, options volume.VolumeOptions) (volume.Provisioner, error) {
+	logger.Trace().Msg("NewProvisioner")
 	return &provisioner{
 		backend: p.backend,
 		ctx:     p.ctx,
@@ -156,6 +163,7 @@ func (p *volumePlugin) NewProvisioner(_ klog.Logger, options volume.VolumeOption
 }
 
 func (p *volumePlugin) NewDeleter(_ klog.Logger, spec *volume.Spec) (volume.Deleter, error) {
+	logger.Trace().Msg("NewDeleter")
 	name := spec.Name()
 	return &mounter{
 		backend:    p.backend,
@@ -168,6 +176,7 @@ func (p *volumePlugin) NewDeleter(_ klog.Logger, spec *volume.Spec) (volume.Dele
 
 // Delete implements volume.Deleter on *mounter.
 func (m *mounter) Delete() error {
+	logger.Trace().Str("volumeName", m.volumeName).Msg("Delete")
 	return m.TearDownAt(m.path)
 }
 
@@ -179,6 +188,7 @@ type provisioner struct {
 }
 
 func (p *provisioner) Provision(_ *v1.Node, _ []v1.TopologySelectorTerm) (*v1.PersistentVolume, error) {
+	logger.Trace().Str("pvName", p.options.PVName).Msg("Provision")
 	name := p.options.PVName
 	volPath := filepath.Join(p.dataDir, "volumes", name)
 
@@ -212,13 +222,23 @@ func newMounter(ctx context.Context, dataDir string) *mounter {
 
 // --- volume.Mounter / volume.Unmounter (per-volume instances) ---
 
-func (m *mounter) GetPath() string { return m.path }
+func (m *mounter) GetPath() string {
+	logger.Trace().Str("path", m.path).Msg("GetPath")
+	return m.path
+}
 
-func (m *mounter) GetMetrics() (*volume.Metrics, error) { return &volume.Metrics{}, nil }
+func (m *mounter) GetMetrics() (*volume.Metrics, error) {
+	logger.Trace().Msg("GetMetrics")
+	return &volume.Metrics{}, nil
+}
 
-func (m *mounter) SetUp(args volume.MounterArgs) error { return m.SetUpAt(m.path, args) }
+func (m *mounter) SetUp(args volume.MounterArgs) error {
+	logger.Trace().Str("volumeName", m.volumeName).Msg("SetUp")
+	return m.SetUpAt(m.path, args)
+}
 
 func (m *mounter) SetUpAt(dir string, _ volume.MounterArgs) error {
+	logger.Trace().Str("dir", dir).Str("volumeName", m.volumeName).Msg("SetUpAt")
 	if m.backend != nil {
 		if _, err := m.backend.CreateVolume(m.ctx, m.volumeName); err != nil {
 			return err
@@ -228,12 +248,17 @@ func (m *mounter) SetUpAt(dir string, _ volume.MounterArgs) error {
 }
 
 func (m *mounter) GetAttributes() volume.Attributes {
+	logger.Trace().Msg("GetAttributes")
 	return volume.Attributes{ReadOnly: m.readOnly, Managed: true}
 }
 
-func (m *mounter) TearDown() error { return m.TearDownAt(m.path) }
+func (m *mounter) TearDown() error {
+	logger.Trace().Str("volumeName", m.volumeName).Msg("TearDown")
+	return m.TearDownAt(m.path)
+}
 
 func (m *mounter) TearDownAt(_ string) error {
+	logger.Trace().Str("volumeName", m.volumeName).Msg("TearDownAt")
 	if m.backend != nil {
 		return m.backend.RemoveVolume(m.ctx, m.volumeName)
 	}
@@ -243,6 +268,7 @@ func (m *mounter) TearDownAt(_ string) error {
 // --- mount.Interface routing ---
 
 func (m *mounter) Mount(source string, target string, fstype string, options []string) error {
+	logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Msg("Mount")
 	switch {
 	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "Mount", options)
@@ -255,6 +281,7 @@ func (m *mounter) Mount(source string, target string, fstype string, options []s
 }
 
 func (m *mounter) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
+	logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Msg("MountSensitive")
 	switch {
 	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "MountSensitive", options)
@@ -267,6 +294,7 @@ func (m *mounter) MountSensitive(source string, target string, fstype string, op
 }
 
 func (m *mounter) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
+	logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Msg("MountSensitiveWithoutSystemd")
 	switch {
 	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "MountSensitiveWithoutSystemd", options)
@@ -279,6 +307,7 @@ func (m *mounter) MountSensitiveWithoutSystemd(source string, target string, fst
 }
 
 func (m *mounter) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
+	logger.Trace().Str("source", source).Str("target", target).Str("fstype", fstype).Msg("MountSensitiveWithoutSystemdWithMountFlags")
 	switch {
 	case fstype == "tmpfs":
 		return m.mountTmpfs(target, "MountSensitiveWithoutSystemdWithMountFlags", options)
@@ -291,13 +320,14 @@ func (m *mounter) MountSensitiveWithoutSystemdWithMountFlags(source string, targ
 }
 
 func (m *mounter) Unmount(target string) error {
-	logger.Info().Str("target", target).Msg("Unmount")
+	logger.Trace().Str("target", target).Msg("Unmount")
 	m.mounts.Delete(target)
 	m.volumes.Delete(target)
 	return nil
 }
 
 func (m *mounter) List() ([]mount.MountPoint, error) {
+	logger.Trace().Msg("List")
 	var pts []mount.MountPoint
 	m.mounts.Range(func(_, v any) bool {
 		pts = append(pts, v.(mount.MountPoint))
@@ -307,20 +337,24 @@ func (m *mounter) List() ([]mount.MountPoint, error) {
 }
 
 func (m *mounter) IsLikelyNotMountPoint(file string) (bool, error) {
+	logger.Trace().Str("file", file).Msg("IsLikelyNotMountPoint")
 	_, mounted := m.mounts.Load(file)
 	return !mounted, nil
 }
 
 func (m *mounter) CanSafelySkipMountPointCheck() bool {
+	logger.Trace().Msg("CanSafelySkipMountPointCheck")
 	return false
 }
 
 func (m *mounter) IsMountPoint(file string) (bool, error) {
+	logger.Trace().Str("file", file).Msg("IsMountPoint")
 	_, mounted := m.mounts.Load(file)
 	return mounted, nil
 }
 
 func (m *mounter) GetMountRefs(pathname string) ([]string, error) {
+	logger.Trace().Str("pathname", pathname).Msg("GetMountRefs")
 	return nil, nil
 }
 
@@ -381,6 +415,7 @@ func (m *mounter) extractVolumeName(source string) string {
 // Projected/Secret/DownwardAPI volumes), we return false so the CRI falls
 // back to a bind mount, making those files visible inside the container.
 func (m *mounter) GetTmpfs(path string) (string, bool) {
+	logger.Trace().Str("path", path).Msg("GetTmpfs")
 	v, ok := m.mounts.Load(path)
 	if !ok {
 		return "", false
@@ -399,6 +434,7 @@ func (m *mounter) GetTmpfs(path string) (string, bool) {
 
 // GetVolume returns the Docker volume name for a tracked bind mount path.
 func (m *mounter) GetVolume(path string) (string, bool) {
+	logger.Trace().Str("path", path).Msg("GetVolume")
 	v, ok := m.volumes.Load(path)
 	if !ok {
 		return "", false

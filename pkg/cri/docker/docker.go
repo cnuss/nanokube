@@ -43,6 +43,14 @@ func New(dockerSocket, name string) *Backend {
 	}
 }
 
+func (b *Backend) Name() string {
+	return b.name
+}
+
+func (b *Backend) PluginName() string {
+	return "docker.io/" + b.name
+}
+
 func (b *Backend) Init(ctx context.Context) error {
 	httpClient := &http.Client{
 		Transport: &loggingTransport{

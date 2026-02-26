@@ -18,10 +18,19 @@ var (
 // Backend implements cri.Backend using the Podman API.
 type Backend struct {
 	podmanSocket string
+	name         string
 }
 
-func New(podmanSocket string) *Backend {
-	return &Backend{podmanSocket: podmanSocket}
+func New(podmanSocket, name string) *Backend {
+	return &Backend{podmanSocket: podmanSocket, name: name}
+}
+
+func (b *Backend) Name() string {
+	return b.name
+}
+
+func (b *Backend) PluginName() string {
+	return "podman.io/" + b.name
 }
 
 func (b *Backend) Init(ctx context.Context) error {

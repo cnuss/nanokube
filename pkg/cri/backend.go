@@ -11,6 +11,10 @@ import (
 
 // Backend abstracts a container engine (Docker, Podman) behind the CRI interface.
 type Backend interface {
+	// Identity
+	Name() string
+	PluginName() string
+
 	// Lifecycle
 	Init(ctx context.Context) error
 	Close() error
