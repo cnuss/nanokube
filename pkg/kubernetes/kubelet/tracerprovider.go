@@ -17,7 +17,7 @@ type TracerProvider struct {
 }
 
 func (TracerProvider) Tracer(name string, options ...trace.TracerOption) trace.Tracer {
-	tracerLog.Warn().Str("name", name).Msg("Tracer not implemented")
+	tracerLog.Trace().Str("name", name).Msg("Tracer not implemented")
 	return Tracer{}
 }
 
@@ -27,7 +27,7 @@ type Tracer struct {
 }
 
 func (Tracer) Start(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
-	tracerLog.Warn().Str("span", spanName).Msg("Start not implemented")
+	tracerLog.Trace().Str("span", spanName).Msg("Start not implemented")
 	return ctx, Span{}
 }
 
@@ -37,34 +37,34 @@ type Span struct {
 }
 
 func (Span) End(options ...trace.SpanEndOption) {
-	tracerLog.Warn().Msg("End not implemented")
+	tracerLog.Trace().Msg("End not implemented")
 }
 
 func (Span) SetName(name string) {
-	tracerLog.Warn().Str("name", name).Msg("SetName not implemented")
+	tracerLog.Trace().Str("name", name).Msg("SetName not implemented")
 }
 
 func (Span) SetStatus(code codes.Code, description string) {
-	tracerLog.Warn().Str("code", code.String()).Str("description", description).Msg("SetStatus not implemented")
+	tracerLog.Trace().Str("code", code.String()).Str("description", description).Msg("SetStatus not implemented")
 }
 
 func (Span) SetAttributes(kv ...attribute.KeyValue) {
-	tracerLog.Warn().Msg("SetAttributes not implemented")
+	tracerLog.Trace().Msg("SetAttributes not implemented")
 }
 
 func (Span) RecordError(err error, options ...trace.EventOption) {
-	tracerLog.Warn().Err(err).Msg("RecordError not implemented")
+	tracerLog.Trace().Err(err).Msg("RecordError not implemented")
 }
 
 func (Span) AddEvent(name string, options ...trace.EventOption) {
-	tracerLog.Warn().Str("name", name).Msg("AddEvent not implemented")
+	tracerLog.Trace().Str("name", name).Msg("AddEvent not implemented")
 }
 
 func (Span) AddLink(link trace.Link) {
-	tracerLog.Warn().Msg("AddLink not implemented")
+	tracerLog.Trace().Msg("AddLink not implemented")
 }
 
 func (Span) IsRecording() bool {
-	tracerLog.Warn().Msg("IsRecording not implemented")
+	tracerLog.Trace().Msg("IsRecording not implemented")
 	return false
 }

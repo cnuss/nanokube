@@ -48,13 +48,15 @@ func (c *Cadvisor) Start() error {
 func (c *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 	cpus, memBytes, _, _, err := c.backend.HostInfo(c.ctx)
 	if err != nil {
-		logger.Warn().Err(err).Msg("cadvisor: HostInfo failed, reporting minimal capacity")
+		if c.ctx.Err() == nil {
+			logger.Warn().Err(err).Msg("cadvisor: HostInfo failed, reporting minimal capacity")
+		}
 		cpus = 1
 		memBytes = 0
 	}
 
 	bootID, systemUUID, machineID, err := c.backend.HostIDs(c.ctx)
-	if err != nil {
+	if err != nil && c.ctx.Err() == nil {
 		logger.Warn().Err(err).Msg("cadvisor: HostIDs probe failed")
 	}
 
@@ -71,7 +73,9 @@ func (c *Cadvisor) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 func (c *Cadvisor) VersionInfo() (*cadvisorapi.VersionInfo, error) {
 	_, _, kernelVersion, osVersion, err := c.backend.HostInfo(c.ctx)
 	if err != nil {
-		logger.Warn().Err(err).Msg("cadvisor: HostInfo failed for VersionInfo")
+		if c.ctx.Err() == nil {
+			logger.Warn().Err(err).Msg("cadvisor: HostInfo failed for VersionInfo")
+		}
 		return &cadvisorapi.VersionInfo{}, nil
 	}
 
