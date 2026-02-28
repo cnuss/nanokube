@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	"k8s.io/client-go/tools/remotecommand"
+	utilexec "k8s.io/utils/exec"
 )
 
 // StreamingRuntime implements streaming.Runtime for exec/attach/portforward
@@ -34,6 +35,8 @@ func (s *StreamingRuntime) Exec(ctx context.Context, containerID string, cmd []s
 		AttachStderr: stderr != nil,
 		Tty:          tty,
 	}
+
+	logger.Info().Str("container", containerID[:12]).Strs("cmd", cmd).Bool("tty", tty).Msg("exec")
 
 	createResp, err := s.backend.client.ContainerExecCreate(ctx, containerID, execConfig)
 	if err != nil {
@@ -58,7 +61,21 @@ func (s *StreamingRuntime) Exec(ctx context.Context, containerID string, cmd []s
 		}()
 	}
 
-	return proxyStreams(tty, stdin, stdout, stderr, attachResp)
+	proxyStreams(tty, stdin, stdout, stderr, attachResp)
+
+	// Wait for Docker to acknowledge exec completion and return the exit code.
+	inspect, err := s.backend.client.ContainerExecInspect(ctx, createResp.ID)
+	if err != nil {
+		return nil
+	}
+	if inspect.ExitCode != 0 {
+		logger.Info().Str("container", containerID[:12]).Int("code", inspect.ExitCode).Msg("exec exited")
+		return utilexec.CodeExitError{
+			Err:  fmt.Errorf("command terminated with exit code %d", inspect.ExitCode),
+			Code: inspect.ExitCode,
+		}
+	}
+	return nil
 }
 
 func (s *StreamingRuntime) Attach(ctx context.Context, containerID string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
@@ -68,6 +85,8 @@ func (s *StreamingRuntime) Attach(ctx context.Context, containerID string, stdin
 		Stdout: stdout != nil,
 		Stderr: stderr != nil,
 	}
+
+	logger.Info().Str("container", containerID[:12]).Msg("attach")
 
 	attachResp, err := s.backend.client.ContainerAttach(ctx, containerID, opts)
 	if err != nil {
@@ -100,6 +119,8 @@ func (s *StreamingRuntime) PortForward(ctx context.Context, podSandboxID string,
 	if ip == "" {
 		return fmt.Errorf("no IP address for sandbox %s", podSandboxID)
 	}
+
+	logger.Info().Str("sandbox", podSandboxID[:12]).Int32("port", port).Str("ip", ip).Msg("port-forward")
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 10*time.Second)
 	if err != nil {
@@ -141,10 +162,17 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 		// TTY mode: single stream, copy to stdout
 		if stdout != nil {
 			io.Copy(stdout, resp.Reader)
+			stdout.Close()
 		}
 	} else {
 		// Non-TTY: Docker multiplexes stdout/stderr with 8-byte header
 		stdcopy.StdCopy(stdout, stderr, resp.Reader)
+		if stdout != nil {
+			stdout.Close()
+		}
+		if stderr != nil {
+			stderr.Close()
+		}
 	}
 
 	wg.Wait()
