@@ -226,9 +226,6 @@ func getIPFromInspect(inspect container.InspectResponse) string {
 				return n.IPAddress
 			}
 		}
-		if inspect.NetworkSettings.IPAddress != "" {
-			return inspect.NetworkSettings.IPAddress
-		}
 	}
 	return ""
 }
