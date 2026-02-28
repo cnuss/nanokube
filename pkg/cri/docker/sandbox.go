@@ -6,24 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandboxConfig, runtimeHandler string) (string, error) {
-	// Ensure the bridge network exists for non-host-network sandboxes
-	hostNetwork := false
-	if ns := config.GetLinux().GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
-		hostNetwork = true
-	}
-	if !hostNetwork {
-		if _, err := b.EnsureNetwork(ctx, critypes.NetworkBridge); err != nil {
-			return "", fmt.Errorf("ensure network: %w", err)
-		}
-	}
-
 	dockerConfig, hostConfig, netConfig := toSandboxContainerConfig(config, b.name)
 	name := sandboxContainerName(config)
 

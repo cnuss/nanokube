@@ -27,7 +27,6 @@ type Backend struct {
 	dockerSocket string
 	name         string // cluster name, used as managed-by label value
 	client       *dockerclient.Client
-	networkID    string // cluster bridge network ID
 	Mounts       critypes.MountLookup
 
 	logMu      sync.Mutex
@@ -60,7 +59,26 @@ func (b *Backend) Domain() string {
 }
 
 func (b *Backend) Nameservers() []string {
-	return []string{}
+	if b.client == nil {
+		return []string{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := b.RunProbe(ctx, "busybox", []string{"cat", "/etc/resolv.conf"}, nil)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to probe nameservers")
+		return []string{}
+	}
+	var servers []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "nameserver ") {
+			if s := strings.TrimSpace(line[len("nameserver "):]); s != "" {
+				servers = append(servers, s)
+			}
+		}
+	}
+	return servers
 }
 
 func (b *Backend) Start(ctx context.Context) (component.Started, error) {
@@ -112,12 +130,6 @@ func (b *Backend) Stop() component.Stopped {
 	logger.Info().Strs("ids", sandboxes).Msg("cleanup: removed sandboxes")
 	if err != nil {
 		logger.Warn().Err(err).Msg("cleanup: sandbox removal errors")
-	}
-
-	networks, err := b.RemoveNetworks(ctx)
-	logger.Info().Strs("ids", networks).Msg("cleanup: removed networks")
-	if err != nil {
-		logger.Warn().Err(err).Msg("cleanup: network removal errors")
 	}
 
 	// Stop all active log writers

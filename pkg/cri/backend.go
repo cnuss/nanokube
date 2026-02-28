@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
-	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -90,8 +89,4 @@ type Backend interface {
 	RemoveVolume(ctx context.Context, name string) error
 	RemoveVolumes(ctx context.Context) ([]string, error)
 	ListVolumes(ctx context.Context, labelFilter map[string]string) ([]string, error)
-
-	// Network lifecycle
-	EnsureNetwork(ctx context.Context, networkType critypes.NetworkType) (string, error)
-	RemoveNetworks(ctx context.Context) ([]string, error)
 }

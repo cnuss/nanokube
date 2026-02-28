@@ -1,0 +1,11 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # pod's nameserver must match what RunProbe sees on the default bridge
+  - script: |
+      pod_ns=$(kubectl exec --namespace $NAMESPACE dns-test -- sed -n 's/^nameserver //p' /etc/resolv.conf | head -1)
+      probe_ns=$(docker run --rm busybox sed -n 's/^nameserver //p' /etc/resolv.conf | head -1)
+      echo "pod=$pod_ns probe=$probe_ns"
+      test "$pod_ns" = "$probe_ns"
+  # resolve an external hostname
+  - script: kubectl exec --namespace $NAMESPACE dns-test -- nslookup google.com

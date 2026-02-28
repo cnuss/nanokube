@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
-	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -269,17 +268,5 @@ func (b *Backend) RemoveVolumes(ctx context.Context) ([]string, error) {
 
 func (b *Backend) ListVolumes(ctx context.Context, labelFilter map[string]string) ([]string, error) {
 	logger.Warn().Msg("ListVolumes not implemented")
-	return nil, errNotImplemented
-}
-
-// Network lifecycle
-
-func (b *Backend) EnsureNetwork(ctx context.Context, networkType critypes.NetworkType) (string, error) {
-	logger.Warn().Msg("EnsureNetwork not implemented")
-	return "", errNotImplemented
-}
-
-func (b *Backend) RemoveNetworks(ctx context.Context) ([]string, error) {
-	logger.Warn().Msg("RemoveNetworks not implemented")
 	return nil, errNotImplemented
 }
