@@ -1,98 +1,96 @@
 # Roadmap
 
+## Log Noise Reduction
+
+**Baseline: e2e run 2026-02-28 — 10 tests, 1143 lines, all PASS**
+
+Total noise: 553/1143 lines (48.4%). Fixing P0 items drops to ~112 lines (9.8%).
+
+### P0 — High volume (>50 per run)
+
+| Pattern | Count | Source | Fix |
+|---------|-------|--------|-----|
+| TracerProvider "Start not implemented" | 379 (33%) | `pkg/stub/` tracer | No-op span provider or drop to trace level |
+| etcd startup gRPC race | 62 (5%) | `logging.go:55` | Add etcd readiness gate before starting apiserver |
+
+### P1 — Moderate (5-50 per run)
+
+| Pattern | Count | Source | Actionable? |
+|---------|-------|--------|-------------|
+| Skipped API groups | 34 | `genericapiserver.go:787` | No — upstream behavior |
+| Namespace deletion race | 24 | `namespace_controller.go:164` | No — inherent to 1s PLEG poll |
+| CleanSubPaths | 18 | `pkg/stub/` subpath | Maybe — drop to debug |
+| WebSocket close | 15 | `conn.go:339` | No — upstream exec teardown |
+
+### P2 — One-off / low priority
+
+PLEG startup (4), PVC PostFilter (3), server rejected event (2), /proc not found (2), node lease race (2), service CIDR deprecation (1), MakeRShared (1), flexvolume probe (1), swap_util (1), SetRLimit (1), plugin prober (1), file watcher (1), stale endpoints (1). All expected or macOS-specific.
+
+### Recently Resolved
+
+- ~~EventedPLEG / GetContainerEvents~~: disabled alpha feature gate, replaced Docker event stream with stub
+- ~~MissingClusterDNS~~: `Nameservers()` probes via RunProbe; ClusterDNS configured
+- ~~Custom bridge network~~: removed nanokube-bridge; pods use Docker default bridge
+- ~~Server rejected events~~: dropped from 56 to 2 (96% reduction) after ClusterDNS fix
+- ~~EventRecorder~~: real event recording implemented
+
 ## CRI Conformance
 
 **Current: 42/45 passing (93%), 5 skipped**
 
 ### Known Failures (Docker Desktop macOS)
 
-All 3 remaining failures are caused by Docker Desktop running containers inside a Linux VM. Container IPs (e.g. `172.17.0.x`) are not routable from the macOS host. These tests pass on native Linux where the host can reach container IPs directly.
+All 3 remaining failures are caused by Docker Desktop running containers inside a Linux VM. Container IPs (e.g. `172.17.0.x`) are not routable from the macOS host. These tests pass on native Linux.
 
-#### 1. Streaming PortForward
-
-- **Test**: `runtime should support portforward [Conformance]`
-- **Root cause**: `PortForward` in `pkg/cri/docker/streaming.go` dials `<containerIP>:<port>` via `net.DialTimeout`. On Docker Desktop macOS, the container IP lives inside the VM network and is unreachable from the host.
-- **Fix**: Use `docker exec` inside a sidecar or the workload container to proxy TCP traffic (e.g. exec `socat` or a built-in Go TCP proxy binary injected into the sandbox). Alternatively, use Docker's built-in port publishing as a fallback when direct dial fails.
-
-#### 2. Port Mapping
-
-- **Test**: `runtime should support port mapping with only container port [Conformance]`
-- **Root cause**: Test creates a sandbox with port mappings, starts a container listening on that port, then tries to connect to `<containerIP>:<containerPort>`. Same VM networking issue — the container IP is unreachable from the host even though Docker correctly publishes the port.
-- **Fix**: Same as PortForward — requires a proxy path that doesn't depend on direct IP reachability. On Docker Desktop, connecting via `localhost:<hostPort>` works but critest expects `<containerIP>:<containerPort>`.
-
-#### 3. ExecSync with Timeout
-
-- **Test**: `runtime should support execSync with timeout [Conformance]`
-- **Root cause**: `ExecSync` in `pkg/cri/docker/container.go` uses `context.WithTimeout` to bound the exec. When the timeout fires, Go cancels the context and stops reading output, but Docker's exec process keeps running server-side. The test expects `stdout` to be empty on timeout, but we may have already read partial output before the deadline.
-- **Fix**: After timeout, discard any buffered stdout/stderr and return empty byte slices. Alternatively, use the Docker API's `ContainerExecInspect` to check if the process is still running and explicitly signal it (though Docker doesn't expose a kill-exec API).
+| Test | Root Cause | Fix |
+|------|-----------|-----|
+| Streaming PortForward | `PortForward` dials `<containerIP>:<port>` — unreachable from macOS host | Use `docker exec` proxy or Docker port publishing fallback |
+| Port Mapping | Test connects to `<containerIP>:<containerPort>` — same VM issue | Same as PortForward |
+| ExecSync with Timeout | Partial stdout read before context cancellation | Discard buffered output after timeout, return empty slices |
 
 ### Skipped Tests (5)
 
-These are skipped by critest itself (not failures), typically platform-specific tests (e.g. Windows containers, AppArmor/SELinux profiles).
+Platform-specific tests (Windows containers, AppArmor/SELinux profiles) — skipped by critest itself.
 
 ## HollowKubelet: Replace Fakes with Real Implementations
 
-The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Some have been replaced with real Docker-backed implementations; others are OS-level and remain stubs. Kubelet deps live in `pkg/kubernetes/kubelet/`.
+The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Kubelet deps live in `pkg/kubernetes/kubelet/`.
 
-### OS-Level Stubs (Need Rethinking)
+### OS-Level Stubs
 
-| Stub             | Interface            | Status                                                                                                                                                                                                             |
-| ---------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mounter`        | `mount.Interface`    | Partial — tmpfs mounts tracked via `sync.Map`, `IsLikelyNotMountPoint`/`IsMountPoint` check tracking map. Other fstypes return `errNotImplemented`. Consolidated into `pkg/cri/volume_plugin.go`. |
-| `ScopedHostUtil` | `hostutil.HostUtils` | Partial — `PathExists`, `GetFileType`, `EvalHostSymlinks` are real (os.Stat + mode inspection). `GetOwner`, `GetMode` return `errNotImplemented`. No-ops: `MakeRShared`, `DeviceOpened`, `PathIsDevice`, `GetSELinuxSupport`, `GetSELinuxMountContext`. |
-| `ScopedSubpath`  | `subpath.Interface`  | Partial — `SafeMakeDir` is real (scoped to DataDir). `CleanSubPaths` and `PrepareSafeSubpath` are no-ops.                                                                                                          |
-
-All stubbed methods emit `Warn()` when called.
+| Stub | Interface | Status |
+|------|-----------|--------|
+| `mounter` | `mount.Interface` | Partial — tmpfs mounts tracked via `sync.Map`. Other fstypes return `errNotImplemented`. |
+| `ScopedHostUtil` | `hostutil.HostUtils` | Partial — `PathExists`, `GetFileType`, `EvalHostSymlinks` are real. SELinux/ownership stubs. |
+| `ScopedSubpath` | `subpath.Interface` | Partial — `SafeMakeDir` is real. `CleanSubPaths` and `PrepareSafeSubpath` are no-ops. |
+| `TracerProvider` | `trace.TracerProvider` | No-op with warn logging. **P0 noise source (379 warns/run).** |
 
 ### OS-Level — Real Implementations
 
-| Component         | Interface                   | Notes                                                                           |
-| ----------------- | --------------------------- | ------------------------------------------------------------------------------- |
-| `ScopedOS`        | `kubecontainer.OSInterface` | Real scoped implementation — remaps paths outside DataDir. `Hostname()` returns `os.Hostname()` — should return the configured node name instead. |
-| `FakeOOMAdjuster` | `OOMAdjuster`               | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
-| `TracerProvider`  | `trace.TracerProvider`      | No-op wrapping `noop.TracerProvider` with warn logging.                         |
+| Component | Notes |
+|-----------|-------|
+| `ScopedOS` | Real scoped implementation — remaps paths outside DataDir. `Hostname()` returns `os.Hostname()` — should return configured node name. |
+| `FakeOOMAdjuster` | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
 
 ## Pod Volume Types
 
-Support for non-deprecated volume types in the Pod spec. Stack-ranked by impact — what unblocks the most real workloads with the least effort.
+Non-deprecated volume types not yet supported, stack-ranked by impact:
 
-| # | Volume Type | Status | Notes |
-|---|-------------|--------|-------|
-| 1 | `CSI` | Not started | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
-| 2 | `Ephemeral` | Not started | Cluster-driver ephemeral volumes. Built on CSI. |
-| 3 | `NFS` | Not started | Network filesystem. Needs real `ScopedMounter.Mount` with NFS support and host nfs-utils. |
-| 4 | `ISCSI` | Not started | iSCSI disk mount. Needs host-level iSCSI tooling (iscsiadm). |
-| 5 | `FC` | Not started | Fibre Channel mount. Needs host-level FC tooling. Datacenter-only. |
-
-## ClusterDNS Configuration
-
-- **Bug**: Kubelet warns `kubelet does not have ClusterDNS IP configured and cannot create Pod using "ClusterFirst" policy. Falling back to "Default" policy.` for every pod.
-- **Status**: Not started
-- **Fix**: Set `cfg.ClusterDNS` in `ApplyKubeletConfig` to the cluster DNS service IP (typically `10.96.0.10`). Optionally deploy CoreDNS as a static pod or in-process DNS server so ClusterFirst resolution actually works.
-
-## Evented PLEG (GetContainerEvents)
-
-- **Bug**: `GetContainerEvents` was a no-op, causing kubelet to fall back to generic PLEG polling (~1s intervals). This resulted in slow pod termination detection and namespace deletion failures.
-- **Status**: In progress — Docker event stream implementation added (`client.Events()` → CRI `ContainerEventResponse`), `EventedPLEG` feature gate enabled. Needs validation.
+| # | Volume Type | Notes |
+|---|-------------|-------|
+| 1 | `CSI` | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
+| 2 | `Ephemeral` | Cluster-driver ephemeral volumes. Built on CSI. |
+| 3 | `NFS` | Needs real `ScopedMounter.Mount` with NFS support. |
+| 4 | `ISCSI` | Needs host-level iSCSI tooling. |
+| 5 | `FC` | Fibre Channel. Datacenter-only. |
 
 ## Probes as Docker Healthchecks
 
 - **Status**: Not started
-- **Approach**: Map Kubernetes liveness/readiness/startup probes to Docker `HEALTHCHECK` configs on container creation, instead of running them via CRI ExecSync. More native to Docker, avoids probe container overhead, and lets Docker manage probe lifecycle directly.
-
-## Stub Implementations (from e2e WRN analysis)
-
-Prioritized by noise/impact from `make e2e` runs:
-
-| Priority | Stub | Warns/run | Notes |
-|----------|------|-----------|-------|
-| P1 | TracerProvider | 232 | Revert to trace level or true no-op. Kubelet instruments every CRI gRPC call with OpenTelemetry spans. |
-| P1 | EventRecorder | 102 | Implement real event recording to API server, or drop to debug. Events like Started/Pulled/Created are useful for debugging. |
-| P2 | CleanSubPaths | 17 | During pod teardown, one per volume. Harmless. |
-| P2 | MakeRShared | 1 | Kubelet startup. Harmless on macOS. |
+- **Approach**: Map Kubernetes liveness/readiness/startup probes to Docker `HEALTHCHECK` configs on container creation.
 
 ## Podman Backend
 
 - **Status**: Not started
 - **Location**: `pkg/cri/podman/`
-- **Approach**: Use `github.com/containers/podman` Go bindings (not the Docker-compat shim) to implement the `cri.Backend` interface. Separate TDD cycle against critest with `--runtime-endpoint` pointed at a Podman-backed CRI socket.
+- **Approach**: Use `github.com/containers/podman` Go bindings to implement the `cri.Backend` interface. Separate TDD cycle against critest.
