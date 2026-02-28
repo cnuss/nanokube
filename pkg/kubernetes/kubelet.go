@@ -13,6 +13,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
 	deps "github.com/cnuss/nanokube/pkg/kubernetes/kubelet"
+	"go.opentelemetry.io/otel/trace/noop"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -107,7 +108,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	// Connect to CRI socket via remote clients
 	endpoint := k.config.CRI.Endpoint()
 	logger := klog.Background()
-	tp := deps.TracerProvider{}
+	tp := noop.NewTracerProvider()
 	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
 	if err != nil {
 		return nil, fmt.Errorf("kubelet runtime service: %w", err)
