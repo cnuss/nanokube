@@ -25,6 +25,16 @@
 | `Backend`              | `UpdatePodSandboxResources` | `pkg/cri/docker/docker.go`               | TODO                                                      |
 | `ProbeManager`         | gRPC probes                 | `pkg/kubernetes/kubelet/probemanager.go` | TODO                                                      |
 
+## Startup Noise Reduction
+
+| Issue                                   | Lines | Source                    | Fix                                                              |
+| --------------------------------------- | ----- | ------------------------- | ---------------------------------------------------------------- |
+| gRPC etcd connection spam               | ~54   | `logging.go:55`           | Delay apiserver/controller/scheduler start until etcd gRPC ready |
+| Deprecated `--service-cluster-ip-range` | 1     | `options.go:369`          | Explicitly pass `--service-cluster-ip-range` to apiserver        |
+| Flexvolume plugin dir permission        | 2     | `probe.go` / `plugins.go` | Set `--flex-volume-plugin-dir` under dataDir                     |
+| Shutdown lease update race              | ~7    | `controller.go:251`       | Stop kubelet lease controller before stopping apiserver          |
+| Static pod file watching                | 1     | `file_unsupported.go:29`  | Expected on macOS — no inotify, uses polling fallback            |
+
 ## Sonobuoy Conformance
 
 Run the upstream Kubernetes `[Conformance]` e2e suite via Sonobuoy against a running nanokube cluster (like k0s does with `--mode=certified-conformance`).
