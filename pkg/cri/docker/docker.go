@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,8 +27,8 @@ var logger = component.NewLogger("docker")
 type Backend struct {
 	dockerSocket string
 	name         string // cluster name, used as managed-by label value
-	client *dockerclient.Client
-	Mounts critypes.MountLookup
+	client       *dockerclient.Client
+	Mounts       critypes.MountLookup
 
 	logMu      sync.Mutex
 	logWriters map[string]context.CancelFunc // containerID -> cancel
@@ -51,6 +52,9 @@ func (b *Backend) PluginName() string {
 }
 
 func (b *Backend) Hostname() string {
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
 	return "localhost"
 }
 

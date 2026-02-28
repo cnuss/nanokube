@@ -5,18 +5,25 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cnuss/nanokube/pkg/component"
 )
 
 // ScopedOS implements kubecontainer.OSInterface and redirects absolute paths
 // outside the data directory into it. This prevents the kubelet from writing
 // to system paths like /var/log/containers when running unprivileged.
 type ScopedOS struct {
-	DataDir string
+	dataDir string
+	host    component.HostnameProvider
+}
+
+func NewScopedOS(dataDir string, host component.HostnameProvider) *ScopedOS {
+	return &ScopedOS{dataDir: dataDir, host: host}
 }
 
 func (s *ScopedOS) remap(path string) string {
-	if filepath.IsAbs(path) && !strings.HasPrefix(path, s.DataDir) {
-		return filepath.Join(s.DataDir, path)
+	if filepath.IsAbs(path) && !strings.HasPrefix(path, s.dataDir) {
+		return filepath.Join(s.dataDir, path)
 	}
 	return path
 }
@@ -50,6 +57,9 @@ func (s *ScopedOS) Chmod(path string, perm os.FileMode) error {
 }
 
 func (s *ScopedOS) Hostname() (string, error) {
+	if s.host != nil {
+		return s.host.Hostname(), nil
+	}
 	return os.Hostname()
 }
 

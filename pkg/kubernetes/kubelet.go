@@ -139,7 +139,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		runtimeService,
 		containerManager,
 	)
-	hk.KubeletDeps.OSInterface = &deps.ScopedOS{DataDir: k.config.DataDir}
+	hk.KubeletDeps.OSInterface = deps.NewScopedOS(k.config.DataDir, k.config.CRI)
 	hk.KubeletDeps.VolumePlugins = append(hk.KubeletDeps.VolumePlugins, volumePlugin)
 	hk.KubeletDeps.Mounter = volumePlugin.Mounter
 	hk.KubeletDeps.Subpather = &deps.ScopedSubpath{DataDir: k.config.DataDir}

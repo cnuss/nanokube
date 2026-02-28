@@ -23,6 +23,11 @@ type Component interface {
 	Stop() Stopped
 }
 
+// HostnameProvider returns the node hostname for this runtime.
+type HostnameProvider interface {
+	Hostname() string
+}
+
 // Logger delegates to the package-level root logger with a baked-in component field.
 type Logger struct {
 	component string

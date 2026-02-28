@@ -34,24 +34,6 @@ PLEG startup (4), PVC PostFilter (3), server rejected event (2), /proc not found
 - ~~Server rejected events~~: dropped from 56 to 2 (96% reduction) after ClusterDNS fix
 - ~~EventRecorder~~: real event recording implemented
 
-## CRI Conformance
-
-**Current: 42/45 passing (93%), 5 skipped**
-
-### Known Failures (Docker Desktop macOS)
-
-All 3 remaining failures are caused by Docker Desktop running containers inside a Linux VM. Container IPs (e.g. `172.17.0.x`) are not routable from the macOS host. These tests pass on native Linux.
-
-| Test | Root Cause | Fix |
-|------|-----------|-----|
-| Streaming PortForward | `PortForward` dials `<containerIP>:<port>` — unreachable from macOS host | Use `docker exec` proxy or Docker port publishing fallback |
-| Port Mapping | Test connects to `<containerIP>:<containerPort>` — same VM issue | Same as PortForward |
-| ExecSync with Timeout | Partial stdout read before context cancellation | Discard buffered output after timeout, return empty slices |
-
-### Skipped Tests (5)
-
-Platform-specific tests (Windows containers, AppArmor/SELinux profiles) — skipped by critest itself.
-
 ## HollowKubelet: Replace Fakes with Real Implementations
 
 The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub dependencies. Kubelet deps live in `pkg/kubernetes/kubelet/`.
@@ -69,7 +51,7 @@ The kubelet uses `kubemark.NewHollowKubelet()` which injects several fake/stub d
 
 | Component | Notes |
 |-----------|-------|
-| `ScopedOS` | Real scoped implementation — remaps paths outside DataDir. `Hostname()` returns `os.Hostname()` — should return configured node name. |
+| `ScopedOS` | Real scoped implementation — remaps paths outside DataDir. `Hostname()` delegates to CRI backend. |
 | `FakeOOMAdjuster` | Kernel-level `/proc` writes. Docker handles container OOM via container config. |
 
 ## Pod Volume Types
@@ -83,6 +65,17 @@ Non-deprecated volume types not yet supported, stack-ranked by impact:
 | 3 | `NFS` | Needs real `ScopedMounter.Mount` with NFS support. |
 | 4 | `ISCSI` | Needs host-level iSCSI tooling. |
 | 5 | `FC` | Fibre Channel. Datacenter-only. |
+
+## Sonobuoy Conformance
+
+- **Status**: Not started
+- **Goal**: Run the upstream Kubernetes `[Conformance]` e2e suite via Sonobuoy against a running nanokube cluster
+- **Reference**: k0s uses `sonobuoy run --mode=certified-conformance --kubernetes-version=v1.35.1`
+- **Steps**:
+  1. Add `make conformance` target that starts nanokube and runs Sonobuoy
+  2. Start with `--e2e-focus='\[sig-network\].*\[Conformance\]'` (network subset) to establish baseline
+  3. Expand to full `--mode=certified-conformance` and track pass rate
+  4. Document skip list for Docker Desktop / macOS-specific failures
 
 ## Probes as Docker Healthchecks
 
