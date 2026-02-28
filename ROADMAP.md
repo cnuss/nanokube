@@ -2,29 +2,28 @@
 
 > Forward-looking only. Move completed items to CLAUDE.md or remove them.
 
-## FailedScheduling Taint Race
+## Stubs & Unimplemented
 
-Every pod gets ~2 `FailedScheduling` warnings before being scheduled ("no nodes available" → "untolerated taints"). Node taint is removed too late relative to first scheduling attempt.
-
-## HollowKubelet: Replace Remaining Stubs
-
-The kubelet uses `kubemark.NewHollowKubelet()` with fake/stub dependencies in `pkg/kubernetes/kubelet/`.
-
-| Stub | Interface | Status |
-|------|-----------|--------|
-| `mounter` | `mount.Interface` | Partial — tmpfs only, other fstypes return `errNotImplemented` |
-| `ScopedHostUtil` | `hostutil.HostUtils` | Partial — SELinux/ownership stubs |
-| `ScopedSubpath` | `subpath.Interface` | Partial — `CleanSubPaths` and `PrepareSafeSubpath` are no-ops |
-
-## Pod Volume Types
-
-| # | Volume Type | Notes |
-|---|-------------|-------|
-| 1 | `CSI` | Ephemeral CSI volumes. Requires CSI node plugin infrastructure. |
-| 2 | `Ephemeral` | Cluster-driver ephemeral volumes. Built on CSI. |
-| 3 | `NFS` | Needs real `ScopedMounter.Mount` with NFS support. |
-| 4 | `ISCSI` | Needs host-level iSCSI tooling. |
-| 5 | `FC` | Fibre Channel. Datacenter-only. |
+| Struct                 | Method                      | Location                                 | Status                                                    |
+| ---------------------- | --------------------------- | ---------------------------------------- | --------------------------------------------------------- |
+| `mounter`              | non-tmpfs/bind fstypes      | `pkg/cri/volume_plugin.go`               | TODO — fall back to Docker volume drivers                 |
+| `ScopedHostUtil`       | `DeviceOpened`              | `pkg/kubernetes/kubelet/hostutil.go`     | WONT DO — no block devices in Docker                      |
+| `ScopedHostUtil`       | `PathIsDevice`              | `pkg/kubernetes/kubelet/hostutil.go`     | WONT DO — no block devices in Docker                      |
+| `ScopedHostUtil`       | `MakeRShared`               | `pkg/kubernetes/kubelet/hostutil.go`     | WONT DO — mount propagation is kernel-level               |
+| `ScopedHostUtil`       | `GetOwner`                  | `pkg/kubernetes/kubelet/hostutil.go`     | TODO                                                      |
+| `ScopedHostUtil`       | `GetMode`                   | `pkg/kubernetes/kubelet/hostutil.go`     | TODO                                                      |
+| `ScopedHostUtil`       | `GetSELinuxSupport`         | `pkg/kubernetes/kubelet/hostutil.go`     | WONT DO — no SELinux on macOS/Docker Desktop              |
+| `ScopedHostUtil`       | `GetSELinuxMountContext`    | `pkg/kubernetes/kubelet/hostutil.go`     | WONT DO — no SELinux on macOS/Docker Desktop              |
+| `ScopedSubpath`        | `CleanSubPaths`             | `pkg/kubernetes/kubelet/subpath.go`      | TODO                                                      |
+| `ScopedSubpath`        | `PrepareSafeSubpath`        | `pkg/kubernetes/kubelet/subpath.go`      | TODO                                                      |
+| `FakeOOMAdjuster`      | all                         | `kubemark`                               | WONT DO — kernel-level `/proc` writes, Docker handles OOM |
+| `StubContainerManager` | all cgroup methods          | `pkg/kubernetes/kubelet.go`              | WONT DO — Docker manages cgroups                          |
+| `Backend`              | `CheckpointContainer`       | `pkg/cri/docker/docker.go`               | WONT DO — CRIU not available on Docker Desktop            |
+| `Backend`              | `GetContainerEvents`        | `pkg/cri/docker/docker.go`               | TODO — stream Docker events                               |
+| `Backend`              | `ListMetricDescriptors`     | `pkg/cri/docker/docker.go`               | TODO                                                      |
+| `Backend`              | `ListPodSandboxMetrics`     | `pkg/cri/docker/docker.go`               | TODO                                                      |
+| `Backend`              | `UpdatePodSandboxResources` | `pkg/cri/docker/docker.go`               | TODO                                                      |
+| `ProbeManager`         | gRPC probes                 | `pkg/kubernetes/kubelet/probemanager.go` | TODO                                                      |
 
 ## Sonobuoy Conformance
 
@@ -40,4 +39,4 @@ Map Kubernetes liveness/readiness/startup probes to Docker `HEALTHCHECK` configs
 
 ## Podman Backend
 
-`pkg/cri/podman/` — implement `cri.Backend` using `github.com/containers/podman` Go bindings. TDD against critest.
+`pkg/cri/podman/` — entire backend is stubbed (41 methods). Implement `cri.Backend` using `github.com/containers/podman` Go bindings. TDD against critest.
