@@ -53,6 +53,18 @@ func (b *Backend) PluginName() string {
 	return "docker.io/" + b.name
 }
 
+func (b *Backend) Hostname() string {
+	return "localhost"
+}
+
+func (b *Backend) Domain() string {
+	return ""
+}
+
+func (b *Backend) Nameservers() []string {
+	return []string{}
+}
+
 func (b *Backend) Start(ctx context.Context) (component.Started, error) {
 	httpClient := &http.Client{
 		Transport: &loggingTransport{

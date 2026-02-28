@@ -16,6 +16,9 @@ type Backend interface {
 	// Identity
 	Name() string
 	PluginName() string
+	Hostname() string
+	Domain() string
+	Nameservers() []string
 
 	// Version / Status
 	Version(ctx context.Context) (*runtimeapi.VersionResponse, error)

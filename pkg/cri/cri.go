@@ -120,6 +120,9 @@ func (c *CRI) Stop() component.Stopped {
 }
 
 func (c *CRI) Hostname() string {
+	if c.backend != nil {
+		return c.backend.Hostname()
+	}
 	return "localhost"
 }
 
@@ -131,10 +134,16 @@ func (c *CRI) Endpoint() string {
 }
 
 func (c *CRI) Domain() string {
+	if c.backend != nil {
+		return c.backend.Domain()
+	}
 	return ""
 }
 
 func (c *CRI) Nameservers() []string {
+	if c.backend != nil {
+		return c.backend.Nameservers()
+	}
 	return []string{}
 }
 
