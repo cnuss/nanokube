@@ -55,16 +55,21 @@ init:
 
 E2E_TEST ?=
 
-e2e: build
-	@trap 'kill $$PID 2>/dev/null; wait 2>/dev/null' EXIT; \
-	./nanokube --clean >/dev/null 2>&1 & PID=$$!; \
-	export KUBECONFIG=$$HOME/.nanokube/kubeconfig; \
-	for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 1; done; \
-	kubectl kuttl test --config tests/kuttl-test.yaml $(if $(E2E_TEST),--test $(E2E_TEST))
-
-critest: build
+# Usage: $(call run-nanokube,<nanokube-args>,<ready-check>,<test-cmd>)
+define run-nanokube
 	@D=$$(mktemp -d); \
 	trap 'kill $$! 2>/dev/null; wait 2>/dev/null; rm -rf "$$D"' EXIT; \
-	./nanokube --kubelet=false --data "$$D" & \
-	for i in $$(seq 1 30); do [ -S "$$D/cri.sock" ] && break; sleep 1; done; \
-	critest --runtime-endpoint "unix://$$D/cri.sock" --image-endpoint "unix://$$D/cri.sock"
+	./nanokube $(1) --data "$$D" >/dev/null 2>&1 & \
+	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
+	$(3)
+endef
+
+e2e: build
+	$(call run-nanokube,,\
+		kubectl get nodes >/dev/null 2>&1,\
+		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(E2E_TEST),--test $(E2E_TEST)))
+
+critest: build
+	$(call run-nanokube,--kubelet=false,\
+		[ -S "$$D/cri.sock" ],\
+		critest --ginkgo.v --runtime-endpoint "unix://$$D/cri.sock" --image-endpoint "unix://$$D/cri.sock")
