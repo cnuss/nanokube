@@ -219,6 +219,14 @@ func (b *Backend) UpdatePodSandboxResources(ctx context.Context, req *runtimeapi
 // RunProbe creates a short-lived container from image, executes cmd with
 // optional bind mounts, and returns stdout. The container is removed after.
 func (b *Backend) RunProbe(ctx context.Context, img string, cmd []string, binds []string) ([]byte, error) {
+	hostCfg := &container.HostConfig{}
+	if len(binds) > 0 {
+		hostCfg.Binds = binds
+	}
+	return b.runProbe(ctx, img, cmd, hostCfg)
+}
+
+func (b *Backend) runProbe(ctx context.Context, img string, cmd []string, hostCfg *container.HostConfig) ([]byte, error) {
 	// Ensure image is available
 	_, err := b.client.ImageInspect(ctx, img)
 	if err != nil {
@@ -228,11 +236,6 @@ func (b *Backend) RunProbe(ctx context.Context, img string, cmd []string, binds 
 		}
 		io.Copy(io.Discard, reader)
 		reader.Close()
-	}
-
-	hostCfg := &container.HostConfig{}
-	if len(binds) > 0 {
-		hostCfg.Binds = binds
 	}
 
 	resp, err := b.client.ContainerCreate(ctx,

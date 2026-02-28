@@ -385,6 +385,18 @@ func (b *Backend) ExecSync(ctx context.Context, containerID string, cmd []string
 
 	select {
 	case <-ctx.Done():
+		// Kill the exec process so it doesn't linger in the container.
+		// Inspect gives us the host-level PID; use a privileged pid=host
+		// probe container to send SIGKILL.
+		inspectResp, err := b.client.ContainerExecInspect(context.Background(), exec.ID)
+		if err == nil && inspectResp.Pid > 0 {
+			b.runProbe(context.Background(), "busybox",
+				[]string{"kill", "-9", fmt.Sprintf("%d", inspectResp.Pid)},
+				&container.HostConfig{
+					Privileged: true,
+					PidMode:    "host",
+				})
+		}
 		return stdout.Bytes(), stderr.Bytes(), fmt.Errorf("exec timeout")
 	case err := <-done:
 		if err != nil {
