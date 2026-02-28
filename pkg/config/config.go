@@ -48,7 +48,6 @@ func NewConfig(options *Options) *Config {
 		FeatureGates: map[string]bool{
 			"APIServerIdentity":         false,
 			"RuntimeClassInImageCriApi": false,
-			"EventedPLEG":               true,
 		},
 		Certs:      &certs{Name: options.Name, DataDir: options.DataDir},
 		Components: []component.Component{},
