@@ -208,6 +208,19 @@ func (b *Backend) ListPodSandbox(ctx context.Context, filter *runtimeapi.PodSand
 
 func getIPFromInspect(inspect container.InspectResponse) string {
 	if inspect.NetworkSettings != nil {
+		// On Docker Desktop (macOS), bridge IPs are not routable from the
+		// host. If we're on the bridge network with a published port whose
+		// HostIp is empty, return 127.0.0.1 so traffic goes through
+		// Docker's port-forwarding proxy.
+		if _, onBridge := inspect.NetworkSettings.Networks["bridge"]; onBridge {
+			for _, bindings := range inspect.NetworkSettings.Ports {
+				for _, b := range bindings {
+					if b.HostIP == "" || b.HostIP == "0.0.0.0" {
+						return "127.0.0.1"
+					}
+				}
+			}
+		}
 		for _, n := range inspect.NetworkSettings.Networks {
 			if n.IPAddress != "" {
 				return n.IPAddress

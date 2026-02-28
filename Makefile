@@ -53,7 +53,7 @@ init:
 	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)
 	go install sigs.k8s.io/kuttl/cmd/kubectl-kuttl@latest
 
-E2E_TEST ?=
+WHAT ?=
 
 # Usage: $(call run-nanokube,<nanokube-args>,<ready-check>,<test-cmd>)
 define run-nanokube
@@ -67,9 +67,9 @@ endef
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
-		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(E2E_TEST),--test $(E2E_TEST)))
+		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
 
 critest: build
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$$D/cri.sock" ],\
-		critest --ginkgo.v --runtime-endpoint "unix://$$D/cri.sock" --image-endpoint "unix://$$D/cri.sock")
+		critest --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$$D/cri.sock" --image-endpoint "unix://$$D/cri.sock")

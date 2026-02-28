@@ -183,13 +183,21 @@ func toSandboxContainerConfig(config *runtimeapi.PodSandboxConfig, name string) 
 
 	// Port mappings
 	if len(config.GetPortMappings()) > 0 {
+		logger.Info().Interface("portMappings", config.GetPortMappings()).Msg("CRI port mappings input")
+		dockerConfig.ExposedPorts = nat.PortSet{}
 		hostConfig.PortBindings = nat.PortMap{}
 		for _, pm := range config.GetPortMappings() {
 			port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
+			dockerConfig.ExposedPorts[port] = struct{}{}
+			hostPort := pm.GetHostPort()
+			if hostPort == 0 {
+				hostPort = pm.GetContainerPort()
+			}
 			hostConfig.PortBindings[port] = []nat.PortBinding{
-				{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(pm.GetHostPort()))},
+				{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
 			}
 		}
+		logger.Info().Interface("exposedPorts", dockerConfig.ExposedPorts).Interface("portBindings", hostConfig.PortBindings).Msg("Docker port config")
 	}
 
 	// Linux
