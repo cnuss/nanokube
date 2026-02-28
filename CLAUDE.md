@@ -28,8 +28,9 @@ Build uses `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
 ```bash
 make test          # runs go test ./...
 make e2e           # build, start nanokube, run kuttl e2e suite (10 tests)
-make e2e E2E_TEST=exec   # run a single e2e test by name
-make critest       # CRI conformance tests against the Docker backend
+make e2e WHAT=exec # run a single e2e test by name
+make critest       # CRI conformance tests (45/45 passing)
+make critest WHAT="port mapping"  # run a single critest by focus pattern
 ```
 
 E2E test dirs: `tests/e2e/{pod,emptydir,configmap,secret,downwardapi,projected,pvc,hostpath,exec,dns}`
@@ -64,7 +65,7 @@ No linter is configured.
 - **`pkg/config/`** — Central configuration: data directory, TLS cert generation (EC P-256, self-signed), kubeconfig, kubelet config, container runtime auto-detection.
 - **`pkg/kubelet/`** — HollowKubelet wrapper using Kubernetes's kubemark.
 - **`pkg/cri/`** — CRI (Container Runtime Interface) implementation. `backend.go` defines the Backend interface; `docker/` implements it using the Docker Engine API; `podman/` is a stub for future Podman support.
-- **`pkg/stub/`** — Stub implementations for OS-level kubelet dependencies (mounter, hostutil, subpath, tracer, cAdvisor).
+- **`pkg/kubernetes/kubelet/`** — Kubelet dependencies: `ScopedOS`, `ScopedHostUtil`, `ScopedSubpath`, `ProbeManager`.
 - **`patches/`** — Minimal patches to Kubernetes source (currently only kube-scheduler context handling).
 
 ## Dependencies
@@ -88,3 +89,10 @@ Go 1.25.4 with Kubernetes v1.35.1 and etcd v3.6. The `etcd/` and `kubernetes/` d
 - `extractLabels()` must NOT strip labels the kubelet needs — only internal ones (`docker.type`, `managed-by`, `sandbox.id`, `container.attempt`, `container.logPath`)
 - Exec streaming: `proxyStreams` must close stdin and `resp.Conn` after output copy finishes, or interactive shells hang on exit
 - WebSocket "use of closed network connection" at `conn.go:339` is cosmetic upstream noise — not fixable without patching kubernetes source
+- ExecSync timeout: kills exec process via privileged `--pid=host` probe container with SIGKILL (`container.go`)
+- Port mapping: sandbox config needs both `ExposedPorts` and `PortBindings`; `HostPort` defaults to `ContainerPort` when 0 (`convert.go`)
+- Docker Desktop macOS: bridge IPs (172.17.x.x) are NOT routable from host. `getIPFromInspect` returns `127.0.0.1` when on bridge with published ports (HostIP empty/0.0.0.0) to route through Docker's port-forwarding proxy (`sandbox.go`)
+- `RunProbe` has public wrapper (interface) and private `runProbe` accepting `*container.HostConfig` for privileged probes (`docker.go`)
+- `Backend.Hostname()` returns `os.Hostname()` (full FQDN); kubelet uses it as `HostnameOverride`
+- `component.HostnameProvider` interface used by `ScopedOS` to delegate hostname to CRI backend
+- TracerProvider: uses `noop.NewTracerProvider()` — custom wrapper with warn logging was removed (was P0 noise: 379 lines/run)
