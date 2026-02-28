@@ -38,7 +38,6 @@ func Setup(cmd *cobra.Command) (*cobra.Command, zerolog.Logger, func()) {
 	applyLogLevel(v)
 
 	dataDir, _ := cmd.Flags().GetString("data")
-	name, _ := cmd.Flags().GetString("name")
 	clean, _ := cmd.Flags().GetBool("clean")
 
 	if clean {
@@ -47,7 +46,7 @@ func Setup(cmd *cobra.Command) (*cobra.Command, zerolog.Logger, func()) {
 	os.MkdirAll(dataDir, 0755)
 
 	// Set up log file mirroring — all output (zerolog + klog + etcd) goes to disk
-	logFile, err := os.OpenFile(filepath.Join(dataDir, name+".log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFile, err := os.OpenFile(filepath.Join(dataDir, "log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return cmd, rootLog, func() {}
 	}

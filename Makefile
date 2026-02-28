@@ -53,12 +53,14 @@ init:
 	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)
 	go install sigs.k8s.io/kuttl/cmd/kubectl-kuttl@latest
 
+E2E_TEST ?=
+
 e2e: build
 	@trap 'kill $$PID 2>/dev/null; wait 2>/dev/null' EXIT; \
-	./nanokube --clean & PID=$$!; \
+	./nanokube --clean >/dev/null 2>&1 & PID=$$!; \
 	export KUBECONFIG=$$HOME/.nanokube/kubeconfig; \
 	for i in $$(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 1; done; \
-	kubectl kuttl test --config tests/kuttl-test.yaml
+	kubectl kuttl test --config tests/kuttl-test.yaml $(if $(E2E_TEST),--test $(E2E_TEST))
 
 critest: build
 	@D=$$(mktemp -d); \

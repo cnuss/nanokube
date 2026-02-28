@@ -175,6 +175,14 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 		}
 	}
 
+	// Output is done (process exited). Close stdin and the Docker
+	// connection to unblock the stdin goroutine which may be blocked
+	// reading from the upstream stream or writing to Docker.
+	if closer, ok := stdin.(io.Closer); ok {
+		closer.Close()
+	}
+	resp.Conn.Close()
+
 	wg.Wait()
 	return nil
 }

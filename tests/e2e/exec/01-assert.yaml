@@ -1,5 +1,22 @@
 apiVersion: kuttl.dev/v1beta1
 kind: TestAssert
 commands:
-  - script: kubectl exec --namespace $NAMESPACE exec-test -- echo hello
-  - script: kubectl exec --namespace $NAMESPACE -t exec-test -- echo hello
+  # non-TTY exec — verify output matches
+  - script: test "$(kubectl exec --namespace $NAMESPACE exec-test -- echo hello)" = "hello"
+  # TTY exec — strip trailing \r from TTY output
+  - script: test "$(kubectl exec --namespace $NAMESPACE -t exec-test -- echo hello | tr -d '\r')" = "hello"
+  # interactive shell via stdin pipe — tests output and stdin EOF teardown
+  - script: test "$(echo "echo hello" | kubectl exec -i --namespace $NAMESPACE exec-test -- sh)" = "hello"
+  # interactive TTY shell via stdin pipe — tests TTY stdin EOF teardown
+  - script: test "$(echo "echo hello" | kubectl exec -it --namespace $NAMESPACE exec-test -- sh | tr -d '\r')" = "hello"
+  # interactive shell that runs a command then exits — stdin stays open until shell exits
+  - script: |
+      result=$(kubectl exec -i --namespace $NAMESPACE exec-test -- sh <<'CMDS'
+      echo hello
+      exit
+      CMDS
+      )
+      test "$result" = "hello"
+  # interactive TTY shell — same test with TTY, mimics k9s shell + exit
+  - script: |
+      timeout 10 kubectl exec -it --namespace $NAMESPACE exec-test -- sh -c "echo hello && exit" | tr -d '\r' | grep -q hello
