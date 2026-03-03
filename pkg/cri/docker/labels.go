@@ -1,10 +1,10 @@
 package docker
 
 const (
-	labelPrefix = "io.kubernetes."
+	labelPrefix = "nanokube."
 
 	// Container type labels
-	labelContainerType     = labelPrefix + "docker.type"
+	labelContainerType     = labelPrefix + "type"
 	containerTypeSandbox   = "sandbox"
 	containerTypeContainer = "container"
 

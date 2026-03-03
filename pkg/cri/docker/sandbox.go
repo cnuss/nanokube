@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -16,6 +18,17 @@ func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandb
 	name := sandboxContainerName(config)
 
 	logger.Debug().Str("name", name).Str("uid", config.GetMetadata().GetUid()).Msg("CRI RunPodSandbox")
+
+	// Ensure pause image is available
+	if _, err := b.client.ImageInspect(ctx, dockerConfig.Image); err != nil {
+		logger.Info().Str("image", dockerConfig.Image).Msg("pulling sandbox image")
+		reader, pullErr := b.client.ImagePull(ctx, dockerConfig.Image, image.PullOptions{})
+		if pullErr != nil {
+			return "", fmt.Errorf("pull sandbox image: %w", pullErr)
+		}
+		io.Copy(io.Discard, reader)
+		reader.Close()
+	}
 
 	// Remove any stale sandbox with the same name from a previous run
 	b.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})

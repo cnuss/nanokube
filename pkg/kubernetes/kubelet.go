@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
@@ -27,7 +26,6 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
 	legacyscheme "k8s.io/kubernetes/pkg/api/legacyscheme"
-	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
@@ -127,7 +125,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 
 	// Create cadvisor + container manager
 	cadvisorInterface := cri.NewCadvisor(ctx, k.config.CRI.Hostname(), backend)
-	containerManager := buildContainerManager(cadvisorInterface)
+	containerManager := deps.NewContainerManager(ctx, backend)
 	volumePlugin := cri.NewVolumePlugin(ctx, backend, k.config.DataDir)
 
 	// Build and run HollowKubelet
@@ -245,42 +243,5 @@ func runProvisioner(ctx context.Context, client clientset.Interface, dataDir str
 		if ctx.Err() != nil {
 			return
 		}
-	}
-}
-
-// capacityContainerManager embeds the stub and overrides GetCapacity with real values.
-type capacityContainerManager struct {
-	cm.ContainerManager
-	capacity v1.ResourceList
-}
-
-func (m *capacityContainerManager) GetCapacity(localStorageCapacityIsolation bool) v1.ResourceList {
-	return m.capacity
-}
-
-func (m *capacityContainerManager) GetNodeAllocatableAbsolute() v1.ResourceList {
-	return m.capacity
-}
-
-// buildContainerManager creates a container manager that reports real CPU/memory
-// capacity from cadvisor's MachineInfo, falling back to a plain stub.
-func buildContainerManager(cadvisorInterface *cri.Cadvisor) cm.ContainerManager {
-	stub := cm.NewStubContainerManager()
-
-	info, err := cadvisorInterface.MachineInfo()
-	if err != nil || info.NumCores == 0 {
-		kubeletLog.Warn().Err(err).Msg("kubelet: MachineInfo unavailable, using stub container manager")
-		return stub
-	}
-
-	capacity := v1.ResourceList{
-		v1.ResourceCPU:    *resource.NewQuantity(int64(info.NumCores), resource.DecimalSI),
-		v1.ResourceMemory: *resource.NewQuantity(int64(info.MemoryCapacity), resource.BinarySI),
-	}
-	kubeletLog.Info().Int("cpus", info.NumCores).Uint64("memory", info.MemoryCapacity).Msg("kubelet: runtime-backed capacity")
-
-	return &capacityContainerManager{
-		ContainerManager: stub,
-		capacity:         capacity,
 	}
 }
