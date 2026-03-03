@@ -2,6 +2,7 @@ package kubelet
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/cri"
@@ -52,7 +53,11 @@ func (m *ContainerManager) Start(ctx context.Context, node *v1.Node, activePods 
 	m.podStatusProvider = podStatusProvider
 	m.runtimeService = runtimeService
 
-	m.log.Info().Str("node", node.Name).Bool("localStorageCapacityIsolation", localStorageCapacityIsolation).Msg("container manager started")
+	if localStorageCapacityIsolation {
+		return fmt.Errorf("localStorageCapacityIsolation is not supported")
+	}
+
+	m.log.Info().Str("node", node.Name).Msg("container manager started")
 	return nil
 }
 
@@ -93,7 +98,10 @@ func (m *ContainerManager) GetNodeAllocatableReservation() v1.ResourceList {
 }
 
 func (m *ContainerManager) GetCapacity(localStorageCapacityIsolation bool) v1.ResourceList {
-	m.log.Info().Bool("localStorageCapacityIsolation", localStorageCapacityIsolation).Msg("GetCapacity")
+	if localStorageCapacityIsolation {
+		m.log.Error().Msg("localStorageCapacityIsolation is not supported")
+		return v1.ResourceList{}
+	}
 	return m.GetNodeAllocatableAbsolute()
 }
 
@@ -118,8 +126,8 @@ func (m *ContainerManager) UpdatePluginResources(*schedulerframework.NodeInfo, *
 }
 
 func (m *ContainerManager) InternalContainerLifecycle() cm.InternalContainerLifecycle {
-	return &internalContainerLifecycle{
-		log: component.NewLogger("internal-container-lifecycle"),
+	return &containerLifecycle{
+		log: component.NewLogger("container-lifecycle"),
 	}
 }
 
@@ -242,21 +250,21 @@ func (m *ContainerManager) GetDynamicResources(pod *v1.Pod, container *v1.Contai
 }
 
 // internalContainerLifecycle implements cm.InternalContainerLifecycle as a no-op.
-type internalContainerLifecycle struct {
+type containerLifecycle struct {
 	log component.Logger
 }
 
-func (i *internalContainerLifecycle) PreCreateContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerConfig *runtimeapi.ContainerConfig) error {
+func (i *containerLifecycle) PreCreateContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerConfig *runtimeapi.ContainerConfig) error {
 	i.log.Warn().Msg("PreCreateContainer not implemented")
 	return nil
 }
 
-func (i *internalContainerLifecycle) PreStartContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerID string) error {
+func (i *containerLifecycle) PreStartContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerID string) error {
 	i.log.Warn().Msg("PreStartContainer not implemented")
 	return nil
 }
 
-func (i *internalContainerLifecycle) PostStopContainer(logger klog.Logger, containerID string) error {
+func (i *containerLifecycle) PostStopContainer(logger klog.Logger, containerID string) error {
 	i.log.Warn().Msg("PostStopContainer not implemented")
 	return nil
 }
