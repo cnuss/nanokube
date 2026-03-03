@@ -15,6 +15,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	critypes "github.com/cnuss/nanokube/pkg/cri/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
@@ -209,10 +211,99 @@ func (b *Backend) CheckpointContainer(ctx context.Context, containerID, location
 }
 
 func (b *Backend) GetContainerEvents(ctx context.Context, eventsCh chan *runtimeapi.ContainerEventResponse) error {
-	logger.Warn().Msg("GetContainerEvents not implemented")
-	<-ctx.Done()
-	close(eventsCh)
-	return nil
+	logger.Info().Msg("starting Docker event stream")
+
+	msgCh, errCh := b.client.Events(ctx, events.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("type", string(events.ContainerEventType)),
+			filters.Arg("label", labelManagedBy+"="+b.name),
+		),
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			close(eventsCh)
+			return nil
+		case err := <-errCh:
+			close(eventsCh)
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("docker event stream: %w", err)
+		case msg := <-msgCh:
+			ev := b.dockerEventToCRI(ctx, msg)
+			if ev != nil {
+				select {
+				case eventsCh <- ev:
+				case <-ctx.Done():
+					close(eventsCh)
+					return nil
+				}
+			}
+		}
+	}
+}
+
+func (b *Backend) dockerEventToCRI(ctx context.Context, msg events.Message) *runtimeapi.ContainerEventResponse {
+	var evType runtimeapi.ContainerEventType
+	switch msg.Action {
+	case events.ActionCreate:
+		evType = runtimeapi.ContainerEventType_CONTAINER_CREATED_EVENT
+	case events.ActionStart:
+		evType = runtimeapi.ContainerEventType_CONTAINER_STARTED_EVENT
+	case events.ActionDie, events.ActionStop, events.ActionKill:
+		evType = runtimeapi.ContainerEventType_CONTAINER_STOPPED_EVENT
+	case events.ActionDestroy, events.ActionRemove:
+		evType = runtimeapi.ContainerEventType_CONTAINER_DELETED_EVENT
+	default:
+		return nil
+	}
+
+	containerID := msg.Actor.ID
+	sandboxID := msg.Actor.Attributes[labelSandboxID]
+
+	// Skip sandbox containers — CRI events are for app containers only
+	if msg.Actor.Attributes[labelContainerType] == containerTypeSandbox {
+		return nil
+	}
+
+	// Build sandbox status
+	var sandboxStatus *runtimeapi.PodSandboxStatus
+	if sandboxID != "" {
+		if resp, err := b.PodSandboxStatus(ctx, sandboxID, false); err == nil {
+			sandboxStatus = resp.Status
+		}
+	}
+
+	// Build container statuses for all containers in this sandbox
+	var containerStatuses []*runtimeapi.ContainerStatus
+	if sandboxID != "" {
+		containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
+			PodSandboxId: sandboxID,
+		})
+		if err == nil {
+			for _, c := range containers {
+				if resp, err := b.ContainerStatus(ctx, c.Id, false); err == nil {
+					containerStatuses = append(containerStatuses, resp.Status)
+				}
+			}
+		}
+	}
+
+	logger.Debug().
+		Str("container", containerID[:min(12, len(containerID))]).
+		Str("action", string(msg.Action)).
+		Int32("criEvent", int32(evType)).
+		Msg("docker event -> CRI")
+
+	return &runtimeapi.ContainerEventResponse{
+		ContainerId:        containerID,
+		ContainerEventType: evType,
+		CreatedAt:          msg.TimeNano,
+		PodSandboxStatus:   sandboxStatus,
+		ContainersStatuses: containerStatuses,
+	}
 }
 
 func (b *Backend) UpdatePodSandboxResources(ctx context.Context, req *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {

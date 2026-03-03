@@ -14,19 +14,30 @@
 | `ScopedHostUtil`   | `GetMode`                         | `pkg/kubernetes/kubelet/hostutil.go`          | TODO (P3) — needed for correct volume permissions             |
 | `ScopedHostUtil`   | `GetSELinuxSupport`               | `pkg/kubernetes/kubelet/hostutil.go`          | WONT DO — no SELinux on macOS/Docker Desktop                  |
 | `ScopedHostUtil`   | `GetSELinuxMountContext`          | `pkg/kubernetes/kubelet/hostutil.go`          | WONT DO — no SELinux on macOS/Docker Desktop                  |
-| `ScopedSubpath`    | `CleanSubPaths`                   | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P3) — cleanup of bind-mount subpaths                    |
+| `ScopedSubpath`    | `CleanSubPaths`                   | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P1) — 37 calls/e2e run, cleanup of bind-mount subpaths |
 | `ScopedSubpath`    | `PrepareSafeSubpath`              | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P3) — needed for subPath volume mounts                  |
 | `FakeOOMAdjuster`  | all                               | `kubemark`                                    | WONT DO — kernel-level `/proc` writes, Docker handles OOM     |
-| `ContainerManager` | `Updates`                         | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P0) — 25 calls/e2e run, nil channel may cause busy-loop |
-| `ContainerManager` | `Status`                          | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 7 calls/e2e run, node status sync                 |
-| `ContainerManager` | `GetNodeAllocatableReservation`   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 7 calls/e2e run, node reports full capacity       |
-| `ContainerManager` | `GetDevicePluginResourceCapacity` | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins                                   |
+| `ContainerManager` | `Updates`                         | `pkg/kubernetes/kubelet/container_manager.go` | DONE — Docker event stream via CRI GetContainerEvents         |
+| `ContainerManager` | `Status`                          | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 46 calls/e2e run, node status sync               |
+| `ContainerManager` | `GetNodeAllocatableReservation`   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 46 calls/e2e run, node reports full capacity      |
+| `ContainerManager` | `GetDevicePluginResourceCapacity` | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (46 calls, safe as nil)           |
+| `ContainerManager` | `PodMightNeedToUnprepareResources`| `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (29 calls, safe as false)                    |
+| `ContainerManager` | `UpdateQOSCgroups`                | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups (21 calls)                               |
+| `ContainerManager` | `UpdatePluginResources`           | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (21 calls)                        |
+| `ContainerManager` | `UnprepareDynamicResources`       | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (21 calls)                                   |
+| `ContainerManager` | `PrepareDynamicResources`         | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (21 calls)                                   |
+| `ContainerManager` | `GetResources`                    | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (21 calls)                        |
 | `ContainerManager` | `GetPodCgroupRoot`                | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups                                          |
 | `ContainerManager` | `GetPluginRegistrationHandlers`   | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins                                   |
 | `ContainerManager` | `GetNodeConfig`                   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — called once at startup                            |
 | `ContainerManager` | `GetHealthCheckers`               | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — called once at startup                            |
+| `containerLifecycle`| `PreCreateContainer`             | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 21 calls/e2e run, container setup hook            |
+| `containerLifecycle`| `PreStartContainer`              | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 21 calls/e2e run, container setup hook            |
+| `podContainerManager`| `Exists`                        | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups (132 calls, safe as true)                |
+| `podContainerManager`| `GetPodContainerName`           | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups (87 calls, safe as nil)                  |
+| `podAdmitHandler`  | `Admit`                           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 21 calls/e2e run, always admits currently         |
 | `Backend`          | `CheckpointContainer`             | `pkg/cri/docker/docker.go`                    | WONT DO — CRIU not available on Docker Desktop                |
-| `Backend`          | `GetContainerEvents`              | `pkg/cri/docker/docker.go`                    | TODO (P2) — stream Docker events for eventing                 |
+| `Backend`          | `GetContainerEvents`              | `pkg/cri/docker/docker.go`                    | DONE — Docker event stream → CRI ContainerEventResponse       |
 | `Backend`          | `ListMetricDescriptors`           | `pkg/cri/docker/docker.go`                    | TODO (P3) — metrics/observability                             |
 | `Backend`          | `ListPodSandboxMetrics`           | `pkg/cri/docker/docker.go`                    | TODO (P3) — metrics/observability                             |
 | `Backend`          | `UpdatePodSandboxResources`       | `pkg/cri/docker/docker.go`                    | TODO (P3) — in-place pod resize                               |

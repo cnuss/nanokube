@@ -35,13 +35,21 @@ type ContainerManager struct {
 	sourcesReady      config.SourcesReady
 	podStatusProvider status.PodStatusProvider
 	runtimeService    internalapi.RuntimeService
+	updates           chan resourceupdates.Update
+	containerEvents   chan *runtimeapi.ContainerEventResponse
 }
 
 var _ cm.ContainerManager = &ContainerManager{}
 
 // NewContainerManager creates a ContainerManager backed by the CRI backend.
 func NewContainerManager(ctx context.Context, backend cri.Backend) *ContainerManager {
-	return &ContainerManager{ctx: ctx, backend: backend, log: component.NewLogger("container-manager")}
+	return &ContainerManager{
+		ctx:             ctx,
+		backend:         backend,
+		log:             component.NewLogger("container-manager"),
+		updates:         make(chan resourceupdates.Update),
+		containerEvents: make(chan *runtimeapi.ContainerEventResponse, 100),
+	}
 }
 
 func (m *ContainerManager) Start(ctx context.Context, node *v1.Node, activePods cm.ActivePodsFunc, getNode cm.GetNodeFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, runtimeService internalapi.RuntimeService, localStorageCapacityIsolation bool) error {
@@ -58,7 +66,41 @@ func (m *ContainerManager) Start(ctx context.Context, node *v1.Node, activePods 
 	}
 
 	m.log.Info().Str("node", node.Name).Msg("container manager started")
+
+	if m.backend != nil {
+		go func() {
+			m.log.Info().Msg("starting container event stream")
+			if err := m.backend.GetContainerEvents(ctx, m.containerEvents); err != nil {
+				m.log.Warn().Err(err).Msg("container event stream ended")
+			}
+		}()
+		go m.streamContainerEvents(ctx)
+	}
+
 	return nil
+}
+
+func (m *ContainerManager) streamContainerEvents(ctx context.Context) {
+	for ev := range m.containerEvents {
+		uid := ""
+		if ev.PodSandboxStatus != nil && ev.PodSandboxStatus.Metadata != nil {
+			uid = ev.PodSandboxStatus.Metadata.Uid
+		}
+		if uid == "" {
+			continue
+		}
+		m.log.Debug().
+			Str("pod", uid).
+			Str("container", ev.ContainerId[:min(12, len(ev.ContainerId))]).
+			Int32("event", int32(ev.ContainerEventType)).
+			Msg("container event")
+
+		select {
+		case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (m *ContainerManager) SystemCgroupsLimit() v1.ResourceList {
@@ -192,8 +234,7 @@ func (m *ContainerManager) UpdateAllocatedResourcesStatus(pod *v1.Pod, status *v
 }
 
 func (m *ContainerManager) Updates() <-chan resourceupdates.Update {
-	m.log.Warn().Msg("Updates not implemented")
-	return nil
+	return m.updates
 }
 
 func (m *ContainerManager) PodHasExclusiveCPUs(pod *v1.Pod) bool {
