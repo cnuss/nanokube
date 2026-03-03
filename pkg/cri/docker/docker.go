@@ -20,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/system"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -333,55 +334,31 @@ func (b *Backend) runProbe(ctx context.Context, img string, cmd []string, hostCf
 		reader.Close()
 	}
 
+	hostCfg.AutoRemove = true
+
 	resp, err := b.client.ContainerCreate(ctx,
-		&container.Config{Image: img, Cmd: cmd},
+		&container.Config{Image: img, Cmd: cmd, AttachStdout: true, AttachStderr: true},
 		hostCfg, nil, nil, "")
 	if err != nil {
 		return nil, fmt.Errorf("create probe container: %w", err)
 	}
-	defer b.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	attach, err := b.client.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stream: true, Stdout: true, Stderr: true,
+	})
+	if err != nil {
+		b.RemoveContainer(ctx, resp.ID)
+		return nil, fmt.Errorf("attach probe container: %w", err)
+	}
+	defer attach.Close()
 
 	if err := b.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return nil, fmt.Errorf("start probe container: %w", err)
 	}
 
-	waitCh, errCh := b.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case <-waitCh:
-	case err := <-errCh:
-		if err != nil {
-			return nil, fmt.Errorf("wait probe container: %w", err)
-		}
-	}
-
-	logReader, err := b.client.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		return nil, fmt.Errorf("read probe logs: %w", err)
-	}
-	defer logReader.Close()
-
-	var buf bytes.Buffer
-	io.Copy(&buf, logReader)
-	return stripLogHeaders(buf.Bytes()), nil
-}
-
-// stripLogHeaders removes Docker's 8-byte multiplexed stream headers.
-// Each frame: [type(1) 0 0 0 size(4)] followed by size bytes of payload.
-func stripLogHeaders(data []byte) []byte {
-	var result []byte
-	for len(data) >= 8 {
-		size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
-		data = data[8:]
-		if size > len(data) {
-			size = len(data)
-		}
-		result = append(result, data[:size]...)
-		data = data[size:]
-	}
-	if len(result) == 0 {
-		return data
-	}
-	return result
+	var stdout, stderr bytes.Buffer
+	stdcopy.StdCopy(&stdout, &stderr, attach.Reader)
+	return stdout.Bytes(), nil
 }
 
 // HostInfo returns host system information from Docker.
@@ -396,31 +373,16 @@ func (b *Backend) HostInfo(ctx context.Context) (int, int64, string, string, err
 // HostIDs probes the host's boot ID, system UUID, and machine ID by running
 // a busybox container with host namespace access and bind-mounted /etc + /sys.
 func (b *Backend) HostIDs(ctx context.Context) (string, string, string, error) {
-	// Ensure image is available
-	img := "busybox"
-	_, err := b.client.ImageInspect(ctx, img)
-	if err != nil {
-		reader, pullErr := b.client.ImagePull(ctx, img, image.PullOptions{})
-		if pullErr != nil {
-			return "", "", "", fmt.Errorf("pull %s: %w", img, pullErr)
-		}
-		io.Copy(io.Discard, reader)
-		reader.Close()
-	}
-
-	resp, err := b.client.ContainerCreate(ctx,
-		&container.Config{
-			Image: img,
-			Cmd: []string{"sh", "-c",
-				// boot_id
-				"cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo; " +
-					// system UUID: try DMI, then device-tree fallbacks (same order as cadvisor)
-					"cat /host/sys/class/dmi/id/product_uuid 2>/dev/null || " +
-					"cat /proc/device-tree/system-id 2>/dev/null || " +
-					"cat /proc/device-tree/vm,uuid 2>/dev/null || echo; " +
-					// machine-id
-					"cat /etc/machine-id 2>/dev/null || echo",
-			},
+	out, err := b.runProbe(ctx, "busybox",
+		[]string{"sh", "-c",
+			// boot_id
+			"cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo; " +
+				// system UUID: try DMI, then device-tree fallbacks (same order as cadvisor)
+				"cat /host/sys/class/dmi/id/product_uuid 2>/dev/null || " +
+				"cat /proc/device-tree/system-id 2>/dev/null || " +
+				"cat /proc/device-tree/vm,uuid 2>/dev/null || echo; " +
+				// machine-id
+				"cat /etc/machine-id 2>/dev/null || echo",
 		},
 		&container.HostConfig{
 			Privileged:  true,
@@ -431,34 +393,12 @@ func (b *Backend) HostIDs(ctx context.Context) (string, string, string, error) {
 				"/etc/machine-id:/etc/machine-id:ro",
 				"/sys:/host/sys:ro",
 			},
-		}, nil, nil, "")
+		})
 	if err != nil {
-		return "", "", "", fmt.Errorf("create host-id probe: %w", err)
-	}
-	defer b.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	if err := b.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", "", "", fmt.Errorf("start host-id probe: %w", err)
+		return "", "", "", fmt.Errorf("host-id probe: %w", err)
 	}
 
-	waitCh, errCh := b.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case <-waitCh:
-	case err := <-errCh:
-		if err != nil {
-			return "", "", "", fmt.Errorf("wait host-id probe: %w", err)
-		}
-	}
-
-	logReader, err := b.client.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		return "", "", "", fmt.Errorf("read host-id probe logs: %w", err)
-	}
-	defer logReader.Close()
-
-	var buf bytes.Buffer
-	io.Copy(&buf, logReader)
-	lines := strings.Split(strings.TrimSpace(string(stripLogHeaders(buf.Bytes()))), "\n")
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 
 	var bootID, systemUUID, machineID string
 	if len(lines) > 0 {

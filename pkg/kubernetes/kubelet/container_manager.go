@@ -90,11 +90,11 @@ func (m *ContainerManager) streamContainerEvents(ctx context.Context) {
 		if uid == "" {
 			continue
 		}
-		m.log.Debug().
+		m.log.Info().
 			Str("pod", uid).
 			Str("container", ev.ContainerId[:min(12, len(ev.ContainerId))]).
 			Int32("event", int32(ev.ContainerEventType)).
-			Msg("container event -> update")
+			Msg("container event")
 
 		select {
 		case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
@@ -339,11 +339,11 @@ func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, s
 }
 
 func (p *podContainerManager) EnsureExists(logger klog.Logger, pod *v1.Pod) error {
-	p.log.Warn().Msg("EnsureExists not implemented")
 	return nil
 }
 
 func (p *podContainerManager) Exists(pod *v1.Pod) bool {
+	p.log.Trace().Str("pod", pod.Name).Msg("checking if pod container exists")
 	if p.backend == nil {
 		return true
 	}

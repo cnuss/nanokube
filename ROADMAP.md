@@ -14,26 +14,25 @@
 | `ScopedHostUtil`   | `GetMode`                         | `pkg/kubernetes/kubelet/hostutil.go`          | TODO (P3) — needed for correct volume permissions             |
 | `ScopedHostUtil`   | `GetSELinuxSupport`               | `pkg/kubernetes/kubelet/hostutil.go`          | WONT DO — no SELinux on macOS/Docker Desktop                  |
 | `ScopedHostUtil`   | `GetSELinuxMountContext`          | `pkg/kubernetes/kubelet/hostutil.go`          | WONT DO — no SELinux on macOS/Docker Desktop                  |
-| `ScopedSubpath`    | `CleanSubPaths`                   | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P1) — 37 calls/e2e run, cleanup of bind-mount subpaths |
+| `ScopedSubpath`    | `CleanSubPaths`                   | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P1) — 19 calls/e2e run, cleanup of bind-mount subpaths |
 | `ScopedSubpath`    | `PrepareSafeSubpath`              | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P3) — needed for subPath volume mounts                  |
 | `FakeOOMAdjuster`  | all                               | `kubemark`                                    | WONT DO — kernel-level `/proc` writes, Docker handles OOM     |
-| `ContainerManager` | `GetNodeAllocatableReservation`   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 46 calls/e2e run, node reports full capacity      |
-| `ContainerManager` | `GetDevicePluginResourceCapacity` | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (46 calls, safe as nil)           |
-| `ContainerManager` | `PodMightNeedToUnprepareResources`| `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (29 calls, safe as false)                    |
-| `ContainerManager` | `UpdateQOSCgroups`                | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 21 calls/e2e run, cgroup QoS tiers               |
-| `ContainerManager` | `UpdatePluginResources`           | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (21 calls)                        |
-| `ContainerManager` | `UnprepareDynamicResources`       | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (21 calls)                                   |
-| `ContainerManager` | `PrepareDynamicResources`         | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (21 calls)                                   |
-| `ContainerManager` | `GetResources`                    | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (21 calls)                        |
+| `ContainerManager` | `GetNodeAllocatableReservation`   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 29 calls/e2e run, node reports full capacity      |
+| `ContainerManager` | `GetDevicePluginResourceCapacity` | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (29 calls, safe as nil)           |
+| `ContainerManager` | `PodMightNeedToUnprepareResources`| `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (16 calls, safe as false)                    |
+| `ContainerManager` | `UpdateQOSCgroups`                | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 22 calls/e2e run, cgroup QoS tiers               |
+| `ContainerManager` | `UpdatePluginResources`           | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (11 calls)                        |
+| `ContainerManager` | `UnprepareDynamicResources`       | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (11 calls)                                   |
+| `ContainerManager` | `PrepareDynamicResources`         | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (11 calls)                                   |
+| `ContainerManager` | `GetResources`                    | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (11 calls)                        |
 | `ContainerManager` | `GetPodCgroupRoot`                | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — 1 call/e2e run, cgroup root path                 |
 | `ContainerManager` | `GetPluginRegistrationHandlers`   | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins                                   |
 | `ContainerManager` | `GetNodeConfig`                   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — called once at startup                            |
 | `ContainerManager` | `GetHealthCheckers`               | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — called once at startup                            |
-| `containerLifecycle`| `PreCreateContainer`             | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 21 calls/e2e run, container setup hook            |
-| `containerLifecycle`| `PreStartContainer`              | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 21 calls/e2e run, container setup hook            |
-| `podContainerManager`| `Exists`                        | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 132 calls/e2e run, check pod cgroup exists        |
-| `podContainerManager`| `GetPodContainerName`           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 87 calls/e2e run, resolve pod cgroup name         |
-| `podAdmitHandler`  | `Admit`                           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 21 calls/e2e run, always admits currently         |
+| `containerLifecycle`| `PreCreateContainer`             | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 11 calls/e2e run, container setup hook            |
+| `containerLifecycle`| `PreStartContainer`              | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 11 calls/e2e run, container setup hook            |
+| `podContainerManager`| `EnsureExists`                  | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 11 calls/e2e run, ensure pod cgroup exists        |
+| `podAdmitHandler`  | `Admit`                           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 11 calls/e2e run, always admits currently         |
 | `Backend`          | `CheckpointContainer`             | `pkg/cri/docker/docker.go`                    | WONT DO — CRIU not available on Docker Desktop                |
 | `Backend`          | `ListMetricDescriptors`           | `pkg/cri/docker/docker.go`                    | TODO (P3) — metrics/observability                             |
 | `Backend`          | `ListPodSandboxMetrics`           | `pkg/cri/docker/docker.go`                    | TODO (P3) — metrics/observability                             |

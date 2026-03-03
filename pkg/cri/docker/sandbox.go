@@ -30,16 +30,13 @@ func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandb
 		reader.Close()
 	}
 
-	// Remove any stale sandbox with the same name from a previous run
-	b.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
-
 	resp, err := b.client.ContainerCreate(ctx, dockerConfig, hostConfig, netConfig, nil, name)
 	if err != nil {
 		return "", fmt.Errorf("create sandbox: %w", err)
 	}
 
 	if err := b.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		b.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		b.RemoveContainer(ctx, resp.ID)
 		return "", fmt.Errorf("start sandbox: %w", err)
 	}
 
@@ -88,8 +85,7 @@ func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) err
 		b.RemoveContainer(ctx, c.Id)
 	}
 
-	err = b.client.ContainerRemove(ctx, podSandboxID, container.RemoveOptions{Force: true})
-	if err != nil && !isNotFoundOrNotRunning(err) {
+	if err = b.RemoveContainer(ctx, podSandboxID); err != nil {
 		return err
 	}
 
@@ -122,7 +118,7 @@ func (b *Backend) RemovePodSandboxes(ctx context.Context) ([]string, error) {
 	var removed []string
 	var errs []error
 	for _, s := range sandboxes {
-		if err := b.client.ContainerRemove(ctx, s.ID, container.RemoveOptions{Force: true}); err != nil {
+		if err := b.RemoveContainer(ctx, s.ID); err != nil {
 			errs = append(errs, fmt.Errorf("remove sandbox %s: %w", s.ID[:12], err))
 		} else {
 			removed = append(removed, s.ID)

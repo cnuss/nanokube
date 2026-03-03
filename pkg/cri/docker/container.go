@@ -37,9 +37,6 @@ func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, conf
 		logger.Debug().Str("host", m.GetHostPath()).Str("container", m.GetContainerPath()).Bool("ro", m.GetReadonly()).Msg("CRI mount")
 	}
 
-	// Remove any stale container with the same name from a previous run
-	b.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
-
 	resp, err := b.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	if err != nil {
 		return "", fmt.Errorf("create container: %w", err)
@@ -51,7 +48,8 @@ func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, conf
 func (b *Backend) StartContainer(ctx context.Context, containerID string) error {
 	logger.Debug().Str("id", containerID[:12]).Msg("CRI StartContainer")
 	if err := b.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return err
+		b.RemoveContainer(ctx, containerID)
+		return fmt.Errorf("start container: %w", err)
 	}
 	// Start CRI log writer if a log path was configured
 	inspect, err := b.client.ContainerInspect(ctx, containerID)
@@ -163,8 +161,8 @@ func (b *Backend) StopContainer(ctx context.Context, containerID string, timeout
 func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error {
 	logger.Debug().Str("id", containerID[:12]).Msg("CRI RemoveContainer")
 	err := b.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
-	if err != nil && isNotFoundOrNotRunning(err) {
-		return nil
+	if err != nil {
+		logger.Error().Str("id", containerID[:12]).Err(err).Msg("failed to remove container")
 	}
 	return err
 }
@@ -184,12 +182,15 @@ func (b *Backend) RemoveContainers(ctx context.Context) ([]string, error) {
 	var errs []error
 	for _, c := range containers {
 		b.stopLogWriter(c.ID)
-		if err := b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+		if err := b.RemoveContainer(ctx, c.ID); err != nil {
 			errs = append(errs, fmt.Errorf("remove container %s: %w", c.ID[:12], err))
 		} else {
 			removed = append(removed, c.ID)
 			logger.Info().Str("id", c.ID[:12]).Msg("cleanup: removed container")
 		}
+	}
+	if len(errs) > 0 {
+		logger.Error().Int("count", len(errs)).Msg("cleanup: failed to remove some containers")
 	}
 	return removed, errors.Join(errs...)
 }
