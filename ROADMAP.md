@@ -22,19 +22,19 @@
 | `ContainerManager` | `GetNodeAllocatableReservation`   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 46 calls/e2e run, node reports full capacity      |
 | `ContainerManager` | `GetDevicePluginResourceCapacity` | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (46 calls, safe as nil)           |
 | `ContainerManager` | `PodMightNeedToUnprepareResources`| `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (29 calls, safe as false)                    |
-| `ContainerManager` | `UpdateQOSCgroups`                | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups (21 calls)                               |
+| `ContainerManager` | `UpdateQOSCgroups`                | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 21 calls/e2e run, cgroup QoS tiers               |
 | `ContainerManager` | `UpdatePluginResources`           | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (21 calls)                        |
 | `ContainerManager` | `UnprepareDynamicResources`       | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (21 calls)                                   |
 | `ContainerManager` | `PrepareDynamicResources`         | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (21 calls)                                   |
 | `ContainerManager` | `GetResources`                    | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (21 calls)                        |
-| `ContainerManager` | `GetPodCgroupRoot`                | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups                                          |
+| `ContainerManager` | `GetPodCgroupRoot`                | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — 1 call/e2e run, cgroup root path                 |
 | `ContainerManager` | `GetPluginRegistrationHandlers`   | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins                                   |
 | `ContainerManager` | `GetNodeConfig`                   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — called once at startup                            |
 | `ContainerManager` | `GetHealthCheckers`               | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P3) — called once at startup                            |
 | `containerLifecycle`| `PreCreateContainer`             | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 21 calls/e2e run, container setup hook            |
 | `containerLifecycle`| `PreStartContainer`              | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 21 calls/e2e run, container setup hook            |
-| `podContainerManager`| `Exists`                        | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups (132 calls, safe as true)                |
-| `podContainerManager`| `GetPodContainerName`           | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no cgroups (87 calls, safe as nil)                  |
+| `podContainerManager`| `Exists`                        | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 132 calls/e2e run, check pod cgroup exists        |
+| `podContainerManager`| `GetPodContainerName`           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 87 calls/e2e run, resolve pod cgroup name         |
 | `podAdmitHandler`  | `Admit`                           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 21 calls/e2e run, always admits currently         |
 | `Backend`          | `CheckpointContainer`             | `pkg/cri/docker/docker.go`                    | WONT DO — CRIU not available on Docker Desktop                |
 | `Backend`          | `GetContainerEvents`              | `pkg/cri/docker/docker.go`                    | DONE — Docker event stream → CRI ContainerEventResponse       |
