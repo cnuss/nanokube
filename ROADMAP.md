@@ -17,8 +17,6 @@
 | `ScopedSubpath`    | `CleanSubPaths`                   | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P1) — 37 calls/e2e run, cleanup of bind-mount subpaths |
 | `ScopedSubpath`    | `PrepareSafeSubpath`              | `pkg/kubernetes/kubelet/subpath.go`           | TODO (P3) — needed for subPath volume mounts                  |
 | `FakeOOMAdjuster`  | all                               | `kubemark`                                    | WONT DO — kernel-level `/proc` writes, Docker handles OOM     |
-| `ContainerManager` | `Updates`                         | `pkg/kubernetes/kubelet/container_manager.go` | DONE — Docker event stream via CRI GetContainerEvents         |
-| `ContainerManager` | `Status`                          | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 46 calls/e2e run, node status sync               |
 | `ContainerManager` | `GetNodeAllocatableReservation`   | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P1) — 46 calls/e2e run, node reports full capacity      |
 | `ContainerManager` | `GetDevicePluginResourceCapacity` | `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no device plugins (46 calls, safe as nil)           |
 | `ContainerManager` | `PodMightNeedToUnprepareResources`| `pkg/kubernetes/kubelet/container_manager.go` | WONT DO — no DRA (29 calls, safe as false)                    |
@@ -37,7 +35,6 @@
 | `podContainerManager`| `GetPodContainerName`           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 87 calls/e2e run, resolve pod cgroup name         |
 | `podAdmitHandler`  | `Admit`                           | `pkg/kubernetes/kubelet/container_manager.go` | TODO (P2) — 21 calls/e2e run, always admits currently         |
 | `Backend`          | `CheckpointContainer`             | `pkg/cri/docker/docker.go`                    | WONT DO — CRIU not available on Docker Desktop                |
-| `Backend`          | `GetContainerEvents`              | `pkg/cri/docker/docker.go`                    | DONE — Docker event stream → CRI ContainerEventResponse       |
 | `Backend`          | `ListMetricDescriptors`           | `pkg/cri/docker/docker.go`                    | TODO (P3) — metrics/observability                             |
 | `Backend`          | `ListPodSandboxMetrics`           | `pkg/cri/docker/docker.go`                    | TODO (P3) — metrics/observability                             |
 | `Backend`          | `UpdatePodSandboxResources`       | `pkg/cri/docker/docker.go`                    | TODO (P3) — in-place pod resize                               |

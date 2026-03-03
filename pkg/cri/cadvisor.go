@@ -90,10 +90,33 @@ func (c *Cadvisor) ContainerInfoV2(name string, options cadvisorapiv2.RequestOpt
 		return map[string]cadvisorapiv2.ContainerInfo{}, nil
 	}
 
-	// For non-root cgroup queries, return a synthetic entry with node-level
-	// stats. The kubelet calls getCgroupInfo(name) which expects exactly 1
-	// entry keyed by name.
+	// For non-root cgroup queries, look up the specific container's stats.
+	// The name is a cgroup path like "/containerID" from GetPodContainerName.
 	if name != "/" {
+		containerID := name
+		if containerID != "" {
+			ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+			defer cancel()
+			stats, err := c.backend.ContainerStats(ctx, containerID)
+			if err != nil {
+				logger.Debug().Err(err).Str("name", name).Msg("cadvisor: ContainerStats failed for cgroup query")
+				return map[string]cadvisorapiv2.ContainerInfo{
+					name: c.rootContainerInfoV2(),
+				}, nil
+			}
+			ctr, _ := c.backend.ContainerStatus(ctx, containerID, false)
+			var createdAt int64
+			var labels map[string]string
+			var image string
+			if ctr != nil && ctr.Status != nil {
+				createdAt = ctr.Status.CreatedAt
+				labels = ctr.Status.Labels
+				image = ctr.Status.GetImage().GetImage()
+			}
+			return map[string]cadvisorapiv2.ContainerInfo{
+				name: c.criStatsToV2(createdAt, labels, image, stats),
+			}, nil
+		}
 		return map[string]cadvisorapiv2.ContainerInfo{
 			name: c.rootContainerInfoV2(),
 		}, nil

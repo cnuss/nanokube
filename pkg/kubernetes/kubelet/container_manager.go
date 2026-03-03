@@ -14,6 +14,7 @@ import (
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
+	kubelettypes "k8s.io/kubelet/pkg/types"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/cm/resourceupdates"
 	"k8s.io/kubernetes/pkg/kubelet/config"
@@ -119,7 +120,9 @@ func (m *ContainerManager) Status() cm.Status {
 
 func (m *ContainerManager) NewPodContainerManager() cm.PodContainerManager {
 	return &podContainerManager{
-		log: component.NewLogger("pod-container-manager"),
+		ctx:     m.ctx,
+		log:     component.NewLogger("pod-container-manager"),
+		backend: m.backend,
 	}
 }
 
@@ -309,14 +312,30 @@ func (i *containerLifecycle) PostStopContainer(logger klog.Logger, containerID s
 	return nil
 }
 
-// podContainerManager implements cm.PodContainerManager as a no-op.
+// podContainerManager implements cm.PodContainerManager.
 type podContainerManager struct {
-	log component.Logger
+	ctx     context.Context
+	log     component.Logger
+	backend cri.Backend
 }
 
 func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, string) {
-	p.log.Warn().Msg("GetPodContainerName not implemented")
-	return nil, ""
+	if p.backend == nil {
+		return nil, ""
+	}
+	sandboxes, err := p.backend.ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
+		LabelSelector: map[string]string{
+			kubelettypes.KubernetesPodUIDLabel: string(pod.UID),
+		},
+	})
+	if err != nil {
+		p.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list sandboxes")
+		return nil, ""
+	}
+	if len(sandboxes) == 0 {
+		return nil, ""
+	}
+	return nil, sandboxes[0].Id
 }
 
 func (p *podContainerManager) EnsureExists(logger klog.Logger, pod *v1.Pod) error {
@@ -325,8 +344,19 @@ func (p *podContainerManager) EnsureExists(logger klog.Logger, pod *v1.Pod) erro
 }
 
 func (p *podContainerManager) Exists(pod *v1.Pod) bool {
-	p.log.Warn().Msg("Exists not implemented")
-	return true
+	if p.backend == nil {
+		return true
+	}
+	sandboxes, err := p.backend.ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
+		LabelSelector: map[string]string{
+			kubelettypes.KubernetesPodUIDLabel: string(pod.UID),
+		},
+	})
+	if err != nil {
+		p.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list sandboxes")
+		return true
+	}
+	return len(sandboxes) > 0
 }
 
 func (p *podContainerManager) Destroy(logger klog.Logger, name cm.CgroupName) error {

@@ -1,5 +1,9 @@
 package docker
 
+import (
+	kubelettypes "k8s.io/kubelet/pkg/types"
+)
+
 const (
 	labelPrefix = "nanokube."
 
@@ -10,12 +14,12 @@ const (
 
 	// Sandbox labels
 	labelSandboxID        = labelPrefix + "sandbox.id"
-	labelSandboxNamespace = labelPrefix + "pod.namespace"
-	labelSandboxName      = labelPrefix + "pod.name"
-	labelSandboxUID       = labelPrefix + "pod.uid"
+	labelSandboxNamespace = kubelettypes.KubernetesPodNamespaceLabel
+	labelSandboxName      = kubelettypes.KubernetesPodNameLabel
+	labelSandboxUID       = kubelettypes.KubernetesPodUIDLabel
 
 	// Container labels
-	labelContainerName    = labelPrefix + "container.name"
+	labelContainerName    = kubelettypes.KubernetesContainerNameLabel
 	labelContainerAttempt = labelPrefix + "container.attempt"
 	labelLogPath          = labelPrefix + "container.logPath"
 
