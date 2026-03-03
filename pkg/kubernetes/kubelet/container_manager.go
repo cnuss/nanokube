@@ -43,7 +43,7 @@ func NewContainerManager(ctx context.Context, backend cri.Backend) *ContainerMan
 	return &ContainerManager{ctx: ctx, backend: backend, log: component.NewLogger("container-manager")}
 }
 
-func (m *ContainerManager) Start(ctx context.Context, node *v1.Node, activePods cm.ActivePodsFunc, getNode cm.GetNodeFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, runtimeService internalapi.RuntimeService, _ bool) error {
+func (m *ContainerManager) Start(ctx context.Context, node *v1.Node, activePods cm.ActivePodsFunc, getNode cm.GetNodeFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, runtimeService internalapi.RuntimeService, localStorageCapacityIsolation bool) error {
 	m.ctx = ctx
 	m.node = node
 	m.activePods = activePods
@@ -52,7 +52,7 @@ func (m *ContainerManager) Start(ctx context.Context, node *v1.Node, activePods 
 	m.podStatusProvider = podStatusProvider
 	m.runtimeService = runtimeService
 
-	m.log.Info().Str("node", node.Name).Msg("container manager started")
+	m.log.Info().Str("node", node.Name).Bool("localStorageCapacityIsolation", localStorageCapacityIsolation).Msg("container manager started")
 	return nil
 }
 
