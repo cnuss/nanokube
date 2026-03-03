@@ -292,15 +292,3 @@ func extractAnnotations(dockerLabels map[string]string) map[string]string {
 func boolPtr(b bool) *bool {
 	return &b
 }
-
-// isNotFoundOrNotRunning returns true if the error indicates the container
-// was not found or is not running. Used for idempotent Stop/Remove operations.
-func isNotFoundOrNotRunning(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "No such") ||
-		strings.Contains(msg, "is not running") ||
-		strings.Contains(msg, "not found")
-}

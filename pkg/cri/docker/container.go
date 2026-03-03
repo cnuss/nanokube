@@ -152,15 +152,17 @@ func (b *Backend) StopContainer(ctx context.Context, containerID string, timeout
 	logger.Debug().Str("id", containerID[:12]).Int64("timeout", timeout).Msg("CRI StopContainer")
 	t := int(timeout)
 	err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t})
-	if err != nil && isNotFoundOrNotRunning(err) {
-		return nil
-	}
 	return err
 }
 
 func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error {
 	logger.Debug().Str("id", containerID[:12]).Msg("CRI RemoveContainer")
-	err := b.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+	b.stopLogWriter(containerID)
+	t := 0
+	if err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t}); err != nil {
+		logger.Warn().Str("id", containerID[:12]).Err(err).Msg("failed to stop container before removal")
+	}
+	err := b.client.ContainerRemove(ctx, containerID, container.RemoveOptions{})
 	if err != nil {
 		logger.Error().Str("id", containerID[:12]).Err(err).Msg("failed to remove container")
 	}
@@ -181,7 +183,6 @@ func (b *Backend) RemoveContainers(ctx context.Context) ([]string, error) {
 	var removed []string
 	var errs []error
 	for _, c := range containers {
-		b.stopLogWriter(c.ID)
 		if err := b.RemoveContainer(ctx, c.ID); err != nil {
 			errs = append(errs, fmt.Errorf("remove container %s: %w", c.ID[:12], err))
 		} else {

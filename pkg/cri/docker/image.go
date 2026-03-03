@@ -109,9 +109,6 @@ func (b *Backend) PullImage(ctx context.Context, imageSpec *runtimeapi.ImageSpec
 
 func (b *Backend) RemoveImage(ctx context.Context, imageSpec *runtimeapi.ImageSpec) error {
 	_, err := b.client.ImageRemove(ctx, imageSpec.GetImage(), image.RemoveOptions{Force: true, PruneChildren: true})
-	if err != nil && isNotFoundOrNotRunning(err) {
-		return nil
-	}
 	return err
 }
 

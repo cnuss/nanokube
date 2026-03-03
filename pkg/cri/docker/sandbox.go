@@ -59,9 +59,6 @@ func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error
 
 	timeout := 10
 	err = b.client.ContainerStop(ctx, podSandboxID, container.StopOptions{Timeout: &timeout})
-	if err != nil && isNotFoundOrNotRunning(err) {
-		return nil
-	}
 	return err
 }
 
