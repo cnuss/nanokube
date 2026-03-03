@@ -72,7 +72,6 @@ func (m *ContainerManager) Status() cm.Status {
 }
 
 func (m *ContainerManager) NewPodContainerManager() cm.PodContainerManager {
-	m.log.Warn().Msg("NewPodContainerManager not implemented")
 	return &podContainerManager{
 		log: component.NewLogger("pod-container-manager"),
 	}
@@ -145,7 +144,6 @@ func (m *ContainerManager) ShouldResetExtendedResourceCapacity() bool {
 }
 
 func (m *ContainerManager) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHandler {
-	m.log.Warn().Msg("GetAllocateResourcesPodAdmitHandler not implemented")
 	return &podAdmitHandler{
 		log: component.NewLogger("pod-admit-handler"),
 	}

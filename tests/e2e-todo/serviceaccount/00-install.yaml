@@ -1,0 +1,26 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sa-api-test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: $NAMESPACE
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sa-api-test
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: kubectl
+          image: bitnami/kubectl:latest
+          command: ["kubectl", "get", "namespace", "default"]
