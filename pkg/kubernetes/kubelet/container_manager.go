@@ -93,7 +93,7 @@ func (m *ContainerManager) streamContainerEvents(ctx context.Context) {
 			Str("pod", uid).
 			Str("container", ev.ContainerId[:min(12, len(ev.ContainerId))]).
 			Int32("event", int32(ev.ContainerEventType)).
-			Msg("container event")
+			Msg("container event -> update")
 
 		select {
 		case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
@@ -114,7 +114,6 @@ func (m *ContainerManager) GetNodeConfig() cm.NodeConfig {
 }
 
 func (m *ContainerManager) Status() cm.Status {
-	m.log.Warn().Msg("Status not implemented")
 	return cm.Status{}
 }
 
