@@ -6,7 +6,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume"
 )
 
-func NewVolumes(backend *BackendImpl) volume.VolumePlugin {
+func NewVolumePlugin(backend *BackendImpl) volume.VolumePlugin {
 	volumes := &VolumeImpl{backend: backend}
 	// TODO: start
 	return volumes

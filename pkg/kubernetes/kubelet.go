@@ -12,8 +12,6 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/cri"
-	deps "github.com/cnuss/nanokube/pkg/kubernetes/kubelet"
-	"go.opentelemetry.io/otel/trace/noop"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,10 +20,7 @@ import (
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
-	remote "k8s.io/cri-client/pkg"
-	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
-	legacyscheme "k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
@@ -64,7 +59,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	f := options.NewKubeletFlags()
 	f.RootDirectory = kubeletRoot
 	f.CertDirectory = filepath.Join(kubeletRoot, "pki")
-	f.HostnameOverride = k.config.CRI.Hostname()
+	f.HostnameOverride = k.config.CRID.DefaultBackend().Hostname()
 	f.MinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
 	f.MaxContainerCount = 100
 	f.MaxPerPodContainerCount = 2
@@ -104,47 +99,47 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	k.eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
 
 	// Connect to CRI socket via remote clients
-	endpoint := k.config.CRI.Endpoint()
-	logger := klog.Background()
-	tp := noop.NewTracerProvider()
-	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
-	if err != nil {
-		return nil, fmt.Errorf("kubelet runtime service: %w", err)
-	}
-	imageService, err := remote.NewRemoteImageService(endpoint, 30*time.Second, tp, &logger)
-	if err != nil {
-		return nil, fmt.Errorf("kubelet image service: %w", err)
-	}
+	// endpoint := k.config.CRI.Endpoint()
+	// logger := klog.Background()
+	// tp := noop.NewTracerProvider()
+	// runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("kubelet runtime service: %w", err)
+	// }
+	// imageService, err := remote.NewRemoteImageService(endpoint, 30*time.Second, tp, &logger)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("kubelet image service: %w", err)
+	// }
 
 	// Get the runtime backend from CRI for cadvisor + capacity
-	var backend cri.Backend
-	criImpl, _ := k.config.CRI.(*cri.CRI)
-	if criImpl != nil {
-		backend = criImpl.RuntimeBackend()
-	}
+	// var backend cri.Backend
+	// criImpl, _ := k.config.CRI.(*cri.CRI)
+	// if criImpl != nil {
+	// 	backend = criImpl.RuntimeBackend()
+	// }
 
 	// Create cadvisor + container manager
-	cadvisorInterface := cri.NewCadvisor(ctx, k.config.CRI.Hostname(), backend)
-	containerManager := deps.NewContainerManager(ctx, backend)
-	volumePlugin := cri.NewVolumePlugin(ctx, backend, k.config.DataDir)
+	// cadvisorInterface := cri.NewCadvisor(ctx, k.config.CRI.Hostname(), backend)
+	// containerManager := deps.NewContainerManager(ctx, backend)
+	// volumePlugin := cri.NewVolumePlugin(ctx, backend, k.config.DataDir)
 
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(
 		f, c,
 		client,
 		heartbeatClient,
-		cadvisorInterface,
-		imageService,
-		runtimeService,
-		containerManager,
+		k.config.CRID.DefaultBackend().Cadvisor(),
+		k.config.CRID.DefaultBackend().Images(),
+		k.config.CRID.DefaultBackend().Containers(),
+		k.config.CRID.DefaultBackend().ContainerManager(),
 	)
-	hk.KubeletDeps.OSInterface = deps.NewScopedOS(k.config.DataDir, k.config.CRI)
-	hk.KubeletDeps.VolumePlugins = append(hk.KubeletDeps.VolumePlugins, volumePlugin)
-	hk.KubeletDeps.Mounter = volumePlugin.Mounter
-	hk.KubeletDeps.Subpather = &deps.ScopedSubpath{DataDir: k.config.DataDir}
-	hk.KubeletDeps.HostUtil = &deps.ScopedHostUtil{DataDir: k.config.DataDir}
-	hk.KubeletDeps.Recorder = k.eventBroadcaster.NewRecorder(legacyscheme.Scheme, v1.EventSource{Component: "kubelet", Host: f.HostnameOverride})
-	hk.KubeletDeps.ProbeManager = deps.NewProbeManager(backend)
+	hk.KubeletDeps.OSInterface = k.config.CRID.DefaultBackend().OS()
+	hk.KubeletDeps.VolumePlugins = append(hk.KubeletDeps.VolumePlugins, k.config.CRID.DefaultBackend().VolumePlugin())
+	hk.KubeletDeps.Mounter = k.config.CRID.DefaultBackend().Mounter()
+	hk.KubeletDeps.Subpather = k.config.CRID.DefaultBackend().Subpath()
+	hk.KubeletDeps.HostUtil = k.config.CRID.DefaultBackend().HostUtils()
+	// hk.KubeletDeps.Recorder = k.eventBroadcaster.NewRecorder(legacyscheme.Scheme, v1.EventSource{Component: "kubelet", Host: f.HostnameOverride})
+	hk.KubeletDeps.ProbeManager = k.config.CRID.DefaultBackend().Prober()
 	hk.KubeletDeps.TLSOptions = &server.TLSOptions{
 		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
 		CertFile: c.TLSCertFile,
@@ -170,7 +165,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					kubeletLog.Info().Msg("kubelet is ready")
-					go runProvisioner(ctx, client, k.config.DataDir, backend, volumePlugin.GetPluginName())
+					// go runProvisioner(ctx, client, k.config.DataDir, backend, volumePlugin.GetPluginName())
 					return component.Ready(), nil
 				}
 			}

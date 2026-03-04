@@ -9,9 +9,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
-	"github.com/cnuss/nanokube/pkg/cri"
-	"github.com/cnuss/nanokube/pkg/etcd"
-	"github.com/cnuss/nanokube/pkg/kubernetes"
+	"github.com/cnuss/nanokube/pkg/crid"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -32,16 +30,16 @@ var rootCmd = &cobra.Command{
 		log.Debug().Msg("debug logging enabled")
 
 		cfg := config.NewConfig(options)
+		cfg.SetCRID(crid.NewCRID(sigCtx, cfg.DataDir))
 
-		cfg.SetCRI(cri.NewCRI(cfg.DataDir, cfg.Name, options.Clean))
-		cfg.Components = append(cfg.Components, cfg.CRI)
-		cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
+		cfg.Components = append(cfg.Components, cfg.CRID)
+		// cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
 
 		if options.Kubelet {
-			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
+			// cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
 		}
 
 		// Each component gets its own context so we can cancel them

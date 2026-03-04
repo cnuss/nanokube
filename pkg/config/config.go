@@ -6,10 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"time"
-
 	"github.com/cnuss/nanokube/pkg/component"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/cnuss/nanokube/pkg/crid"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -20,14 +18,6 @@ import (
 
 var logger = component.NewLogger("config")
 
-type CRIProvider interface {
-	component.Component
-	Hostname() string
-	Endpoint() string
-	Domain() string
-	Nameservers() []string
-}
-
 type Config struct {
 	Name         string
 	DataDir      string
@@ -35,7 +25,7 @@ type Config struct {
 	Certs        *certs
 	FeatureGates map[string]bool
 	Components   []component.Component
-	CRI          CRIProvider
+	CRID         *crid.CRID
 }
 
 func NewConfig(options *Options) *Config {
@@ -54,87 +44,87 @@ func NewConfig(options *Options) *Config {
 	}
 }
 
-func (c *Config) SetCRI(cri CRIProvider) {
-	c.CRI = cri
-	c.Certs.Hostname = cri.Hostname()
+func (c *Config) SetCRID(crid *crid.CRID) {
+	c.CRID = crid
+	c.Certs.Hostname = crid.DefaultBackend().Hostname()
 }
 
 func (c *Config) KubeletConfig() *kubeletconfig.KubeletConfiguration {
 	return &kubeletconfig.KubeletConfiguration{
-		ContainerRuntimeEndpoint: c.CRI.Endpoint(),
-		StaticPodPath:            filepath.Join(c.DataDir, "manifests"),
-		PodLogsDir:               filepath.Join(c.DataDir, "logs"),
-		ClusterDomain:            c.CRI.Domain(),
-		ClusterDNS:               c.CRI.Nameservers(),
-		Authentication: kubeletconfig.KubeletAuthentication{
-			Anonymous: kubeletconfig.KubeletAnonymousAuthentication{
-				Enabled: true,
-			},
-			Webhook: kubeletconfig.KubeletWebhookAuthentication{
-				Enabled: false,
-			},
-		},
-		Authorization: kubeletconfig.KubeletAuthorization{
-			Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
-		},
-		CgroupsPerQOS:                 false,
-		CgroupDriver:                  "cgroupfs",
-		EnforceNodeAllocatable:        []string{},
-		EvictionHard:                  map[string]string{},
-		ImageGCHighThresholdPercent:   100,
-		FailSwapOn:                    false,
-		LocalStorageCapacityIsolation: false,
-		RotateCertificates:            false,
-		ServerTLSBootstrap:            false,
-		RegisterNode:                  true,
-		CPUCFSQuota:                   false,
-		CPUCFSQuotaPeriod:             metav1.Duration{Duration: 100 * time.Millisecond},
-		ContainerLogMaxFiles:          5,
-		ContainerLogMaxWorkers:        1,
-		ContainerLogMonitorInterval:   metav1.Duration{Duration: 10 * time.Second},
-		ProtectKernelDefaults:         false,
+		// ContainerRuntimeEndpoint: c.CRI.Endpoint(),
+		// StaticPodPath:            filepath.Join(c.DataDir, "manifests"),
+		// PodLogsDir:               filepath.Join(c.DataDir, "logs"),
+		// ClusterDomain:            c.CRI.Domain(),
+		// ClusterDNS:               c.CRI.Nameservers(),
+		// Authentication: kubeletconfig.KubeletAuthentication{
+		// 	Anonymous: kubeletconfig.KubeletAnonymousAuthentication{
+		// 		Enabled: true,
+		// 	},
+		// 	Webhook: kubeletconfig.KubeletWebhookAuthentication{
+		// 		Enabled: false,
+		// 	},
+		// },
+		// Authorization: kubeletconfig.KubeletAuthorization{
+		// 	Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
+		// },
+		// CgroupsPerQOS:                 false,
+		// CgroupDriver:                  "cgroupfs",
+		// EnforceNodeAllocatable:        []string{},
+		// EvictionHard:                  map[string]string{},
+		// ImageGCHighThresholdPercent:   100,
+		// FailSwapOn:                    false,
+		// LocalStorageCapacityIsolation: false,
+		// RotateCertificates:            false,
+		// ServerTLSBootstrap:            false,
+		// RegisterNode:                  true,
+		// CPUCFSQuota:                   false,
+		// CPUCFSQuotaPeriod:             metav1.Duration{Duration: 100 * time.Millisecond},
+		// ContainerLogMaxFiles:          5,
+		// ContainerLogMaxWorkers:        1,
+		// ContainerLogMonitorInterval:   metav1.Duration{Duration: 10 * time.Second},
+		// ProtectKernelDefaults:         false,
 	}
 }
 
 // ApplyKubeletConfig applies nanokube-specific overrides to an already-defaulted
 // KubeletConfiguration (as returned by options.NewKubeletConfiguration).
 func (c *Config) ApplyKubeletConfig(cfg *kubeletconfig.KubeletConfiguration) {
-	cfg.ContainerRuntimeEndpoint = c.CRI.Endpoint()
-	cfg.StaticPodPath = filepath.Join(c.DataDir, "manifests")
-	cfg.PodLogsDir = filepath.Join(c.DataDir, "logs")
-	cfg.ClusterDomain = c.CRI.Domain()
-	cfg.ClusterDNS = c.CRI.Nameservers()
-	cfg.Authentication = kubeletconfig.KubeletAuthentication{
-		Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
-		Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
-	}
-	cfg.Authorization = kubeletconfig.KubeletAuthorization{
-		Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
-	}
-	cfg.TLSCertFile = c.Certs.CertPath()
-	cfg.TLSPrivateKeyFile = c.Certs.KeyPath()
-	cfg.EnableServer = true
-	cfg.Port = 10250
-	cfg.ReadOnlyPort = 0
-	cfg.EnableControllerAttachDetach = false
-	cfg.HairpinMode = kubeletconfig.HairpinVeth
-	cfg.CgroupsPerQOS = false
-	cfg.CgroupDriver = "cgroupfs"
-	cfg.EnforceNodeAllocatable = []string{}
-	cfg.EvictionHard = map[string]string{}
-	cfg.ImageGCHighThresholdPercent = 100
-	cfg.FailSwapOn = false
-	cfg.LocalStorageCapacityIsolation = false
-	cfg.RotateCertificates = false
-	cfg.ServerTLSBootstrap = false
-	cfg.RegisterNode = true
-	cfg.CPUCFSQuota = false
-	cfg.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
-	cfg.ContainerLogMaxFiles = 5
-	cfg.ContainerLogMaxWorkers = 1
-	cfg.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
-	cfg.ProtectKernelDefaults = false
-	cfg.FeatureGates = c.FeatureGates
+	// cfg.ContainerRuntimeEndpoint = c.CRI.Endpoint()
+	// cfg.StaticPodPath = filepath.Join(c.DataDir, "manifests")
+	// cfg.PodLogsDir = filepath.Join(c.DataDir, "logs")
+	// cfg.ClusterDomain = c.CRI.Domain()
+	// cfg.ClusterDNS = c.CRI.Nameservers()
+	// cfg.Authentication = kubeletconfig.KubeletAuthentication{
+	// 	Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
+	// 	Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
+	// }
+	// cfg.Authorization = kubeletconfig.KubeletAuthorization{
+	// 	Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
+	// }
+	// cfg.TLSCertFile = c.Certs.CertPath()
+	// cfg.TLSPrivateKeyFile = c.Certs.KeyPath()
+	// cfg.EnableServer = true
+	// cfg.Port = 10250
+	// cfg.ReadOnlyPort = 0
+	// cfg.EnableControllerAttachDetach = false
+	// cfg.HairpinMode = kubeletconfig.HairpinVeth
+	// cfg.CgroupsPerQOS = false
+	// cfg.CgroupDriver = "cgroupfs"
+	// cfg.EnforceNodeAllocatable = []string{}
+	// cfg.EvictionHard = map[string]string{}
+	// cfg.ImageGCHighThresholdPercent = 100
+	// cfg.FailSwapOn = false
+	// cfg.LocalStorageCapacityIsolation = false
+	// cfg.RotateCertificates = false
+	// cfg.ServerTLSBootstrap = false
+	// cfg.RegisterNode = true
+	// cfg.CPUCFSQuota = false
+	// cfg.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
+	// cfg.ContainerLogMaxFiles = 5
+	// cfg.ContainerLogMaxWorkers = 1
+	// cfg.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
+	// cfg.ProtectKernelDefaults = false
+	// cfg.FeatureGates = c.FeatureGates
 }
 
 func (c *Config) KubeletConfigPath() string {

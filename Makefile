@@ -59,7 +59,7 @@ WHAT ?=
 define run-nanokube
 	@D=$$(mktemp -d); \
 	trap 'kill $$! 2>/dev/null; wait 2>/dev/null; rm -rf "$$D"' EXIT; \
-	./nanokube $(1) --data "$$D" >/dev/null 2>&1 & \
+	./nanokube $(1) --data "$$D" & \
 	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
 	$(3)
 endef
@@ -69,7 +69,8 @@ e2e: build
 		kubectl get nodes >/dev/null 2>&1,\
 		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
 
+# TODO unhardcode docker
 critest: build
 	$(call run-nanokube,--kubelet=false,\
-		[ -S "$$D/cri.sock" ],\
-		critest --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$$D/cri.sock" --image-endpoint "unix://$$D/cri.sock")
+		[ -S "$$D/docker/cri.sock" ],\
+		critest --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$$D/docker/cri.sock" --image-endpoint "unix://$$D/docker/cri.sock")

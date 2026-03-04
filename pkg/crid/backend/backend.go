@@ -26,6 +26,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
+	"k8s.io/mount-utils"
 )
 
 type Runtime string
@@ -58,7 +59,8 @@ type Backend interface {
 	Images() internalapi.ImageManagerService
 	Containers() internalapi.RuntimeService
 	ContainerManager() cm.ContainerManager
-	Volumes() volume.VolumePlugin
+	VolumePlugin() volume.VolumePlugin
+	Mounter() mount.Interface
 	Cadvisor() cadvisor.Interface
 	OS() container.OSInterface
 	Subpath() subpath.Interface
@@ -68,6 +70,8 @@ type Backend interface {
 
 	RunProbe(cmd []string) (string, error)
 	RunHostProbe(cmd []string) (string, error)
+
+	Hostname() string
 }
 
 var _ Backend = &BackendImpl{}
@@ -86,7 +90,8 @@ type BackendImpl struct {
 	images        internalapi.ImageManagerService
 	containers    internalapi.RuntimeService
 	cm            cm.ContainerManager
-	volumes       volume.VolumePlugin
+	volumePlugin  volume.VolumePlugin
+	mounter       mount.Interface
 	cadvisor      cadvisor.Interface
 	os            container.OSInterface
 	subpath       subpath.Interface
@@ -230,13 +235,22 @@ func (b *BackendImpl) ContainerManager() cm.ContainerManager {
 	return b.cm
 }
 
-func (b *BackendImpl) Volumes() volume.VolumePlugin {
+func (b *BackendImpl) VolumePlugin() volume.VolumePlugin {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.volumes == nil {
-		b.volumes = NewVolumes(b)
+	if b.volumePlugin == nil {
+		b.volumePlugin = NewVolumePlugin(b)
 	}
-	return b.volumes
+	return b.volumePlugin
+}
+
+func (b *BackendImpl) Mounter() mount.Interface {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.mounter == nil {
+
+	}
+	return b.mounter
 }
 
 func (b *BackendImpl) Cadvisor() cadvisor.Interface {
@@ -299,6 +313,15 @@ func (b *BackendImpl) RunProbe(cmd []string) (string, error) {
 
 func (b *BackendImpl) RunHostProbe(cmd []string) (string, error) {
 	return "", fmt.Errorf("host probe not implemented for backend %s", b.Name())
+}
+
+func (b *BackendImpl) Hostname() string {
+	hostname, err := b.RunHostProbe([]string{"hostname"})
+	if err != nil {
+		b.log.Warn().Err(err).Msg("failed to get hostname from backend, using fallback")
+		return "localhost"
+	}
+	return hostname
 }
 
 func (b *BackendImpl) socket() string {

@@ -73,6 +73,26 @@ func (c *CRID) Stop() component.Stopped {
 	})
 }
 
+func (c *CRID) Backends() map[backend.Runtime]backend.Backend {
+	return c.backends
+}
+
+func (c *CRID) Backend(runtime backend.Runtime) backend.Backend {
+	if b, ok := c.backends[runtime]; ok {
+		return b
+	}
+	c.log.Warn().Str("runtime", string(runtime)).Msg("requested backend not found, using noop")
+	return &backend.NoopBackend{}
+}
+
+func (c *CRID) DefaultBackend() backend.Backend {
+	for _, b := range c.backends {
+		return b
+	}
+	c.log.Warn().Msg("no backends found, using noop")
+	return &backend.NoopBackend{}
+}
+
 func detectBackends(ctx context.Context, dataDir string) map[backend.Runtime]backend.Backend {
 	backends := make(map[backend.Runtime]backend.Backend)
 
