@@ -159,6 +159,17 @@ func Closed(network, address string, shutdown func()) Stopped {
 	return done
 }
 
+func NotReady(shutdown func()) Stopped {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if shutdown != nil {
+			shutdown()
+		}
+	}()
+	return done
+}
+
 // teeFile creates a pipe that copies writes to both orig and logFile.
 func teeFile(orig *os.File, logFile *os.File) *os.File {
 	r, w, err := os.Pipe()
