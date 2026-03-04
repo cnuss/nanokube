@@ -147,6 +147,38 @@ func (b *BackendImpl) Start(ctx context.Context) error {
 func (b *BackendImpl) Stop(ctx context.Context) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("stopping")
 
+	// Clean up pod sandboxes before tearing down gRPC
+	if rt := b.Containers(); rt != nil {
+		sandboxes, err := rt.ListPodSandbox(ctx, nil)
+		if err != nil {
+			b.log.Error().Err(err).Msg("failed to list pod sandboxes")
+		}
+		for _, sb := range sandboxes {
+			b.log.Info().Str("id", sb.Id).Str("name", sb.Metadata.Name).Msg("cleaning up pod sandbox")
+
+			containers, err := rt.ListContainers(ctx, &runtimeapi.ContainerFilter{PodSandboxId: sb.Id})
+			if err != nil {
+				b.log.Error().Err(err).Str("sandbox", sb.Id).Msg("failed to list containers")
+			}
+			for _, c := range containers {
+				b.log.Info().Str("id", c.Id).Str("sandbox", sb.Id).Msg("removing container")
+				if err := rt.StopContainer(ctx, c.Id, 0); err != nil {
+					b.log.Error().Err(err).Str("id", c.Id).Msg("failed to stop container")
+				}
+				if err := rt.RemoveContainer(ctx, c.Id); err != nil {
+					b.log.Error().Err(err).Str("id", c.Id).Msg("failed to remove container")
+				}
+			}
+
+			if err := rt.StopPodSandbox(ctx, sb.Id); err != nil {
+				b.log.Error().Err(err).Str("id", sb.Id).Msg("failed to stop pod sandbox")
+			}
+			if err := rt.RemovePodSandbox(ctx, sb.Id); err != nil {
+				b.log.Error().Err(err).Str("id", sb.Id).Msg("failed to remove pod sandbox")
+			}
+		}
+	}
+
 	if b.grpc != nil {
 		done := make(chan struct{})
 		go func() { b.grpc.GracefulStop(); close(done) }()
