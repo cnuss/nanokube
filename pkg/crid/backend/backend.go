@@ -155,21 +155,6 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 		}
 		for _, sb := range sandboxes {
 			b.log.Info().Str("id", sb.Id).Str("name", sb.Metadata.Name).Msg("cleaning up pod sandbox")
-
-			containers, err := rt.ListContainers(ctx, &runtimeapi.ContainerFilter{PodSandboxId: sb.Id})
-			if err != nil {
-				b.log.Error().Err(err).Str("sandbox", sb.Id).Msg("failed to list containers")
-			}
-			for _, c := range containers {
-				b.log.Info().Str("id", c.Id).Str("sandbox", sb.Id).Msg("removing container")
-				if err := rt.StopContainer(ctx, c.Id, 0); err != nil {
-					b.log.Error().Err(err).Str("id", c.Id).Msg("failed to stop container")
-				}
-				if err := rt.RemoveContainer(ctx, c.Id); err != nil {
-					b.log.Error().Err(err).Str("id", c.Id).Msg("failed to remove container")
-				}
-			}
-
 			if err := rt.StopPodSandbox(ctx, sb.Id); err != nil {
 				b.log.Error().Err(err).Str("id", sb.Id).Msg("failed to stop pod sandbox")
 			}
