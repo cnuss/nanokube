@@ -35,14 +35,21 @@ type Backend struct {
 
 	logMu      sync.Mutex
 	logWriters map[string]context.CancelFunc // containerID -> cancel
+
+	// sandboxContainers tracks container→sandbox membership in memory.
+	// Docker Desktop can race on container list after stop, so
+	// RemovePodSandbox uses this to find containers by ID directly.
+	scMu              sync.Mutex
+	sandboxContainers map[string][]string // sandboxID -> []containerID
 }
 
 // New creates a Docker backend that connects to the given Docker socket.
 func New(dockerSocket, name string) *Backend {
 	return &Backend{
-		dockerSocket: dockerSocket,
-		name:         name,
-		logWriters:   make(map[string]context.CancelFunc),
+		dockerSocket:      dockerSocket,
+		name:              name,
+		logWriters:        make(map[string]context.CancelFunc),
+		sandboxContainers: make(map[string][]string),
 	}
 }
 
@@ -116,6 +123,30 @@ func (b *Backend) Start(ctx context.Context) (component.Started, error) {
 	}
 	logger.Info().Str("api", ping.APIVersion).Msg("docker backend connected")
 	return component.Ready(), nil
+}
+
+// untrackContainer removes a container from the sandbox→container map.
+func (b *Backend) untrackContainer(containerID string) {
+	b.scMu.Lock()
+	defer b.scMu.Unlock()
+	for sid, ids := range b.sandboxContainers {
+		for i, id := range ids {
+			if id == containerID {
+				b.sandboxContainers[sid] = append(ids[:i], ids[i+1:]...)
+				if len(b.sandboxContainers[sid]) == 0 {
+					delete(b.sandboxContainers, sid)
+				}
+				return
+			}
+		}
+	}
+}
+
+// sandboxContainerIDs returns the tracked container IDs for a sandbox.
+func (b *Backend) sandboxContainerIDs(sandboxID string) []string {
+	b.scMu.Lock()
+	defer b.scMu.Unlock()
+	return append([]string(nil), b.sandboxContainers[sandboxID]...)
 }
 
 func (b *Backend) Stop() component.Stopped {

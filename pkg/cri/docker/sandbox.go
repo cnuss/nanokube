@@ -47,19 +47,15 @@ func (b *Backend) RunPodSandbox(ctx context.Context, config *runtimeapi.PodSandb
 
 func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error {
 	logger.Debug().Str("id", podSandboxID[:12]).Msg("CRI StopPodSandbox")
-	// Stop all containers in this sandbox first
-	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
-		PodSandboxId: podSandboxID,
-	})
-	if err != nil {
-		return err
-	}
-	for _, c := range containers {
-		b.StopContainer(ctx, c.Id, 0)
+	// Stop all containers in this sandbox using the in-memory tracker.
+	// Docker Desktop can race on container list after stop, so we
+	// avoid relying on ListContainers here.
+	for _, cid := range b.sandboxContainerIDs(podSandboxID) {
+		b.StopContainer(ctx, cid, 0)
 	}
 
 	timeout := 10
-	if err = b.client.ContainerStop(ctx, podSandboxID, container.StopOptions{Timeout: &timeout}); err != nil {
+	if err := b.client.ContainerStop(ctx, podSandboxID, container.StopOptions{Timeout: &timeout}); err != nil {
 		if errdefs.IsNotFound(err) || errdefs.IsNotModified(err) {
 			return nil
 		}
@@ -77,18 +73,12 @@ func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) err
 		podUID = inspect.Config.Labels[labelSandboxUID]
 	}
 
-	// Remove all containers in this sandbox first
-	containers, err := b.ListContainers(ctx, &runtimeapi.ContainerFilter{
-		PodSandboxId: podSandboxID,
-	})
-	if err != nil {
-		return err
-	}
-	for _, c := range containers {
-		b.RemoveContainer(ctx, c.Id)
+	// Remove all containers in this sandbox using the in-memory tracker.
+	for _, cid := range b.sandboxContainerIDs(podSandboxID) {
+		b.RemoveContainer(ctx, cid)
 	}
 
-	if err = b.RemoveContainer(ctx, podSandboxID); err != nil {
+	if err := b.RemoveContainer(ctx, podSandboxID); err != nil {
 		return err
 	}
 

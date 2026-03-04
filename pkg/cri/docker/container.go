@@ -42,6 +42,11 @@ func (b *Backend) CreateContainer(ctx context.Context, podSandboxID string, conf
 	if err != nil {
 		return "", fmt.Errorf("create container: %w", err)
 	}
+
+	b.scMu.Lock()
+	b.sandboxContainers[podSandboxID] = append(b.sandboxContainers[podSandboxID], resp.ID)
+	b.scMu.Unlock()
+
 	logger.Debug().Str("id", resp.ID[:12]).Str("name", name).Msg("CRI container created")
 	return resp.ID, nil
 }
@@ -164,6 +169,7 @@ func (b *Backend) StopContainer(ctx context.Context, containerID string, timeout
 func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error {
 	logger.Debug().Str("id", containerID[:12]).Msg("CRI RemoveContainer")
 	b.stopLogWriter(containerID)
+	b.untrackContainer(containerID)
 	t := 0
 	if err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t}); err != nil {
 		if !errdefs.IsNotFound(err) && !errdefs.IsNotModified(err) {
