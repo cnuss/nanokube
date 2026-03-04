@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/containerd/errdefs"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -58,8 +59,13 @@ func (b *Backend) StopPodSandbox(ctx context.Context, podSandboxID string) error
 	}
 
 	timeout := 10
-	err = b.client.ContainerStop(ctx, podSandboxID, container.StopOptions{Timeout: &timeout})
-	return err
+	if err = b.client.ContainerStop(ctx, podSandboxID, container.StopOptions{Timeout: &timeout}); err != nil {
+		if errdefs.IsNotFound(err) || errdefs.IsNotModified(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (b *Backend) RemovePodSandbox(ctx context.Context, podSandboxID string) error {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
@@ -151,8 +152,13 @@ func (b *Backend) writeCRILog(ctx context.Context, containerID, logPath string) 
 func (b *Backend) StopContainer(ctx context.Context, containerID string, timeout int64) error {
 	logger.Debug().Str("id", containerID[:12]).Int64("timeout", timeout).Msg("CRI StopContainer")
 	t := int(timeout)
-	err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t})
-	return err
+	if err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t}); err != nil {
+		if errdefs.IsNotFound(err) || errdefs.IsNotModified(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error {
@@ -160,13 +166,18 @@ func (b *Backend) RemoveContainer(ctx context.Context, containerID string) error
 	b.stopLogWriter(containerID)
 	t := 0
 	if err := b.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t}); err != nil {
-		logger.Warn().Str("id", containerID[:12]).Err(err).Msg("failed to stop container before removal")
+		if !errdefs.IsNotFound(err) && !errdefs.IsNotModified(err) {
+			logger.Warn().Str("id", containerID[:12]).Err(err).Msg("failed to stop container before removal")
+		}
 	}
-	err := b.client.ContainerRemove(ctx, containerID, container.RemoveOptions{})
-	if err != nil {
+	if err := b.client.ContainerRemove(ctx, containerID, container.RemoveOptions{}); err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
 		logger.Error().Str("id", containerID[:12]).Err(err).Msg("failed to remove container")
+		return err
 	}
-	return err
+	return nil
 }
 
 // RemoveContainers removes all containers managed by this backend.

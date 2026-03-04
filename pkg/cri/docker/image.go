@@ -9,6 +9,7 @@ import (
 
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/image"
+	"github.com/containerd/errdefs"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -109,6 +110,9 @@ func (b *Backend) PullImage(ctx context.Context, imageSpec *runtimeapi.ImageSpec
 
 func (b *Backend) RemoveImage(ctx context.Context, imageSpec *runtimeapi.ImageSpec) error {
 	_, err := b.client.ImageRemove(ctx, imageSpec.GetImage(), image.RemoveOptions{Force: true, PruneChildren: true})
+	if err != nil && errdefs.IsNotFound(err) {
+		return nil
+	}
 	return err
 }
 
