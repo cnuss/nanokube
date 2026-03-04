@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
@@ -18,8 +19,8 @@ import (
 type DockerBackend struct {
 	dataDir    string
 	client     *dockerclient.Client
-	images     runtimeapi.ImageServiceServer
-	containers runtimeapi.RuntimeServiceServer
+	server     *Server
+	serverOnce sync.Once
 }
 
 var _ backend.Driver = &DockerBackend{}
@@ -83,18 +84,18 @@ func (b *DockerBackend) Name() backend.Runtime {
 	return backend.Docker
 }
 
+func (b *DockerBackend) init() {
+	b.serverOnce.Do(func() { b.server = NewServer(b) })
+}
+
 func (b *DockerBackend) ImageServer() runtimeapi.ImageServiceServer {
-	if b.images == nil {
-		b.images = &runtimeapi.UnimplementedImageServiceServer{}
-	}
-	return b.images
+	b.init()
+	return b.server
 }
 
 func (b *DockerBackend) ContainerServer() runtimeapi.RuntimeServiceServer {
-	if b.containers == nil {
-		b.containers = &runtimeapi.UnimplementedRuntimeServiceServer{}
-	}
-	return b.containers
+	b.init()
+	return b.server
 }
 
 // Attach implements [backend.Driver].
