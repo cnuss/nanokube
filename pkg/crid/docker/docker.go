@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
+	"github.com/cnuss/nanokube/pkg/crid/labels"
 	dockerclient "github.com/docker/docker/client"
 	"k8s.io/client-go/tools/remotecommand"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -20,6 +21,7 @@ type DockerBackend struct {
 	dataDir    string
 	client     *dockerclient.Client
 	server     *Server
+	labels     labels.LabelProvider
 	serverOnce sync.Once
 }
 
@@ -77,7 +79,8 @@ func Detect(ctx context.Context, dataDir string) backend.Backend {
 		client.Close()
 		return nil
 	}
-	return backend.NewBackend(&DockerBackend{client: client, dataDir: dataDir})
+	b := backend.NewBackend(&DockerBackend{client: client, dataDir: dataDir, labels: labels.NewLabels(string(backend.Docker))})
+	return b
 }
 
 func (b *DockerBackend) Name() backend.Runtime {
@@ -86,6 +89,10 @@ func (b *DockerBackend) Name() backend.Runtime {
 
 func (b *DockerBackend) init() {
 	b.serverOnce.Do(func() { b.server = NewServer(b) })
+}
+
+func (b *DockerBackend) Labels() labels.LabelProvider {
+	return b.labels
 }
 
 func (b *DockerBackend) ImageServer() runtimeapi.ImageServiceServer {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/pkg/crid/labels"
 	tp "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 	"k8s.io/client-go/tools/record"
@@ -40,6 +41,7 @@ type Driver interface {
 
 	Name() Runtime
 	DataDir() string
+	Labels() labels.LabelProvider
 
 	ImageServer() runtimeapi.ImageServiceServer
 	ContainerServer() runtimeapi.RuntimeServiceServer
@@ -52,6 +54,7 @@ type Backend interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 
+	Labels() labels.LabelProvider
 	Images() internalapi.ImageManagerService
 	Containers() internalapi.RuntimeService
 	ContainerManager() cm.ContainerManager
@@ -184,6 +187,10 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 
 	b.log.Info().Str("backend", string(b.Name())).Msg("backend stopped")
 	return nil
+}
+
+func (b *BackendImpl) Labels() labels.LabelProvider {
+	return b.Driver.Labels()
 }
 
 func (b *BackendImpl) Images() internalapi.ImageManagerService {
