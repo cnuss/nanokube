@@ -665,6 +665,9 @@ func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSand
 		s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: c.Id, Timeout: 0})
 	}
 
+	// Stop the sandbox container itself
+	s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: id, Timeout: 0})
+
 	return &runtimeapi.StopPodSandboxResponse{}, nil
 }
 
