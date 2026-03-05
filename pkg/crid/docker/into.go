@@ -37,12 +37,10 @@ func (i *DockerInto) ContainerState(state string) runtimeapi.ContainerState {
 }
 
 func (i *DockerInto) PodState(state string) runtimeapi.PodSandboxState {
-	switch state {
-	case "created", "running":
+	if state == "running" {
 		return runtimeapi.PodSandboxState_SANDBOX_READY
-	default:
-		return runtimeapi.PodSandboxState_SANDBOX_NOTREADY
 	}
+	return runtimeapi.PodSandboxState_SANDBOX_NOTREADY
 }
 
 func (i *DockerInto) CreatedAt(ts string) int64 {
@@ -50,23 +48,6 @@ func (i *DockerInto) CreatedAt(ts string) int64 {
 	return t.UnixNano()
 }
 
-func (i *DockerInto) ContainerStatus(state runtimeapi.ContainerState) string {
-	switch state {
-	case runtimeapi.ContainerState_CONTAINER_CREATED:
-		return "created"
-	case runtimeapi.ContainerState_CONTAINER_RUNNING:
-		return "running"
-	default:
-		return "exited"
-	}
-}
-
-func (i *DockerInto) PodStatuses(state runtimeapi.PodSandboxState) []string {
-	if state == runtimeapi.PodSandboxState_SANDBOX_READY {
-		return []string{"created", "running"}
-	}
-	return []string{"exited"}
-}
 
 func (i *DockerInto) Container(c container.Summary) *runtimeapi.Container {
 	return &runtimeapi.Container{

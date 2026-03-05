@@ -248,7 +248,18 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 			f.Add("label", s.backend.labels.SandboxIDFilter(filter.PodSandboxId))
 		}
 		if filter.State != nil {
-			f.Add("status", s.backend.Into.ContainerStatus(filter.State.State))
+			switch filter.State.State {
+			case runtimeapi.ContainerState_CONTAINER_CREATED:
+				f.Add("status", container.StateCreated)
+			case runtimeapi.ContainerState_CONTAINER_RUNNING:
+				f.Add("status", container.StateRunning)
+			case runtimeapi.ContainerState_CONTAINER_EXITED:
+				f.Add("status", container.StateRestarting)
+				f.Add("status", container.StatePaused)
+				f.Add("status", container.StateRemoving)
+				f.Add("status", container.StateExited)
+				f.Add("status", container.StateDead)
+			}
 		}
 		for k, v := range filter.GetLabelSelector() {
 			f.Add("label", k+"="+v)
@@ -283,8 +294,15 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 			f.Add("id", filter.Id)
 		}
 		if filter.State != nil {
-			for _, s := range s.backend.Into.PodStatuses(filter.State.State) {
-				f.Add("status", s)
+			if filter.State.State == runtimeapi.PodSandboxState_SANDBOX_READY {
+				f.Add("status", container.StateRunning)
+			} else {
+				f.Add("status", container.StateCreated)
+				f.Add("status", container.StateRestarting)
+				f.Add("status", container.StatePaused)
+				f.Add("status", container.StateRemoving)
+				f.Add("status", container.StateExited)
+				f.Add("status", container.StateDead)
 			}
 		}
 		for k, v := range filter.GetLabelSelector() {
@@ -496,13 +514,19 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		return nil, wrapErr(err)
 	}
 
-	logger.Debug().Str("id", resp.ID).Msg("sandbox created")
+	if err := s.backend.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		s.backend.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{})
+		return nil, wrapErr(err)
+	}
+
+	logger.Debug().Str("id", resp.ID).Msg("sandbox started")
 	return &runtimeapi.RunPodSandboxResponse{PodSandboxId: resp.ID}, nil
 }
 
 // RuntimeConfig implements [v1.RuntimeServiceServer].
-func (s *Server) RuntimeConfig(context.Context, *runtimeapi.RuntimeConfigRequest) (*runtimeapi.RuntimeConfigResponse, error) {
-	panic("RuntimeConfig: unimplemented")
+func (s *Server) RuntimeConfig(ctx context.Context, req *runtimeapi.RuntimeConfigRequest) (*runtimeapi.RuntimeConfigResponse, error) {
+	logger.Trace().Msg("RuntimeConfig")
+	return &runtimeapi.RuntimeConfigResponse{}, nil
 }
 
 // StartContainer implements [v1.RuntimeServiceServer].
@@ -588,8 +612,9 @@ func (s *Server) UpdatePodSandboxResources(context.Context, *runtimeapi.UpdatePo
 }
 
 // UpdateRuntimeConfig implements [v1.RuntimeServiceServer].
-func (s *Server) UpdateRuntimeConfig(context.Context, *runtimeapi.UpdateRuntimeConfigRequest) (*runtimeapi.UpdateRuntimeConfigResponse, error) {
-	panic("UpdateRuntimeConfig: unimplemented")
+func (s *Server) UpdateRuntimeConfig(ctx context.Context, req *runtimeapi.UpdateRuntimeConfigRequest) (*runtimeapi.UpdateRuntimeConfigResponse, error) {
+	logger.Trace().Msg("UpdateRuntimeConfig")
+	return &runtimeapi.UpdateRuntimeConfigResponse{}, nil
 }
 
 // Version implements [v1.RuntimeServiceServer].
