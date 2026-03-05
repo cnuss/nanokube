@@ -83,6 +83,12 @@ func (b *LabelBuilder) BuildName() string {
 	)
 }
 
+// WithLabels merges additional labels into the builder.
+func (b *LabelBuilder) WithLabels(labels map[string]string) *LabelBuilder {
+	maps.Copy(b.labels, labels)
+	return b
+}
+
 // WithAnnotations stores CRI annotations as prefixed labels.
 func (b *LabelBuilder) WithAnnotations(annotations map[string]string) *LabelBuilder {
 	for k, v := range annotations {

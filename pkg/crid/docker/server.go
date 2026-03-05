@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
 	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -56,8 +58,103 @@ func (s *Server) ContainerStatus(context.Context, *runtimeapi.ContainerStatusReq
 }
 
 // CreateContainer implements [v1.RuntimeServiceServer].
-func (s *Server) CreateContainer(context.Context, *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
-	panic("unimplemented")
+func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
+	logger.Trace().Str("name", req.Config.Metadata.Name).Str("sandbox", req.PodSandboxId).Str("image", req.Config.Image.Image).Msg("CreateContainer")
+
+	config := req.GetConfig()
+	sandboxID := req.GetPodSandboxId()
+	meta := config.GetMetadata()
+
+	// TODO: reconcile req.GetSandboxConfig() with actual sandbox state
+
+	// Get the sandbox's actual Docker config as our base
+	inspect, err := s.backend.client.ContainerInspect(ctx, sandboxID)
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	// Labels: start from sandbox, layer container labels on top
+	b := s.backend.labels.NewBuilder(inspect.Config.Labels).
+		WithLabels(config.GetLabels()).
+		WithContainer(sandboxID, meta.GetName()).
+		WithAnnotations(config.GetAnnotations())
+
+	// Override image, command, env from container config
+	envs := make([]string, 0, len(config.GetEnvs()))
+	for _, kv := range config.GetEnvs() {
+		envs = append(envs, kv.GetKey()+"="+kv.GetValue())
+	}
+
+	dockerConfig := inspect.Config
+	dockerConfig.Image = config.GetImage().GetImage()
+	dockerConfig.Entrypoint = config.GetCommand()
+	dockerConfig.Cmd = config.GetArgs()
+	dockerConfig.Env = envs
+	dockerConfig.WorkingDir = config.GetWorkingDir()
+	dockerConfig.Labels = b.BuildLabels()
+	dockerConfig.StdinOnce = config.GetStdinOnce()
+	dockerConfig.OpenStdin = config.GetStdin()
+	dockerConfig.Tty = config.GetTty()
+
+	// Host config: inherit sandbox, share namespaces
+	hostConfig := inspect.HostConfig
+	hostConfig.NetworkMode = container.NetworkMode("container:" + sandboxID)
+	hostConfig.IpcMode = container.IpcMode("container:" + sandboxID)
+	hostConfig.PidMode = container.PidMode("container:" + sandboxID)
+
+	// Mounts: override with container-specific mounts
+	hostConfig.Binds = nil
+	for _, m := range config.GetMounts() {
+		bind := m.GetHostPath() + ":" + m.GetContainerPath()
+		if m.GetReadonly() {
+			bind += ":ro"
+		}
+		hostConfig.Binds = append(hostConfig.Binds, bind)
+	}
+
+	// Linux resource overrides
+	if linux := config.GetLinux(); linux != nil {
+		if res := linux.GetResources(); res != nil {
+			hostConfig.Resources.CPUShares = res.GetCpuShares()
+			hostConfig.Resources.Memory = res.GetMemoryLimitInBytes()
+			hostConfig.Resources.CPUQuota = res.GetCpuQuota()
+			hostConfig.Resources.CPUPeriod = res.GetCpuPeriod()
+		}
+		if sc := linux.GetSecurityContext(); sc != nil {
+			if sc.GetPrivileged() {
+				hostConfig.Privileged = true
+			}
+			if sc.GetReadonlyRootfs() {
+				hostConfig.ReadonlyRootfs = true
+			}
+		}
+	}
+
+	// Log config
+	if config.GetLogPath() != "" {
+		hostConfig.LogConfig = container.LogConfig{
+			Type:   "json-file",
+			Config: map[string]string{"max-size": "10m", "max-file": "3"},
+		}
+	}
+
+	netConfig := &network.NetworkingConfig{}
+	if inspect.NetworkSettings != nil {
+		netConfig.EndpointsConfig = inspect.NetworkSettings.Networks
+	}
+
+	var platform *ocispec.Platform
+	if inspect.ImageManifestDescriptor != nil {
+		platform = inspect.ImageManifestDescriptor.Platform
+	}
+
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, netConfig, platform, b.BuildName())
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	logger.Debug().Str("id", resp.ID[:12]).Msg("container created")
+	return &runtimeapi.CreateContainerResponse{ContainerId: resp.ID}, nil
 }
 
 // Exec implements [v1.RuntimeServiceServer].
@@ -203,16 +300,24 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 	// Ensure pause image is available
 	imgSpec := &runtimeapi.ImageSpec{Image: dockerConfig.Image}
-	status, _ := s.ImageStatus(ctx, &runtimeapi.ImageStatusRequest{Image: imgSpec})
+	imgReq := &runtimeapi.ImageStatusRequest{Image: imgSpec, Verbose: true}
+	status, _ := s.ImageStatus(ctx, imgReq)
 	if status.Image == nil {
 		if _, err := s.PullImage(ctx, &runtimeapi.PullImageRequest{Image: imgSpec}); err != nil {
-			return nil, fmt.Errorf("pull sandbox image: %w", err)
+			return nil, wrapErr(err)
 		}
+		status, _ = s.ImageStatus(ctx, imgReq)
 	}
 
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, nil, b.BuildName())
+	// Platform from image info
+	var platform *ocispec.Platform
+	if status.Info != nil {
+		platform = &ocispec.Platform{OS: status.Info["os"], Architecture: status.Info["architecture"]}
+	}
+
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, platform, b.BuildName())
 	if err != nil {
-		return nil, fmt.Errorf("create sandbox: %w", err)
+		return nil, wrapErr(err)
 	}
 
 	logger.Debug().Str("id", resp.ID[:12]).Msg("sandbox created")
@@ -263,7 +368,7 @@ func (s *Server) UpdateRuntimeConfig(context.Context, *runtimeapi.UpdateRuntimeC
 func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
 	v, err := s.backend.client.ServerVersion(ctx)
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	return &runtimeapi.VersionResponse{
 		Version:           version.Get().GitVersion,
@@ -277,11 +382,11 @@ func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*
 func (s *Server) ImageFsInfo(ctx context.Context, req *runtimeapi.ImageFsInfoRequest) (*runtimeapi.ImageFsInfoResponse, error) {
 	info, err := s.backend.client.Info(ctx)
 	if err != nil {
-		return &runtimeapi.ImageFsInfoResponse{}, nil
+		return nil, wrapErr(err)
 	}
 	resp, err := s.ListImages(ctx, &runtimeapi.ListImagesRequest{})
 	if err != nil {
-		return &runtimeapi.ImageFsInfoResponse{}, nil
+		return nil, wrapErr(err)
 	}
 	var totalSize uint64
 	for _, img := range resp.Images {
@@ -306,7 +411,10 @@ func (s *Server) ImageStatus(ctx context.Context, req *runtimeapi.ImageStatusReq
 
 	inspect, err := s.backend.client.ImageInspect(ctx, ref)
 	if err != nil {
-		return &runtimeapi.ImageStatusResponse{}, nil
+		if errdefs.IsNotFound(err) {
+			return &runtimeapi.ImageStatusResponse{}, nil
+		}
+		return nil, wrapErr(err)
 	}
 
 	var repoTags []string
@@ -346,7 +454,7 @@ func (s *Server) ImageStatus(ctx context.Context, req *runtimeapi.ImageStatusReq
 func (s *Server) ListImages(ctx context.Context, req *runtimeapi.ListImagesRequest) (*runtimeapi.ListImagesResponse, error) {
 	images, err := s.backend.client.ImageList(ctx, image.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	result := make([]*runtimeapi.Image, len(images))
 	for i, img := range images {
@@ -366,31 +474,42 @@ func (s *Server) PullImage(ctx context.Context, req *runtimeapi.PullImageRequest
 
 	reader, err := s.backend.client.ImagePull(ctx, ref, image.PullOptions{})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	defer reader.Close()
 	io.Copy(io.Discard, reader)
 
 	status, err := s.ImageStatus(ctx, &runtimeapi.ImageStatusRequest{Image: req.GetImage()})
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	if status.Image == nil {
-		return nil, fmt.Errorf("image %s not found after pull", ref)
+		return nil, wrapErr(fmt.Errorf("image %s not found after pull", ref))
 	}
 	return &runtimeapi.PullImageResponse{ImageRef: status.Image.Id}, nil
 }
 
 // RemoveImage implements [v1.ImageServiceServer].
 func (s *Server) RemoveImage(ctx context.Context, req *runtimeapi.RemoveImageRequest) (*runtimeapi.RemoveImageResponse, error) {
-	_, err := s.backend.client.ImageRemove(ctx, req.GetImage().GetImage(), image.RemoveOptions{Force: true, PruneChildren: true})
+	ref := req.GetImage().GetImage()
+	_, err := s.backend.client.ImageRemove(ctx, ref, image.RemoveOptions{Force: true, PruneChildren: true})
 	if err != nil && errdefs.IsNotFound(err) {
 		return &runtimeapi.RemoveImageResponse{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, wrapErr(err)
 	}
 	return &runtimeapi.RemoveImageResponse{}, nil
+}
+
+// wrapErr wraps an error with the calling function's name.
+func wrapErr(err error) error {
+	pc, _, _, _ := runtime.Caller(1)
+	name := runtime.FuncForPC(pc).Name()
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return fmt.Errorf("%s: %w", name, err)
 }
 
 var (
