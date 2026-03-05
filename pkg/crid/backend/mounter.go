@@ -14,52 +14,52 @@ type MounterImpl struct {
 
 // CanSafelySkipMountPointCheck implements [mount.Interface].
 func (m *MounterImpl) CanSafelySkipMountPointCheck() bool {
-	panic("unimplemented")
+	panic("CanSafelySkipMountPointCheck: unimplemented")
 }
 
 // GetMountRefs implements [mount.Interface].
 func (m *MounterImpl) GetMountRefs(pathname string) ([]string, error) {
-	panic("unimplemented")
+	panic("GetMountRefs: unimplemented")
 }
 
 // IsLikelyNotMountPoint implements [mount.Interface].
 func (m *MounterImpl) IsLikelyNotMountPoint(file string) (bool, error) {
-	panic("unimplemented")
+	panic("IsLikelyNotMountPoint: unimplemented")
 }
 
 // IsMountPoint implements [mount.Interface].
 func (m *MounterImpl) IsMountPoint(file string) (bool, error) {
-	panic("unimplemented")
+	panic("IsMountPoint: unimplemented")
 }
 
 // List implements [mount.Interface].
 func (m *MounterImpl) List() ([]mount.MountPoint, error) {
-	panic("unimplemented")
+	panic("List: unimplemented")
 }
 
 // Mount implements [mount.Interface].
 func (m *MounterImpl) Mount(source string, target string, fstype string, options []string) error {
-	panic("unimplemented")
+	panic("Mount: unimplemented")
 }
 
 // MountSensitive implements [mount.Interface].
 func (m *MounterImpl) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	panic("unimplemented")
+	panic("MountSensitive: unimplemented")
 }
 
 // MountSensitiveWithoutSystemd implements [mount.Interface].
 func (m *MounterImpl) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	panic("unimplemented")
+	panic("MountSensitiveWithoutSystemd: unimplemented")
 }
 
 // MountSensitiveWithoutSystemdWithMountFlags implements [mount.Interface].
 func (m *MounterImpl) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	panic("unimplemented")
+	panic("MountSensitiveWithoutSystemdWithMountFlags: unimplemented")
 }
 
 // Unmount implements [mount.Interface].
 func (m *MounterImpl) Unmount(target string) error {
-	panic("unimplemented")
+	panic("Unmount: unimplemented")
 }
 
 var _ mount.Interface = &MounterImpl{}

@@ -19,77 +19,77 @@ type OSImpl struct {
 
 // Chmod implements [container.OSInterface].
 func (o *OSImpl) Chmod(path string, perm os.FileMode) error {
-	panic("unimplemented")
+	panic("Chmod: unimplemented")
 }
 
 // Chtimes implements [container.OSInterface].
 func (o *OSImpl) Chtimes(path string, atime time.Time, mtime time.Time) error {
-	panic("unimplemented")
+	panic("Chtimes: unimplemented")
 }
 
 // Create implements [container.OSInterface].
 func (o *OSImpl) Create(path string) (*os.File, error) {
-	panic("unimplemented")
+	panic("Create: unimplemented")
 }
 
 // Glob implements [container.OSInterface].
 func (o *OSImpl) Glob(pattern string) ([]string, error) {
-	panic("unimplemented")
+	panic("Glob: unimplemented")
 }
 
 // Hostname implements [container.OSInterface].
 func (o *OSImpl) Hostname() (name string, err error) {
-	panic("unimplemented")
+	panic("Hostname: unimplemented")
 }
 
 // MkdirAll implements [container.OSInterface].
 func (o *OSImpl) MkdirAll(path string, perm os.FileMode) error {
-	panic("unimplemented")
+	panic("MkdirAll: unimplemented")
 }
 
 // Open implements [container.OSInterface].
 func (o *OSImpl) Open(name string) (*os.File, error) {
-	panic("unimplemented")
+	panic("Open: unimplemented")
 }
 
 // OpenFile implements [container.OSInterface].
 func (o *OSImpl) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
-	panic("unimplemented")
+	panic("OpenFile: unimplemented")
 }
 
 // Pipe implements [container.OSInterface].
 func (o *OSImpl) Pipe() (r *os.File, w *os.File, err error) {
-	panic("unimplemented")
+	panic("Pipe: unimplemented")
 }
 
 // ReadDir implements [container.OSInterface].
 func (o *OSImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
-	panic("unimplemented")
+	panic("ReadDir: unimplemented")
 }
 
 // Remove implements [container.OSInterface].
 func (o *OSImpl) Remove(path string) error {
-	panic("unimplemented")
+	panic("Remove: unimplemented")
 }
 
 // RemoveAll implements [container.OSInterface].
 func (o *OSImpl) RemoveAll(path string) error {
-	panic("unimplemented")
+	panic("RemoveAll: unimplemented")
 }
 
 // Rename implements [container.OSInterface].
 func (o *OSImpl) Rename(oldpath string, newpath string) error {
-	panic("unimplemented")
+	panic("Rename: unimplemented")
 }
 
 // Stat implements [container.OSInterface].
 func (o *OSImpl) Stat(path string) (os.FileInfo, error) {
-	panic("unimplemented")
+	panic("Stat: unimplemented")
 }
 
 // Symlink implements [container.OSInterface].
 func (o *OSImpl) Symlink(oldname string, newname string) error {
-	panic("unimplemented")
+	panic("Symlink: unimplemented")
 }
 
 var _ container.OSInterface = &OSImpl{}

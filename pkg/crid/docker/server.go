@@ -34,17 +34,17 @@ type Server struct {
 
 // Attach implements [v1.RuntimeServiceServer].
 func (s *Server) Attach(context.Context, *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
-	panic("unimplemented")
+	panic("Attach: unimplemented")
 }
 
 // CheckpointContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CheckpointContainer(context.Context, *runtimeapi.CheckpointContainerRequest) (*runtimeapi.CheckpointContainerResponse, error) {
-	panic("unimplemented")
+	panic("CheckpointContainer: unimplemented")
 }
 
 // ContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ContainerStats(context.Context, *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {
-	panic("unimplemented")
+	panic("ContainerStats: unimplemented")
 }
 
 // ContainerStatus implements [v1.RuntimeServiceServer].
@@ -215,22 +215,22 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 
 // Exec implements [v1.RuntimeServiceServer].
 func (s *Server) Exec(context.Context, *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
-	panic("unimplemented")
+	panic("Exec: unimplemented")
 }
 
 // ExecSync implements [v1.RuntimeServiceServer].
 func (s *Server) ExecSync(context.Context, *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	panic("unimplemented")
+	panic("ExecSync: unimplemented")
 }
 
 // GetContainerEvents implements [v1.RuntimeServiceServer].
 func (s *Server) GetContainerEvents(*runtimeapi.GetEventsRequest, grpc.ServerStreamingServer[runtimeapi.ContainerEventResponse]) error {
-	panic("unimplemented")
+	panic("GetContainerEvents: unimplemented")
 }
 
 // ListContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListContainerStats(context.Context, *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
-	panic("unimplemented")
+	panic("ListContainerStats: unimplemented")
 }
 
 // ListContainers implements [v1.RuntimeServiceServer].
@@ -269,7 +269,7 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 
 // ListMetricDescriptors implements [v1.RuntimeServiceServer].
 func (s *Server) ListMetricDescriptors(context.Context, *runtimeapi.ListMetricDescriptorsRequest) (*runtimeapi.ListMetricDescriptorsResponse, error) {
-	panic("unimplemented")
+	panic("ListMetricDescriptors: unimplemented")
 }
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
@@ -306,17 +306,17 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 
 // ListPodSandboxMetrics implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandboxMetrics(context.Context, *runtimeapi.ListPodSandboxMetricsRequest) (*runtimeapi.ListPodSandboxMetricsResponse, error) {
-	panic("unimplemented")
+	panic("ListPodSandboxMetrics: unimplemented")
 }
 
 // ListPodSandboxStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandboxStats(context.Context, *runtimeapi.ListPodSandboxStatsRequest) (*runtimeapi.ListPodSandboxStatsResponse, error) {
-	panic("unimplemented")
+	panic("ListPodSandboxStats: unimplemented")
 }
 
 // PodSandboxStats implements [v1.RuntimeServiceServer].
 func (s *Server) PodSandboxStats(context.Context, *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
-	panic("unimplemented")
+	panic("PodSandboxStats: unimplemented")
 }
 
 // PodSandboxStatus implements [v1.RuntimeServiceServer].
@@ -357,7 +357,7 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 
 // PortForward implements [v1.RuntimeServiceServer].
 func (s *Server) PortForward(context.Context, *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
-	panic("unimplemented")
+	panic("PortForward: unimplemented")
 }
 
 // RemoveContainer implements [v1.RuntimeServiceServer].
@@ -401,7 +401,7 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 
 // ReopenContainerLog implements [v1.RuntimeServiceServer].
 func (s *Server) ReopenContainerLog(context.Context, *runtimeapi.ReopenContainerLogRequest) (*runtimeapi.ReopenContainerLogResponse, error) {
-	panic("unimplemented")
+	panic("ReopenContainerLog: unimplemented")
 }
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
@@ -502,7 +502,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 // RuntimeConfig implements [v1.RuntimeServiceServer].
 func (s *Server) RuntimeConfig(context.Context, *runtimeapi.RuntimeConfigRequest) (*runtimeapi.RuntimeConfigResponse, error) {
-	panic("unimplemented")
+	panic("RuntimeConfig: unimplemented")
 }
 
 // StartContainer implements [v1.RuntimeServiceServer].
@@ -520,7 +520,7 @@ func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContai
 
 // Status implements [v1.RuntimeServiceServer].
 func (s *Server) Status(context.Context, *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
-	panic("unimplemented")
+	panic("Status: unimplemented")
 }
 
 // StopContainer implements [v1.RuntimeServiceServer].
@@ -560,17 +560,17 @@ func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSand
 
 // UpdateContainerResources implements [v1.RuntimeServiceServer].
 func (s *Server) UpdateContainerResources(context.Context, *runtimeapi.UpdateContainerResourcesRequest) (*runtimeapi.UpdateContainerResourcesResponse, error) {
-	panic("unimplemented")
+	panic("UpdateContainerResources: unimplemented")
 }
 
 // UpdatePodSandboxResources implements [v1.RuntimeServiceServer].
 func (s *Server) UpdatePodSandboxResources(context.Context, *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
-	panic("unimplemented")
+	panic("UpdatePodSandboxResources: unimplemented")
 }
 
 // UpdateRuntimeConfig implements [v1.RuntimeServiceServer].
 func (s *Server) UpdateRuntimeConfig(context.Context, *runtimeapi.UpdateRuntimeConfigRequest) (*runtimeapi.UpdateRuntimeConfigResponse, error) {
-	panic("unimplemented")
+	panic("UpdateRuntimeConfig: unimplemented")
 }
 
 // Version implements [v1.RuntimeServiceServer].

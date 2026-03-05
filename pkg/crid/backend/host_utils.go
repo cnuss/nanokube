@@ -18,52 +18,52 @@ type HostUtilsImpl struct {
 
 // DeviceOpened implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) DeviceOpened(pathname string) (bool, error) {
-	panic("unimplemented")
+	panic("DeviceOpened: unimplemented")
 }
 
 // EvalHostSymlinks implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) EvalHostSymlinks(pathname string) (string, error) {
-	panic("unimplemented")
+	panic("EvalHostSymlinks: unimplemented")
 }
 
 // GetFileType implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) GetFileType(pathname string) (hostutil.FileType, error) {
-	panic("unimplemented")
+	panic("GetFileType: unimplemented")
 }
 
 // GetMode implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) GetMode(pathname string) (os.FileMode, error) {
-	panic("unimplemented")
+	panic("GetMode: unimplemented")
 }
 
 // GetOwner implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) GetOwner(pathname string) (int64, int64, error) {
-	panic("unimplemented")
+	panic("GetOwner: unimplemented")
 }
 
 // GetSELinuxMountContext implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) GetSELinuxMountContext(pathname string) (string, error) {
-	panic("unimplemented")
+	panic("GetSELinuxMountContext: unimplemented")
 }
 
 // GetSELinuxSupport implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) GetSELinuxSupport(pathname string) (bool, error) {
-	panic("unimplemented")
+	panic("GetSELinuxSupport: unimplemented")
 }
 
 // MakeRShared implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) MakeRShared(path string) error {
-	panic("unimplemented")
+	panic("MakeRShared: unimplemented")
 }
 
 // PathExists implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) PathExists(pathname string) (bool, error) {
-	panic("unimplemented")
+	panic("PathExists: unimplemented")
 }
 
 // PathIsDevice implements [hostutil.HostUtils].
 func (h *HostUtilsImpl) PathIsDevice(pathname string) (bool, error) {
-	panic("unimplemented")
+	panic("PathIsDevice: unimplemented")
 }
 
 var _ hostutil.HostUtils = &HostUtilsImpl{}

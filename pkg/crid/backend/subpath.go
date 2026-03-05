@@ -18,17 +18,17 @@ type SubpathImpl struct {
 
 // CleanSubPaths implements [subpath.Interface].
 func (s *SubpathImpl) CleanSubPaths(poodDir string, volumeName string) error {
-	panic("unimplemented")
+	panic("CleanSubPaths: unimplemented")
 }
 
 // PrepareSafeSubpath implements [subpath.Interface].
 func (s *SubpathImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	panic("unimplemented")
+	panic("PrepareSafeSubpath: unimplemented")
 }
 
 // SafeMakeDir implements [subpath.Interface].
 func (s *SubpathImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
-	panic("unimplemented")
+	panic("SafeMakeDir: unimplemented")
 }
 
 var _ subpath.Interface = &SubpathImpl{}

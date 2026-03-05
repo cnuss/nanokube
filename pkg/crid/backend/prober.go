@@ -21,27 +21,27 @@ type ProberImpl struct {
 
 // AddPod implements [prober.Manager].
 func (p *ProberImpl) AddPod(ctx context.Context, pod *v1.Pod) {
-	panic("unimplemented")
+	panic("AddPod: unimplemented")
 }
 
 // CleanupPods implements [prober.Manager].
 func (p *ProberImpl) CleanupPods(desiredPods map[types.UID]sets.Empty) {
-	panic("unimplemented")
+	panic("CleanupPods: unimplemented")
 }
 
 // RemovePod implements [prober.Manager].
 func (p *ProberImpl) RemovePod(pod *v1.Pod) {
-	panic("unimplemented")
+	panic("RemovePod: unimplemented")
 }
 
 // StopLivenessAndStartup implements [prober.Manager].
 func (p *ProberImpl) StopLivenessAndStartup(pod *v1.Pod) {
-	panic("unimplemented")
+	panic("StopLivenessAndStartup: unimplemented")
 }
 
 // UpdatePodStatus implements [prober.Manager].
 func (p *ProberImpl) UpdatePodStatus(context.Context, *v1.Pod, *v1.PodStatus) {
-	panic("unimplemented")
+	panic("UpdatePodStatus: unimplemented")
 }
 
 var _ prober.Manager = &ProberImpl{}

@@ -18,52 +18,52 @@ type VolumeImpl struct {
 
 // CanSupport implements [volume.VolumePlugin].
 func (v *VolumeImpl) CanSupport(spec *volume.Spec) bool {
-	panic("unimplemented")
+	panic("CanSupport: unimplemented")
 }
 
 // ConstructVolumeSpec implements [volume.VolumePlugin].
 func (v *VolumeImpl) ConstructVolumeSpec(volumeName string, volumePath string) (volume.ReconstructedVolume, error) {
-	panic("unimplemented")
+	panic("ConstructVolumeSpec: unimplemented")
 }
 
 // GetPluginName implements [volume.VolumePlugin].
 func (v *VolumeImpl) GetPluginName() string {
-	panic("unimplemented")
+	panic("GetPluginName: unimplemented")
 }
 
 // GetVolumeName implements [volume.VolumePlugin].
 func (v *VolumeImpl) GetVolumeName(spec *volume.Spec) (string, error) {
-	panic("unimplemented")
+	panic("GetVolumeName: unimplemented")
 }
 
 // Init implements [volume.VolumePlugin].
 func (v *VolumeImpl) Init(host volume.VolumeHost) error {
-	panic("unimplemented")
+	panic("Init: unimplemented")
 }
 
 // NewMounter implements [volume.VolumePlugin].
 func (v *VolumeImpl) NewMounter(spec *volume.Spec, podRef *v1.Pod) (volume.Mounter, error) {
-	panic("unimplemented")
+	panic("NewMounter: unimplemented")
 }
 
 // NewUnmounter implements [volume.VolumePlugin].
 func (v *VolumeImpl) NewUnmounter(name string, podUID types.UID) (volume.Unmounter, error) {
-	panic("unimplemented")
+	panic("NewUnmounter: unimplemented")
 }
 
 // RequiresRemount implements [volume.VolumePlugin].
 func (v *VolumeImpl) RequiresRemount(spec *volume.Spec) bool {
-	panic("unimplemented")
+	panic("RequiresRemount: unimplemented")
 }
 
 // SupportsMountOption implements [volume.VolumePlugin].
 func (v *VolumeImpl) SupportsMountOption() bool {
-	panic("unimplemented")
+	panic("SupportsMountOption: unimplemented")
 }
 
 // SupportsSELinuxContextMount implements [volume.VolumePlugin].
 func (v *VolumeImpl) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
-	panic("unimplemented")
+	panic("SupportsSELinuxContextMount: unimplemented")
 }
 
 var _ volume.VolumePlugin = &VolumeImpl{}

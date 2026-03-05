@@ -20,47 +20,47 @@ type CadvisorImpl struct {
 
 // ContainerFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) ContainerFsInfo(context.Context) (v2.FsInfo, error) {
-	panic("unimplemented")
+	panic("ContainerFsInfo: unimplemented")
 }
 
 // ContainerInfoV2 implements [cadvisor.Interface].
 func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (map[string]v2.ContainerInfo, error) {
-	panic("unimplemented")
+	panic("ContainerInfoV2: unimplemented")
 }
 
 // GetDirFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) GetDirFsInfo(path string) (v2.FsInfo, error) {
-	panic("unimplemented")
+	panic("GetDirFsInfo: unimplemented")
 }
 
 // GetRequestedContainersInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) GetRequestedContainersInfo(containerName string, options v2.RequestOptions) (map[string]*v1.ContainerInfo, error) {
-	panic("unimplemented")
+	panic("GetRequestedContainersInfo: unimplemented")
 }
 
 // ImagesFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) ImagesFsInfo(context.Context) (v2.FsInfo, error) {
-	panic("unimplemented")
+	panic("ImagesFsInfo: unimplemented")
 }
 
 // MachineInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) MachineInfo() (*v1.MachineInfo, error) {
-	panic("unimplemented")
+	panic("MachineInfo: unimplemented")
 }
 
 // RootFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) RootFsInfo() (v2.FsInfo, error) {
-	panic("unimplemented")
+	panic("RootFsInfo: unimplemented")
 }
 
 // Start implements [cadvisor.Interface].
 func (c *CadvisorImpl) Start() error {
-	panic("unimplemented")
+	panic("Start: unimplemented")
 }
 
 // VersionInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) VersionInfo() (*v1.VersionInfo, error) {
-	panic("unimplemented")
+	panic("VersionInfo: unimplemented")
 }
 
 var _ cadvisor.Interface = &CadvisorImpl{}

@@ -17,17 +17,17 @@ type EventRecorderImpl struct {
 
 // AnnotatedEventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	panic("unimplemented")
+	panic("AnnotatedEventf: unimplemented")
 }
 
 // Event implements [record.EventRecorder].
 func (e *EventRecorderImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
-	panic("unimplemented")
+	panic("Event: unimplemented")
 }
 
 // Eventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	panic("unimplemented")
+	panic("Eventf: unimplemented")
 }
 
 var _ record.EventRecorder = &EventRecorderImpl{}
