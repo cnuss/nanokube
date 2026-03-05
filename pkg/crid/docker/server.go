@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
@@ -22,19 +21,18 @@ import (
 
 const defaultPauseImage = "registry.k8s.io/pause:3.10"
 
-func NewServer(backend *DockerBackend) *Server {
+func NewServer(ctx context.Context, backend *DockerBackend) *Server {
 	return &Server{
-		backend:    backend,
-		logWriters: make(map[string]context.CancelFunc),
+		backend: backend,
+		logs:    newLogWriter(ctx, backend.client),
 	}
 }
 
 type Server struct {
 	runtimeapi.UnsafeImageServiceServer
 	runtimeapi.UnsafeRuntimeServiceServer
-	backend    *DockerBackend
-	logMu      sync.Mutex
-	logWriters map[string]context.CancelFunc
+	backend *DockerBackend
+	logs    *logWriter
 }
 
 // Attach implements [v1.RuntimeServiceServer].
@@ -74,10 +72,14 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	}
 
 	// Labels: start from sandbox, layer container labels on top
-	b := s.backend.labels.NewBuilder(inspect.Config.Labels).
+	name, labels, err := s.backend.labels.NewBuilder(inspect.Config.Labels).
 		WithLabels(config.GetLabels()).
 		WithContainer(sandboxID, meta.GetName()).
-		WithAnnotations(config.GetAnnotations())
+		WithAnnotations(config.GetAnnotations()).
+		WithLogPath(config.GetLogPath(), req.GetSandboxConfig().GetLogDirectory()).Build()
+	if err != nil {
+		return nil, wrapErr(err)
+	}
 
 	// Override image, command, env from container config
 	envs := make([]string, 0, len(config.GetEnvs()))
@@ -91,7 +93,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	dockerConfig.Cmd = config.GetArgs()
 	dockerConfig.Env = envs
 	dockerConfig.WorkingDir = config.GetWorkingDir()
-	dockerConfig.Labels = b.BuildLabels()
+	dockerConfig.Labels = labels
 	dockerConfig.StdinOnce = config.GetStdinOnce()
 	dockerConfig.OpenStdin = config.GetStdin()
 	dockerConfig.Tty = config.GetTty()
@@ -148,7 +150,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		platform = inspect.ImageManifestDescriptor.Platform
 	}
 
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, netConfig, platform, b.BuildName())
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, netConfig, platform, name)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -239,15 +241,19 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	config := req.GetConfig()
 	meta := config.GetMetadata()
 
-	b := s.backend.labels.NewBuilder(config.GetLabels()).
+	name, labels, err := s.backend.labels.NewBuilder(config.GetLabels()).
 		WithSandbox(meta.GetUid()).
 		WithPod(meta.GetName(), meta.GetNamespace(), meta.GetUid()).
-		WithAnnotations(config.GetAnnotations())
+		WithAnnotations(config.GetAnnotations()).
+		Build()
+	if err != nil {
+		return nil, wrapErr(err)
+	}
 
 	dockerConfig := &container.Config{
 		Image:    defaultPauseImage,
 		Hostname: config.GetHostname(),
-		Labels:   b.BuildLabels(),
+		Labels:   labels,
 	}
 
 	hostConfig := &container.HostConfig{
@@ -315,7 +321,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		platform = &ocispec.Platform{OS: status.Info["os"], Architecture: status.Info["architecture"]}
 	}
 
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, platform, b.BuildName())
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, platform, name)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -330,8 +336,24 @@ func (s *Server) RuntimeConfig(context.Context, *runtimeapi.RuntimeConfigRequest
 }
 
 // StartContainer implements [v1.RuntimeServiceServer].
-func (s *Server) StartContainer(context.Context, *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
-	panic("unimplemented")
+func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
+	id := req.GetContainerId()
+	logger.Trace().Str("id", id[:12]).Msg("StartContainer")
+
+	if err := s.backend.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		return nil, wrapErr(err)
+	}
+
+	// Start CRI log writer if a log path was configured
+	inspect, err := s.backend.client.ContainerInspect(ctx, id)
+	if err != nil {
+		return &runtimeapi.StartContainerResponse{}, nil // started; log is best-effort
+	}
+	if criLogPath := s.backend.labels.LogPath(inspect.Config.Labels); criLogPath != "" {
+		s.logs.Start(id, criLogPath)
+	}
+
+	return &runtimeapi.StartContainerResponse{}, nil
 }
 
 // Status implements [v1.RuntimeServiceServer].

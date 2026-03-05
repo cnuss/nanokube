@@ -8,6 +8,7 @@ var (
 	sandboxIDKey   = "sandbox-id"
 	containerIDKey = "container-id"
 	volumeIDKey    = "volume-id"
+	logPathKey     = "container-log-path"
 
 	unknownType   = "unknown"
 	sandboxType   = "sandbox"
@@ -20,6 +21,7 @@ type LabelProvider interface {
 	Prefix(key string) string
 	AnnotationPrefix(key string) string
 	NewBuilder(userLabels map[string]string) *LabelBuilder
+	LogPath(dockerLabels map[string]string) string
 	ManagedByFilter() string
 	TypeFilter(t string) string
 	IsInternal(key string) bool
@@ -49,6 +51,11 @@ func (l *LabelProviderImpl) AnnotationPrefix(key string) string {
 	return l.Prefix("annotation." + key)
 }
 
+// LogPath extracts the CRI log path from a Docker labels map.
+func (l *LabelProviderImpl) LogPath(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(logPathKey)]
+}
+
 // ManagedByFilter returns a Docker label filter string for managed-by.
 func (l *LabelProviderImpl) ManagedByFilter() string {
 	return l.Prefix(managedByKey) + "=" + l.name
@@ -67,7 +74,7 @@ func (l *LabelProviderImpl) IsInternal(key string) bool {
 	}
 	suffix := key[len(prefix):]
 	switch suffix {
-	case typeKey, managedByKey, sandboxIDKey, "container.attempt", "container.logPath":
+	case typeKey, managedByKey, sandboxIDKey, containerIDKey, logPathKey:
 		return true
 	}
 	return false

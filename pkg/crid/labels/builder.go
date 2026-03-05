@@ -1,16 +1,26 @@
 package labels
 
 import (
+	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
+	"sync"
 
 	kubelettypes "k8s.io/kubelet/pkg/types"
 )
 
+var errBuilderSealed = errors.New("LabelBuilder: mutation after BuildLabels")
+
 // LabelBuilder constructs a label map in layers without mutating input maps.
+// After BuildLabels is called, the builder is sealed; further With* calls
+// record an error that BuildLabels returns on a subsequent call.
 type LabelBuilder struct {
+	mu     sync.Mutex
 	lp     *LabelProviderImpl
 	labels map[string]string
+	built  bool
+	err    error
 }
 
 // NewBuilder starts a builder seeded with the user-supplied labels.
@@ -26,78 +36,106 @@ func (l *LabelProviderImpl) NewBuilder(userLabels map[string]string) *LabelBuild
 	return b
 }
 
+// set writes a label, recording an error if the builder is already sealed.
+func (b *LabelBuilder) set(key, value string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.built {
+		b.err = errBuilderSealed
+		return
+	}
+	b.labels[key] = value
+}
+
 // WithSandbox marks this as a sandbox and sets the sandbox ID.
 func (b *LabelBuilder) WithSandbox(uid string) *LabelBuilder {
-	b.labels[b.lp.Prefix(typeKey)] = sandboxType
-	b.labels[b.lp.Prefix(sandboxIDKey)] = uid
+	b.set(b.lp.Prefix(typeKey), sandboxType)
+	b.set(b.lp.Prefix(sandboxIDKey), uid)
 	return b
 }
 
 // WithContainer marks this as a container and sets the container ID.
 func (b *LabelBuilder) WithContainer(sandboxID, containerID string) *LabelBuilder {
-	b.labels[b.lp.Prefix(typeKey)] = containerType
-	b.labels[b.lp.Prefix(sandboxIDKey)] = sandboxID
-	b.labels[b.lp.Prefix(containerIDKey)] = containerID
+	b.set(b.lp.Prefix(typeKey), containerType)
+	b.set(b.lp.Prefix(sandboxIDKey), sandboxID)
+	b.set(b.lp.Prefix(containerIDKey), containerID)
 	return b
 }
 
 // WithVolume marks this as a volume.
 func (b *LabelBuilder) WithVolume(sandboxID, containerID, volumeID string) *LabelBuilder {
-	b.labels[b.lp.Prefix(typeKey)] = volumeType
-	b.labels[b.lp.Prefix(sandboxIDKey)] = sandboxID
-	b.labels[b.lp.Prefix(containerIDKey)] = containerID
-	b.labels[b.lp.Prefix(volumeIDKey)] = volumeID
+	b.set(b.lp.Prefix(typeKey), volumeType)
+	b.set(b.lp.Prefix(sandboxIDKey), sandboxID)
+	b.set(b.lp.Prefix(containerIDKey), containerID)
+	b.set(b.lp.Prefix(volumeIDKey), volumeID)
 	return b
 }
 
 // WithPod sets name, namespace, and UID together.
 func (b *LabelBuilder) WithPod(name, namespace, uid string) *LabelBuilder {
-	return b.WithName(name).WithNamespace(namespace).WithUID(uid)
+	b.set(kubelettypes.KubernetesPodNameLabel, name)
+	b.set(kubelettypes.KubernetesPodNamespaceLabel, namespace)
+	b.set(kubelettypes.KubernetesPodUIDLabel, uid)
+	return b
 }
 
 // WithName sets the pod name label.
 func (b *LabelBuilder) WithName(name string) *LabelBuilder {
-	b.labels[kubelettypes.KubernetesPodNameLabel] = name
+	b.set(kubelettypes.KubernetesPodNameLabel, name)
 	return b
 }
 
 // WithNamespace sets the pod namespace label.
 func (b *LabelBuilder) WithNamespace(namespace string) *LabelBuilder {
-	b.labels[kubelettypes.KubernetesPodNamespaceLabel] = namespace
+	b.set(kubelettypes.KubernetesPodNamespaceLabel, namespace)
 	return b
 }
 
 // WithUID sets the pod UID label.
 func (b *LabelBuilder) WithUID(uid string) *LabelBuilder {
-	b.labels[kubelettypes.KubernetesPodUIDLabel] = uid
+	b.set(kubelettypes.KubernetesPodUIDLabel, uid)
 	return b
-}
-
-// BuildName returns the generated container name.
-func (b *LabelBuilder) BuildName() string {
-	return fmt.Sprintf("k8s_%s_%s_%s_%s",
-		b.labels[b.lp.Prefix(typeKey)],
-		b.labels[kubelettypes.KubernetesPodNameLabel],
-		b.labels[kubelettypes.KubernetesPodNamespaceLabel],
-		b.labels[kubelettypes.KubernetesPodUIDLabel],
-	)
 }
 
 // WithLabels merges additional labels into the builder.
 func (b *LabelBuilder) WithLabels(labels map[string]string) *LabelBuilder {
-	maps.Copy(b.labels, labels)
+	for k, v := range labels {
+		b.set(k, v)
+	}
 	return b
 }
 
 // WithAnnotations stores CRI annotations as prefixed labels.
 func (b *LabelBuilder) WithAnnotations(annotations map[string]string) *LabelBuilder {
 	for k, v := range annotations {
-		b.labels[b.lp.AnnotationPrefix(k)] = v
+		b.set(b.lp.AnnotationPrefix(k), v)
 	}
 	return b
 }
 
-// BuildLabels returns the final label map.
-func (b *LabelBuilder) BuildLabels() map[string]string {
-	return b.labels
+// WithLogPath sets the CRI log path label from logPath and logDir.
+// No-op if either is empty.
+func (b *LabelBuilder) WithLogPath(logPath, logDir string) *LabelBuilder {
+	if logPath != "" && logDir != "" {
+		b.set(b.lp.Prefix(logPathKey), filepath.Join(logDir, logPath))
+	}
+	return b
+}
+
+// Build seals the builder and returns the generated name and label map.
+// Returns an error if any With* method was called after a prior Build.
+func (b *LabelBuilder) Build() (string, map[string]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil {
+		return "", nil, b.err
+	}
+	b.built = true
+	name := fmt.Sprintf("k8s_%s_%s_%s_%s",
+		b.labels[b.lp.Prefix(typeKey)],
+		b.labels[kubelettypes.KubernetesPodNameLabel],
+		b.labels[kubelettypes.KubernetesPodNamespaceLabel],
+		b.labels[kubelettypes.KubernetesPodUIDLabel],
+	)
+	return name, b.labels, nil
 }

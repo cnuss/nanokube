@@ -26,6 +26,7 @@ import (
 var logger = component.NewLogger("crid-docker")
 
 type DockerBackend struct {
+	ctx        context.Context
 	dataDir    string
 	client     *dockerclient.Client
 	server     *Server
@@ -88,7 +89,7 @@ func Detect(ctx context.Context, dataDir string) backend.Backend {
 		client.Close()
 		return nil
 	}
-	b := backend.NewBackend(&DockerBackend{client: client, dataDir: dataDir, labels: labels.NewLabels(string(backend.Docker))})
+	b := backend.NewBackend(&DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: labels.NewLabels(string(backend.Docker))})
 	return b
 }
 
@@ -97,7 +98,7 @@ func (b *DockerBackend) Name() backend.Runtime {
 }
 
 func (b *DockerBackend) init() {
-	b.serverOnce.Do(func() { b.server = NewServer(b) })
+	b.serverOnce.Do(func() { b.server = NewServer(b.ctx, b) })
 }
 
 func (b *DockerBackend) Labels() labels.LabelProvider {
