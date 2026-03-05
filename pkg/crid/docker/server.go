@@ -519,8 +519,27 @@ func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContai
 }
 
 // Status implements [v1.RuntimeServiceServer].
-func (s *Server) Status(context.Context, *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
-	panic("Status: unimplemented")
+func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
+	logger.Trace().Msg("Status")
+
+	info, err := s.backend.client.Info(ctx)
+	_, netErr := s.backend.client.NetworkInspect(ctx, "bridge", network.InspectOptions{})
+
+	resp := &runtimeapi.StatusResponse{
+		Status: &runtimeapi.RuntimeStatus{
+			Conditions: []*runtimeapi.RuntimeCondition{
+				{Type: "RuntimeReady", Status: err == nil, Reason: "DockerIsUp"},
+				{Type: "NetworkReady", Status: netErr == nil, Reason: "BridgeNetworkReady"},
+			},
+		},
+	}
+	if req.GetVerbose() && err == nil {
+		resp.Info = map[string]string{
+			"storageDriver": info.Driver,
+			"serverVersion": info.ServerVersion,
+		}
+	}
+	return resp, nil
 }
 
 // StopContainer implements [v1.RuntimeServiceServer].
