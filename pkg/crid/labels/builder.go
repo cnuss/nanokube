@@ -60,10 +60,10 @@ func (b *LabelBuilder) WithSandbox(uid string) *LabelBuilder {
 }
 
 // WithContainer marks this as a container and sets the container ID.
-func (b *LabelBuilder) WithContainer(sandboxID, containerID string) *LabelBuilder {
+func (b *LabelBuilder) WithContainer(sandboxID, name string) *LabelBuilder {
 	b.set(b.lp.Prefix(typeKey), containerType)
 	b.set(b.lp.Prefix(sandboxIDKey), sandboxID)
-	b.set(b.lp.Prefix(containerIDKey), containerID)
+	b.set(kubelettypes.KubernetesContainerNameLabel, name)
 	return b
 }
 
