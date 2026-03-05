@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/containerd/errdefs"
+	"k8s.io/component-base/version"
 	"github.com/docker/docker/api/types/image"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -177,8 +178,17 @@ func (s *Server) UpdateRuntimeConfig(context.Context, *runtimeapi.UpdateRuntimeC
 }
 
 // Version implements [v1.RuntimeServiceServer].
-func (s *Server) Version(context.Context, *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
-	panic("unimplemented")
+func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
+	v, err := s.backend.client.ServerVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &runtimeapi.VersionResponse{
+		Version:           version.Get().GitVersion,
+		RuntimeName:       string(s.backend.Name()),
+		RuntimeVersion:    v.Version,
+		RuntimeApiVersion: req.GetVersion(),
+	}, nil
 }
 
 // ImageFsInfo implements [v1.ImageServiceServer].
