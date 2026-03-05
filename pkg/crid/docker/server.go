@@ -35,8 +35,9 @@ type Server struct {
 }
 
 // Attach implements [v1.RuntimeServiceServer].
-func (s *Server) Attach(context.Context, *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
-	panic("Attach: unimplemented")
+func (s *Server) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
+	logger.Warn().Str("container", req.GetContainerId()).Msg("Attach: unimplemented")
+	return nil, fmt.Errorf("Attach: unimplemented")
 }
 
 // CheckpointContainer implements [v1.RuntimeServiceServer].
