@@ -36,6 +36,7 @@ type DockerBackend struct {
 	logs       *logWriter
 	Into       DockerInto
 	Mounts     backend.MountLookup
+	parent     backend.Backend
 	serverOnce sync.Once
 }
 
@@ -94,7 +95,9 @@ func Detect(ctx context.Context, dataDir string) backend.Backend {
 		return nil
 	}
 	lp := labels.NewLabels(string(backend.Docker))
-	b := backend.NewBackend(&DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}})
+	d := &DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}}
+	b := backend.NewBackend(d)
+	d.parent = b
 	return b
 }
 
@@ -103,7 +106,7 @@ func (b *DockerBackend) Name() backend.Runtime {
 }
 
 func (b *DockerBackend) init() {
-	b.serverOnce.Do(func() { b.server = NewServer(b) })
+	b.serverOnce.Do(func() { b.server = NewServer(b, b.parent) })
 }
 
 func (b *DockerBackend) Labels() labels.LabelProvider {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -21,25 +22,26 @@ import (
 	"google.golang.org/grpc"
 	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubelet/pkg/cri/streaming"
 	kubelettypes "k8s.io/kubelet/pkg/types"
 )
 
 const defaultPauseImage = "registry.k8s.io/pause:3.10"
 
-func NewServer(backend *DockerBackend) *Server {
-	return &Server{backend: backend}
+func NewServer(b *DockerBackend, parent backend.Backend) *Server {
+	return &Server{backend: b, streaming: parent.Streaming()}
 }
 
 type Server struct {
 	runtimeapi.UnsafeImageServiceServer
 	runtimeapi.UnsafeRuntimeServiceServer
-	backend *DockerBackend
+	backend   *DockerBackend
+	streaming streaming.Server
 }
 
 // Attach implements [v1.RuntimeServiceServer].
 func (s *Server) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
-	logger.Warn().Str("container", req.GetContainerId()).Msg("Attach: unimplemented")
-	return nil, fmt.Errorf("Attach: unimplemented")
+	return s.streaming.GetAttach(req)
 }
 
 // CheckpointContainer implements [v1.RuntimeServiceServer].
@@ -253,8 +255,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 
 // Exec implements [v1.RuntimeServiceServer].
 func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
-	logger.Warn().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("Exec: unimplemented")
-	return nil, fmt.Errorf("Exec: unimplemented")
+	return s.streaming.GetExec(req)
 }
 
 // ExecSync implements [v1.RuntimeServiceServer].
@@ -322,8 +323,7 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 		Stdout:   stdout.Bytes(),
 		Stderr:   stderr.Bytes(),
 		ExitCode: exitCode,
-
-		}, nil
+	}, nil
 }
 
 // GetContainerEvents implements [v1.RuntimeServiceServer].
@@ -501,8 +501,7 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 
 // PortForward implements [v1.RuntimeServiceServer].
 func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
-	logger.Warn().Str("sandbox", req.GetPodSandboxId()).Interface("ports", req.GetPort()).Msg("PortForward: unimplemented")
-	return nil, fmt.Errorf("PortForward: unimplemented")
+	return s.streaming.GetPortForward(req)
 }
 
 // RemoveContainer implements [v1.RuntimeServiceServer].

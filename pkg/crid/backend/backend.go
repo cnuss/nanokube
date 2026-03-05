@@ -64,6 +64,7 @@ type Backend interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 
+	Streaming() streaming.Server
 	Labels() labels.LabelProvider
 	Images() internalapi.ImageManagerService
 	Containers() internalapi.RuntimeService
@@ -130,6 +131,19 @@ func (b *BackendImpl) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to listen on socket %s: %w", b.socket(), err)
 	}
 
+	streamCfg := streaming.DefaultConfig
+	streamCfg.Addr = "127.0.0.1:0"
+	b.streaming, err = streaming.NewServer(streamCfg, b.Driver)
+	if err != nil {
+		return fmt.Errorf("failed to start streaming server: %w", err)
+	}
+	go func() {
+		b.log.Info().Msg("backend streaming server starting")
+		if err := b.streaming.Start(true); err != nil {
+			b.log.Error().Err(err).Msg("backend streaming server exited")
+		}
+	}()
+
 	b.grpc = grpc.NewServer()
 	runtimeapi.RegisterRuntimeServiceServer(b.grpc, b.ContainerServer())
 	runtimeapi.RegisterImageServiceServer(b.grpc, b.ImageServer())
@@ -138,20 +152,6 @@ func (b *BackendImpl) Start(ctx context.Context) error {
 		b.log.Info().Str("socket", b.socket()).Msg("backend gRPC server listening")
 		if err := b.grpc.Serve(lis); err != nil {
 			b.log.Error().Err(err).Msg("backend gRPC server exited")
-		}
-	}()
-
-	streamCfg := streaming.DefaultConfig
-	streamCfg.Addr = "127.0.0.1:0"
-	b.streaming, err = streaming.NewServer(streamCfg, b.Driver)
-	if err != nil {
-		b.grpc.Stop()
-		return fmt.Errorf("failed to start streaming server: %w", err)
-	}
-	go func() {
-		b.log.Info().Msg("backend streaming server starting")
-		if err := b.streaming.Start(true); err != nil {
-			b.log.Error().Err(err).Msg("backend streaming server exited")
 		}
 	}()
 	b.log.Info().Msg("backend started")
@@ -198,6 +198,10 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 
 	b.log.Info().Str("backend", string(b.Name())).Msg("backend stopped")
 	return nil
+}
+
+func (b *BackendImpl) Streaming() streaming.Server {
+	return b.streaming
 }
 
 func (b *BackendImpl) Labels() labels.LabelProvider {
