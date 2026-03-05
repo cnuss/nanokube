@@ -267,8 +267,31 @@ func (s *Server) GetContainerEvents(*runtimeapi.GetEventsRequest, grpc.ServerStr
 }
 
 // ListContainerStats implements [v1.RuntimeServiceServer].
-func (s *Server) ListContainerStats(context.Context, *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
-	panic("ListContainerStats: unimplemented")
+func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
+	logger.Trace().Msg("ListContainerStats")
+
+	filter := req.GetFilter()
+	containers, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
+		Filter: &runtimeapi.ContainerFilter{
+			Id:            filter.GetId(),
+			PodSandboxId:  filter.GetPodSandboxId(),
+			LabelSelector: filter.GetLabelSelector(),
+		},
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	var stats []*runtimeapi.ContainerStats
+	for _, c := range containers.Containers {
+		resp, err := s.ContainerStats(ctx, &runtimeapi.ContainerStatsRequest{ContainerId: c.Id})
+		if err != nil {
+			logger.Warn().Str("id", c.Id).Err(err).Msg("ListContainerStats: skipping container")
+			continue
+		}
+		stats = append(stats, resp.Stats)
+	}
+	return &runtimeapi.ListContainerStatsResponse{Stats: stats}, nil
 }
 
 // ListContainers implements [v1.RuntimeServiceServer].
