@@ -47,6 +47,12 @@ func (b *LabelBuilder) set(key, value string) {
 	b.labels[key] = value
 }
 
+// WithType sets the resource type label.
+func (b *LabelBuilder) WithType(t string) *LabelBuilder {
+	b.set(b.lp.Prefix(typeKey), t)
+	return b
+}
+
 // WithSandbox marks this as a sandbox and sets the sandbox ID.
 func (b *LabelBuilder) WithSandbox(uid string) *LabelBuilder {
 	b.set(b.lp.Prefix(typeKey), sandboxType)
@@ -138,4 +144,20 @@ func (b *LabelBuilder) Build() (string, map[string]string, error) {
 		b.labels[kubelettypes.KubernetesPodUIDLabel],
 	)
 	return name, b.labels, nil
+}
+
+// InternalLabels returns the internal management labels, skipping empty values.
+func (b *LabelBuilder) InternalLabels() map[string]string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make(map[string]string)
+	for k, v := range b.labels {
+		if v == "" {
+			continue
+		}
+		if b.lp.IsInternal(k) {
+			out[k] = v
+		}
+	}
+	return out
 }

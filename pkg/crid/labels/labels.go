@@ -22,8 +22,10 @@ type LabelProvider interface {
 	AnnotationPrefix(key string) string
 	NewBuilder(userLabels map[string]string) *LabelBuilder
 	LogPath(dockerLabels map[string]string) string
+	SandboxID(dockerLabels map[string]string) string
 	ManagedByFilter() string
 	TypeFilter(t string) string
+	SandboxIDFilter(id string) string
 	IsInternal(key string) bool
 	IsAnnotation(key string) bool
 	ExtractLabels(dockerLabels map[string]string) map[string]string
@@ -56,6 +58,11 @@ func (l *LabelProviderImpl) LogPath(dockerLabels map[string]string) string {
 	return dockerLabels[l.Prefix(logPathKey)]
 }
 
+// SandboxID extracts the sandbox ID from a Docker labels map.
+func (l *LabelProviderImpl) SandboxID(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(sandboxIDKey)]
+}
+
 // ManagedByFilter returns a Docker label filter string for managed-by.
 func (l *LabelProviderImpl) ManagedByFilter() string {
 	return l.Prefix(managedByKey) + "=" + l.name
@@ -64,6 +71,11 @@ func (l *LabelProviderImpl) ManagedByFilter() string {
 // TypeFilter returns a Docker label filter string for a given type.
 func (l *LabelProviderImpl) TypeFilter(t string) string {
 	return l.Prefix(typeKey) + "=" + t
+}
+
+// SandboxIDFilter returns a Docker label filter string for a given sandbox ID.
+func (l *LabelProviderImpl) SandboxIDFilter(id string) string {
+	return l.Prefix(sandboxIDKey) + "=" + id
 }
 
 // IsInternal returns true if the label key is an internal management label.

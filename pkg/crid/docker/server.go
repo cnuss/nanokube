@@ -21,18 +21,14 @@ import (
 
 const defaultPauseImage = "registry.k8s.io/pause:3.10"
 
-func NewServer(ctx context.Context, backend *DockerBackend) *Server {
-	return &Server{
-		backend: backend,
-		logs:    newLogWriter(ctx, backend.client),
-	}
+func NewServer(backend *DockerBackend) *Server {
+	return &Server{backend: backend}
 }
 
 type Server struct {
 	runtimeapi.UnsafeImageServiceServer
 	runtimeapi.UnsafeRuntimeServiceServer
 	backend *DockerBackend
-	logs    *logWriter
 }
 
 // Attach implements [v1.RuntimeServiceServer].
@@ -63,7 +59,10 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
 
-	// TODO: reconcile req.GetSandboxConfig() with actual sandbox state
+	if req.GetSandboxConfig() != nil {
+		// TODO: reconcile sandbox config with actual sandbox state
+		panic("CreateContainer: req.SandboxConfig reconciliation not implemented")
+	}
 
 	// Get the sandbox's actual Docker config as our base
 	inspect, err := s.backend.client.ContainerInspect(ctx, sandboxID)
@@ -155,7 +154,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		return nil, wrapErr(err)
 	}
 
-	logger.Debug().Str("id", resp.ID[:12]).Msg("container created")
+	logger.Debug().Str("id", resp.ID).Msg("container created")
 	return &runtimeapi.CreateContainerResponse{ContainerId: resp.ID}, nil
 }
 
@@ -180,8 +179,37 @@ func (s *Server) ListContainerStats(context.Context, *runtimeapi.ListContainerSt
 }
 
 // ListContainers implements [v1.RuntimeServiceServer].
-func (s *Server) ListContainers(context.Context, *runtimeapi.ListContainersRequest) (*runtimeapi.ListContainersResponse, error) {
-	panic("unimplemented")
+func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContainersRequest) (*runtimeapi.ListContainersResponse, error) {
+	logger.Trace().Msg("ListContainers")
+
+	lb := s.backend.labels.NewBuilder(nil).WithType("container")
+	f := s.backend.Into.Filters(lb)
+
+	if filter := req.GetFilter(); filter != nil {
+		if filter.Id != "" {
+			f.Add("id", filter.Id)
+		}
+		if filter.PodSandboxId != "" {
+			f.Add("label", s.backend.labels.SandboxIDFilter(filter.PodSandboxId))
+		}
+		if filter.State != nil {
+			f.Add("status", s.backend.Into.ContainerStatus(filter.State.State))
+		}
+		for k, v := range filter.GetLabelSelector() {
+			f.Add("label", k+"="+v)
+		}
+	}
+
+	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	var result []*runtimeapi.Container
+	for _, c := range containers {
+		result = append(result, s.backend.Into.Container(c))
+	}
+	return &runtimeapi.ListContainersResponse{Containers: result}, nil
 }
 
 // ListMetricDescriptors implements [v1.RuntimeServiceServer].
@@ -190,8 +218,35 @@ func (s *Server) ListMetricDescriptors(context.Context, *runtimeapi.ListMetricDe
 }
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
-func (s *Server) ListPodSandbox(context.Context, *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
-	panic("unimplemented")
+func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
+	logger.Trace().Msg("ListPodSandbox")
+
+	f := s.backend.Into.Filters(s.backend.labels.NewBuilder(nil).WithType("sandbox"))
+
+	if filter := req.GetFilter(); filter != nil {
+		if filter.Id != "" {
+			f.Add("id", filter.Id)
+		}
+		if filter.State != nil {
+			for _, s := range s.backend.Into.PodStatuses(filter.State.State) {
+				f.Add("status", s)
+			}
+		}
+		for k, v := range filter.GetLabelSelector() {
+			f.Add("label", k+"="+v)
+		}
+	}
+
+	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	var result []*runtimeapi.PodSandbox
+	for _, c := range containers {
+		result = append(result, s.backend.Into.PodSandbox(c))
+	}
+	return &runtimeapi.ListPodSandboxResponse{Items: result}, nil
 }
 
 // ListPodSandboxMetrics implements [v1.RuntimeServiceServer].
@@ -220,13 +275,42 @@ func (s *Server) PortForward(context.Context, *runtimeapi.PortForwardRequest) (*
 }
 
 // RemoveContainer implements [v1.RuntimeServiceServer].
-func (s *Server) RemoveContainer(context.Context, *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
-	panic("unimplemented")
+func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
+	logger.Trace().Str("id", req.ContainerId).Msg("RemoveContainer")
+	id := req.GetContainerId()
+
+	// Stop first (timeout 0 = immediate)
+	s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: id, Timeout: 0})
+
+	if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{}); err != nil {
+		if errdefs.IsNotFound(err) {
+			return &runtimeapi.RemoveContainerResponse{}, nil
+		}
+		return nil, wrapErr(err)
+	}
+	return &runtimeapi.RemoveContainerResponse{}, nil
 }
 
 // RemovePodSandbox implements [v1.RuntimeServiceServer].
-func (s *Server) RemovePodSandbox(context.Context, *runtimeapi.RemovePodSandboxRequest) (*runtimeapi.RemovePodSandboxResponse, error) {
-	panic("unimplemented")
+func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePodSandboxRequest) (*runtimeapi.RemovePodSandboxResponse, error) {
+	logger.Trace().Str("id", req.PodSandboxId).Msg("RemovePodSandbox")
+	id := req.GetPodSandboxId()
+
+	// Find and remove all containers belonging to this sandbox
+	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
+		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	for _, c := range resp.Containers {
+		s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: c.Id})
+	}
+
+	// Remove the sandbox itself
+	s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: id})
+
+	return &runtimeapi.RemovePodSandboxResponse{}, nil
 }
 
 // ReopenContainerLog implements [v1.RuntimeServiceServer].
@@ -326,7 +410,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		return nil, wrapErr(err)
 	}
 
-	logger.Debug().Str("id", resp.ID[:12]).Msg("sandbox created")
+	logger.Debug().Str("id", resp.ID).Msg("sandbox created")
 	return &runtimeapi.RunPodSandboxResponse{PodSandboxId: resp.ID}, nil
 }
 
@@ -337,22 +421,14 @@ func (s *Server) RuntimeConfig(context.Context, *runtimeapi.RuntimeConfigRequest
 
 // StartContainer implements [v1.RuntimeServiceServer].
 func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
+	logger.Trace().Str("id", req.ContainerId).Msg("StartContainer")
 	id := req.GetContainerId()
-	logger.Trace().Str("id", id[:12]).Msg("StartContainer")
 
 	if err := s.backend.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		return nil, wrapErr(err)
 	}
 
-	// Start CRI log writer if a log path was configured
-	inspect, err := s.backend.client.ContainerInspect(ctx, id)
-	if err != nil {
-		return &runtimeapi.StartContainerResponse{}, nil // started; log is best-effort
-	}
-	if criLogPath := s.backend.labels.LogPath(inspect.Config.Labels); criLogPath != "" {
-		s.logs.Start(id, criLogPath)
-	}
-
+	s.backend.StartLogs(id)
 	return &runtimeapi.StartContainerResponse{}, nil
 }
 
@@ -362,13 +438,38 @@ func (s *Server) Status(context.Context, *runtimeapi.StatusRequest) (*runtimeapi
 }
 
 // StopContainer implements [v1.RuntimeServiceServer].
-func (s *Server) StopContainer(context.Context, *runtimeapi.StopContainerRequest) (*runtimeapi.StopContainerResponse, error) {
-	panic("unimplemented")
+func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContainerRequest) (*runtimeapi.StopContainerResponse, error) {
+	logger.Trace().Str("id", req.ContainerId).Msg("StopContainer")
+	id := req.GetContainerId()
+
+	s.backend.StopLogs(id)
+
+	t := int(req.GetTimeout())
+	if err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{Timeout: &t}); err != nil {
+		if errdefs.IsNotFound(err) || errdefs.IsNotModified(err) {
+			return &runtimeapi.StopContainerResponse{}, nil
+		}
+		return nil, wrapErr(err)
+	}
+	return &runtimeapi.StopContainerResponse{}, nil
 }
 
 // StopPodSandbox implements [v1.RuntimeServiceServer].
-func (s *Server) StopPodSandbox(context.Context, *runtimeapi.StopPodSandboxRequest) (*runtimeapi.StopPodSandboxResponse, error) {
-	panic("unimplemented")
+func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSandboxRequest) (*runtimeapi.StopPodSandboxResponse, error) {
+	logger.Trace().Str("id", req.PodSandboxId).Msg("StopPodSandbox")
+	id := req.GetPodSandboxId()
+
+	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
+		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	for _, c := range resp.Containers {
+		s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: c.Id, Timeout: 0})
+	}
+
+	return &runtimeapi.StopPodSandboxResponse{}, nil
 }
 
 // UpdateContainerResources implements [v1.RuntimeServiceServer].

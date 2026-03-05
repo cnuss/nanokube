@@ -36,6 +36,13 @@ const (
 	Podman Runtime = "podman"
 )
 
+type Into[State any, Container any] interface {
+	Container(Container) *runtimeapi.Container
+	PodSandbox(Container) *runtimeapi.PodSandbox
+	ContainerState(State) runtimeapi.ContainerState
+	PodState(State) runtimeapi.PodSandboxState
+}
+
 // Driver is what docker/podman implement
 type Driver interface {
 	streaming.Runtime
@@ -117,7 +124,7 @@ func NewBackend(d Driver) Backend {
 func (b *BackendImpl) Start(ctx context.Context) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
 
-	os.MkdirAll(b.DataDir(), 0755)
+	os.MkdirAll(b.DataDir(), 0o755)
 	os.Remove(b.socket())
 	lis, err := net.Listen("unix", b.socket())
 	if err != nil {
@@ -248,7 +255,6 @@ func (b *BackendImpl) Mounter() mount.Interface {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.mounter == nil {
-
 	}
 	return b.mounter
 }

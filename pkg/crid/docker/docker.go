@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	utilexec "k8s.io/utils/exec"
+
 )
 
 var logger = component.NewLogger("crid-docker")
@@ -31,6 +32,8 @@ type DockerBackend struct {
 	client     *dockerclient.Client
 	server     *Server
 	labels     labels.LabelProvider
+	logs       *logWriter
+	Into       DockerInto
 	Mounts     backend.MountLookup
 	serverOnce sync.Once
 }
@@ -89,7 +92,8 @@ func Detect(ctx context.Context, dataDir string) backend.Backend {
 		client.Close()
 		return nil
 	}
-	b := backend.NewBackend(&DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: labels.NewLabels(string(backend.Docker))})
+	lp := labels.NewLabels(string(backend.Docker))
+	b := backend.NewBackend(&DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}})
 	return b
 }
 
@@ -98,11 +102,29 @@ func (b *DockerBackend) Name() backend.Runtime {
 }
 
 func (b *DockerBackend) init() {
-	b.serverOnce.Do(func() { b.server = NewServer(b.ctx, b) })
+	b.serverOnce.Do(func() { b.server = NewServer(b) })
 }
 
 func (b *DockerBackend) Labels() labels.LabelProvider {
 	return b.labels
+}
+
+// StartLogs inspects the container for a CRI log path label and starts
+// a log writer if present. Best-effort; errors are logged and ignored.
+func (b *DockerBackend) StartLogs(containerID string) {
+	inspect, err := b.client.ContainerInspect(b.ctx, containerID)
+	if err != nil {
+		logger.Warn().Str("id", containerID[:12]).Err(err).Msg("failed to start log writer")
+		return
+	}
+	if logPath := b.labels.LogPath(inspect.Config.Labels); logPath != "" {
+		b.logs.Start(containerID, logPath)
+	}
+}
+
+// StopLogs stops the log writer for a container.
+func (b *DockerBackend) StopLogs(containerID string) {
+	b.logs.Stop(containerID)
 }
 
 func (b *DockerBackend) ImageServer() runtimeapi.ImageServiceServer {
