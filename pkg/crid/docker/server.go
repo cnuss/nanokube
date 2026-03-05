@@ -2,11 +2,13 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
@@ -43,8 +45,50 @@ func (s *Server) CheckpointContainer(context.Context, *runtimeapi.CheckpointCont
 }
 
 // ContainerStats implements [v1.RuntimeServiceServer].
-func (s *Server) ContainerStats(context.Context, *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {
-	panic("ContainerStats: unimplemented")
+func (s *Server) ContainerStats(ctx context.Context, req *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {
+	logger.Trace().Str("id", req.ContainerId).Msg("ContainerStats")
+	id := req.GetContainerId()
+
+	statusResp, err := s.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{ContainerId: id})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	cs := statusResp.Status
+
+	resp, err := s.backend.client.ContainerStatsOneShot(ctx, id)
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	defer resp.Body.Close()
+
+	var stats container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return nil, wrapErr(fmt.Errorf("decode docker stats: %w", err))
+	}
+
+	ts := time.Now().UnixNano()
+
+	return &runtimeapi.ContainerStatsResponse{
+		Stats: &runtimeapi.ContainerStats{
+			Attributes: &runtimeapi.ContainerAttributes{
+				Id:          id,
+				Metadata:    cs.Metadata,
+				Labels:      cs.Labels,
+				Annotations: cs.Annotations,
+			},
+			Cpu: &runtimeapi.CpuUsage{
+				Timestamp:            ts,
+				UsageCoreNanoSeconds: &runtimeapi.UInt64Value{Value: stats.CPUStats.CPUUsage.TotalUsage},
+			},
+			Memory: &runtimeapi.MemoryUsage{
+				Timestamp:       ts,
+				WorkingSetBytes: &runtimeapi.UInt64Value{Value: stats.MemoryStats.Usage},
+			},
+			WritableLayer: &runtimeapi.FilesystemUsage{
+				Timestamp: ts,
+			},
+		},
+	}, nil
 }
 
 // ContainerStatus implements [v1.RuntimeServiceServer].
@@ -205,13 +249,15 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 }
 
 // Exec implements [v1.RuntimeServiceServer].
-func (s *Server) Exec(context.Context, *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
-	panic("Exec: unimplemented")
+func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
+	logger.Warn().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("Exec: unimplemented")
+	return nil, fmt.Errorf("Exec: unimplemented")
 }
 
 // ExecSync implements [v1.RuntimeServiceServer].
-func (s *Server) ExecSync(context.Context, *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	panic("ExecSync: unimplemented")
+func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
+	logger.Warn().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync: unimplemented")
+	return nil, fmt.Errorf("ExecSync: unimplemented")
 }
 
 // GetContainerEvents implements [v1.RuntimeServiceServer].
