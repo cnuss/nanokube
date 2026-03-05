@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+	kubelettypes "k8s.io/kubelet/pkg/types"
 )
 
 const defaultPauseImage = "registry.k8s.io/pause:3.10"
@@ -47,8 +48,62 @@ func (s *Server) ContainerStats(context.Context, *runtimeapi.ContainerStatsReque
 }
 
 // ContainerStatus implements [v1.RuntimeServiceServer].
-func (s *Server) ContainerStatus(context.Context, *runtimeapi.ContainerStatusRequest) (*runtimeapi.ContainerStatusResponse, error) {
-	panic("unimplemented")
+func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerStatusRequest) (*runtimeapi.ContainerStatusResponse, error) {
+	logger.Trace().Str("id", req.ContainerId).Msg("ContainerStatus")
+
+	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetContainerId())
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	createdAt := s.backend.Into.CreatedAt(inspect.Created)
+	state := s.backend.Into.ContainerState(inspect.State.Status)
+
+	status := &runtimeapi.ContainerStatus{
+		Id: inspect.ID,
+		Metadata: &runtimeapi.ContainerMetadata{
+			Name: inspect.Config.Labels[kubelettypes.KubernetesContainerNameLabel],
+		},
+		State:       state,
+		CreatedAt:   createdAt,
+		Image:       &runtimeapi.ImageSpec{Image: inspect.Config.Image},
+		ImageRef:    inspect.Image,
+		Labels:      s.backend.labels.ExtractLabels(inspect.Config.Labels),
+		Annotations: s.backend.labels.ExtractAnnotations(inspect.Config.Labels),
+	}
+
+	if logPath := s.backend.labels.LogPath(inspect.Config.Labels); logPath != "" {
+		status.LogPath = logPath
+	} else {
+		status.LogPath = inspect.LogPath
+	}
+
+	if inspect.State.StartedAt != "" && inspect.State.StartedAt != "0001-01-01T00:00:00Z" {
+		status.StartedAt = s.backend.Into.CreatedAt(inspect.State.StartedAt)
+	}
+	if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+		status.FinishedAt = s.backend.Into.CreatedAt(inspect.State.FinishedAt)
+	}
+	if state == runtimeapi.ContainerState_CONTAINER_EXITED {
+		status.ExitCode = int32(inspect.State.ExitCode)
+		status.Reason = inspect.State.Error
+	}
+
+	for _, m := range inspect.Mounts {
+		status.Mounts = append(status.Mounts, &runtimeapi.Mount{
+			ContainerPath: m.Destination,
+			HostPath:      m.Source,
+			Readonly:      !m.RW,
+		})
+	}
+
+	resp := &runtimeapi.ContainerStatusResponse{Status: status}
+	if req.GetVerbose() {
+		resp.Info = map[string]string{
+			"pid": fmt.Sprintf("%d", inspect.State.Pid),
+		}
+	}
+	return resp, nil
 }
 
 // CreateContainer implements [v1.RuntimeServiceServer].
@@ -265,8 +320,39 @@ func (s *Server) PodSandboxStats(context.Context, *runtimeapi.PodSandboxStatsReq
 }
 
 // PodSandboxStatus implements [v1.RuntimeServiceServer].
-func (s *Server) PodSandboxStatus(context.Context, *runtimeapi.PodSandboxStatusRequest) (*runtimeapi.PodSandboxStatusResponse, error) {
-	panic("unimplemented")
+func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandboxStatusRequest) (*runtimeapi.PodSandboxStatusResponse, error) {
+	logger.Trace().Str("id", req.PodSandboxId).Msg("PodSandboxStatus")
+
+	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetPodSandboxId())
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	createdAt := s.backend.Into.CreatedAt(inspect.Created)
+
+	status := &runtimeapi.PodSandboxStatus{
+		Id: inspect.ID,
+		Metadata: &runtimeapi.PodSandboxMetadata{
+			Name:      inspect.Config.Labels[kubelettypes.KubernetesPodNameLabel],
+			Namespace: inspect.Config.Labels[kubelettypes.KubernetesPodNamespaceLabel],
+			Uid:       inspect.Config.Labels[kubelettypes.KubernetesPodUIDLabel],
+		},
+		State:     s.backend.Into.PodState(inspect.State.Status),
+		CreatedAt: createdAt,
+		Network: &runtimeapi.PodSandboxNetworkStatus{
+			Ip: getIPFromInspect(inspect),
+		},
+		Labels:      s.backend.labels.ExtractLabels(inspect.Config.Labels),
+		Annotations: s.backend.labels.ExtractAnnotations(inspect.Config.Labels),
+	}
+
+	resp := &runtimeapi.PodSandboxStatusResponse{Status: status}
+	if req.GetVerbose() {
+		resp.Info = map[string]string{
+			"pid": fmt.Sprintf("%d", inspect.State.Pid),
+		}
+	}
+	return resp, nil
 }
 
 // PortForward implements [v1.RuntimeServiceServer].

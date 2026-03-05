@@ -45,6 +45,11 @@ func (i *DockerInto) PodState(state string) runtimeapi.PodSandboxState {
 	}
 }
 
+func (i *DockerInto) CreatedAt(ts string) int64 {
+	t, _ := time.Parse(time.RFC3339Nano, ts)
+	return t.UnixNano()
+}
+
 func (i *DockerInto) ContainerStatus(state runtimeapi.ContainerState) string {
 	switch state {
 	case runtimeapi.ContainerState_CONTAINER_CREATED:
