@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"sync"
 
 	kubelettypes "k8s.io/kubelet/pkg/types"
@@ -119,11 +118,18 @@ func (b *LabelBuilder) WithAnnotations(annotations map[string]string) *LabelBuil
 	return b
 }
 
-// WithLogPath sets the CRI log path label from logPath and logDir.
-// No-op if either is empty.
-func (b *LabelBuilder) WithLogPath(logPath, logDir string) *LabelBuilder {
-	if logPath != "" && logDir != "" {
-		b.set(b.lp.Prefix(logPathKey), filepath.Join(logDir, logPath))
+// WithLogDirectory sets the CRI log directory label (typically on sandboxes).
+func (b *LabelBuilder) WithLogDirectory(logDir string) *LabelBuilder {
+	if logDir != "" {
+		b.set(b.lp.Prefix(logDirKey), logDir)
+	}
+	return b
+}
+
+// WithLogPath sets the CRI container log path label.
+func (b *LabelBuilder) WithLogPath(logPath string) *LabelBuilder {
+	if logPath != "" {
+		b.set(b.lp.Prefix(logPathKey), logPath)
 	}
 	return b
 }

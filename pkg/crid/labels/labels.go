@@ -1,6 +1,9 @@
 package labels
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 var (
 	typeKey        = "type"
@@ -8,7 +11,8 @@ var (
 	sandboxIDKey   = "sandbox-id"
 	containerIDKey = "container-id"
 	volumeIDKey    = "volume-id"
-	logPathKey     = "container-log-path"
+	logDirKey  = "log-directory"
+	logPathKey = "container-log-path"
 
 	unknownType   = "unknown"
 	sandboxType   = "sandbox"
@@ -21,6 +25,7 @@ type LabelProvider interface {
 	Prefix(key string) string
 	AnnotationPrefix(key string) string
 	NewBuilder(userLabels map[string]string) *LabelBuilder
+	LogDirectory(dockerLabels map[string]string) string
 	LogPath(dockerLabels map[string]string) string
 	SandboxID(dockerLabels map[string]string) string
 	ManagedByFilter() string
@@ -53,9 +58,20 @@ func (l *LabelProviderImpl) AnnotationPrefix(key string) string {
 	return l.Prefix("annotation." + key)
 }
 
-// LogPath extracts the CRI log path from a Docker labels map.
+// LogDirectory extracts the CRI log directory from a Docker labels map.
+func (l *LabelProviderImpl) LogDirectory(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(logDirKey)]
+}
+
+// LogPath returns the full CRI log path by joining the log directory and
+// container log path labels. Returns empty if either is missing.
 func (l *LabelProviderImpl) LogPath(dockerLabels map[string]string) string {
-	return dockerLabels[l.Prefix(logPathKey)]
+	dir := dockerLabels[l.Prefix(logDirKey)]
+	path := dockerLabels[l.Prefix(logPathKey)]
+	if dir == "" || path == "" {
+		return ""
+	}
+	return filepath.Join(dir, path)
 }
 
 // SandboxID extracts the sandbox ID from a Docker labels map.
@@ -86,7 +102,7 @@ func (l *LabelProviderImpl) IsInternal(key string) bool {
 	}
 	suffix := key[len(prefix):]
 	switch suffix {
-	case typeKey, managedByKey, sandboxIDKey, containerIDKey, logPathKey:
+	case typeKey, managedByKey, sandboxIDKey, containerIDKey, logDirKey, logPathKey:
 		return true
 	}
 	return false
@@ -97,12 +113,12 @@ func (l *LabelProviderImpl) IsAnnotation(key string) bool {
 	return strings.HasPrefix(key, l.Prefix("annotation."))
 }
 
-// ExtractLabels extracts CRI labels from Docker labels, excluding internal
-// management labels and annotation-prefixed labels.
+// ExtractLabels extracts CRI labels from Docker labels, excluding
+// annotation-prefixed labels.
 func (l *LabelProviderImpl) ExtractLabels(dockerLabels map[string]string) map[string]string {
 	out := make(map[string]string)
 	for k, v := range dockerLabels {
-		if l.IsInternal(k) || l.IsAnnotation(k) {
+		if l.IsAnnotation(k) {
 			continue
 		}
 		out[k] = v

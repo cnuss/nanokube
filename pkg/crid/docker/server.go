@@ -114,52 +114,53 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
 
-	if req.GetSandboxConfig() != nil {
-		// TODO: reconcile sandbox config with actual sandbox state
-		panic("CreateContainer: req.SandboxConfig reconciliation not implemented")
-	}
-
-	// Get the sandbox's actual Docker config as our base
-	inspect, err := s.backend.client.ContainerInspect(ctx, sandboxID)
+	// Get sandbox status via CRI
+	sandbox, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: sandboxID})
 	if err != nil {
 		return nil, wrapErr(err)
 	}
+	status := sandbox.Status
 
 	// Labels: start from sandbox, layer container labels on top
-	name, labels, err := s.backend.labels.NewBuilder(inspect.Config.Labels).
+	name, labels, err := s.backend.labels.NewBuilder(nil).
+		WithLabels(status.GetLabels()).
 		WithLabels(config.GetLabels()).
 		WithContainer(sandboxID, meta.GetName()).
+		WithAnnotations(status.GetAnnotations()).
 		WithAnnotations(config.GetAnnotations()).
-		WithLogPath(config.GetLogPath(), req.GetSandboxConfig().GetLogDirectory()).Build()
+		WithLogPath(config.GetLogPath()).
+		WithPod(status.GetMetadata().GetName(), status.GetMetadata().GetNamespace(), status.GetMetadata().GetUid()).
+		Build()
 	if err != nil {
 		return nil, wrapErr(err)
 	}
 
-	// Override image, command, env from container config
+	// Build Docker config from CRI container config
 	envs := make([]string, 0, len(config.GetEnvs()))
 	for _, kv := range config.GetEnvs() {
 		envs = append(envs, kv.GetKey()+"="+kv.GetValue())
 	}
 
-	dockerConfig := inspect.Config
-	dockerConfig.Image = config.GetImage().GetImage()
-	dockerConfig.Entrypoint = config.GetCommand()
-	dockerConfig.Cmd = config.GetArgs()
-	dockerConfig.Env = envs
-	dockerConfig.WorkingDir = config.GetWorkingDir()
-	dockerConfig.Labels = labels
-	dockerConfig.StdinOnce = config.GetStdinOnce()
-	dockerConfig.OpenStdin = config.GetStdin()
-	dockerConfig.Tty = config.GetTty()
+	dockerConfig := &container.Config{
+		Image:      config.GetImage().GetImage(),
+		Entrypoint: config.GetCommand(),
+		Cmd:        config.GetArgs(),
+		Env:        envs,
+		WorkingDir: config.GetWorkingDir(),
+		Labels:     labels,
+		StdinOnce:  config.GetStdinOnce(),
+		OpenStdin:  config.GetStdin(),
+		Tty:        config.GetTty(),
+	}
 
-	// Host config: inherit sandbox, share namespaces
-	hostConfig := inspect.HostConfig
-	hostConfig.NetworkMode = container.NetworkMode("container:" + sandboxID)
-	hostConfig.IpcMode = container.IpcMode("container:" + sandboxID)
-	hostConfig.PidMode = container.PidMode("container:" + sandboxID)
+	// Host config: share sandbox namespaces
+	hostConfig := &container.HostConfig{
+		NetworkMode: container.NetworkMode("container:" + sandboxID),
+		IpcMode:     container.IpcMode("container:" + sandboxID),
+		PidMode:     container.PidMode("container:" + sandboxID),
+	}
 
-	// Mounts: override with container-specific mounts
-	hostConfig.Binds = nil
+	// Mounts
 	for _, m := range config.GetMounts() {
 		bind := m.GetHostPath() + ":" + m.GetContainerPath()
 		if m.GetReadonly() {
@@ -168,7 +169,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		hostConfig.Binds = append(hostConfig.Binds, bind)
 	}
 
-	// Linux resource overrides
+	// Linux resources
 	if linux := config.GetLinux(); linux != nil {
 		if res := linux.GetResources(); res != nil {
 			hostConfig.Resources.CPUShares = res.GetCpuShares()
@@ -194,17 +195,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		}
 	}
 
-	netConfig := &network.NetworkingConfig{}
-	if inspect.NetworkSettings != nil {
-		netConfig.EndpointsConfig = inspect.NetworkSettings.Networks
-	}
-
-	var platform *ocispec.Platform
-	if inspect.ImageManifestDescriptor != nil {
-		platform = inspect.ImageManifestDescriptor.Platform
-	}
-
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, netConfig, platform, name)
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
@@ -433,6 +424,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		WithSandbox(meta.GetUid()).
 		WithPod(meta.GetName(), meta.GetNamespace(), meta.GetUid()).
 		WithAnnotations(config.GetAnnotations()).
+		WithLogDirectory(config.GetLogDirectory()).
 		Build()
 	if err != nil {
 		return nil, wrapErr(err)
