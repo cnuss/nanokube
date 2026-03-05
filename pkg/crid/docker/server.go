@@ -479,8 +479,12 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 }
 
 // ReopenContainerLog implements [v1.RuntimeServiceServer].
-func (s *Server) ReopenContainerLog(context.Context, *runtimeapi.ReopenContainerLogRequest) (*runtimeapi.ReopenContainerLogResponse, error) {
-	panic("ReopenContainerLog: unimplemented")
+func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenContainerLogRequest) (*runtimeapi.ReopenContainerLogResponse, error) {
+	logger.Trace().Str("id", req.ContainerId).Msg("ReopenContainerLog")
+	id := req.GetContainerId()
+	s.backend.StopLogs(id)
+	s.backend.StartLogs(id)
+	return &runtimeapi.ReopenContainerLogResponse{}, nil
 }
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
