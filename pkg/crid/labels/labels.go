@@ -19,11 +19,7 @@ type LabelProvider interface {
 	Name() string
 	Prefix(key string) string
 	AnnotationPrefix(key string) string
-	Default() map[string]string
-	SandboxLabels(sandboxID string) map[string]string
-	ContainerLabels(sandboxID string, containerID string) map[string]string
-	VolumeLabels(sandboxID string, containerID string, volumeID string) map[string]string
-	Annotate(labels map[string]string, annotations map[string]string)
+	NewBuilder(userLabels map[string]string) *LabelBuilder
 	ManagedByFilter() string
 	TypeFilter(t string) string
 	IsInternal(key string) bool
@@ -51,40 +47,6 @@ func (l *LabelProviderImpl) Prefix(key string) string {
 
 func (l *LabelProviderImpl) AnnotationPrefix(key string) string {
 	return l.Prefix("annotation." + key)
-}
-
-func (l *LabelProviderImpl) Default() map[string]string {
-	labels := make(map[string]string)
-	labels[l.Prefix(managedByKey)] = l.name
-	labels[l.Prefix(typeKey)] = unknownType
-	return labels
-}
-
-func (l *LabelProviderImpl) SandboxLabels(sandboxID string) map[string]string {
-	labels := l.Default()
-	labels[l.Prefix(sandboxIDKey)] = sandboxID
-	labels[l.Prefix(typeKey)] = sandboxType
-	return labels
-}
-
-func (l *LabelProviderImpl) ContainerLabels(sandboxID string, containerID string) map[string]string {
-	labels := l.SandboxLabels(sandboxID)
-	labels[l.Prefix(containerIDKey)] = containerID
-	labels[l.Prefix(typeKey)] = containerType
-	return labels
-}
-
-func (l *LabelProviderImpl) VolumeLabels(sandboxID string, containerID string, volumeID string) map[string]string {
-	labels := l.ContainerLabels(sandboxID, containerID)
-	labels[l.Prefix(volumeIDKey)] = volumeID
-	labels[l.Prefix(typeKey)] = volumeType
-	return labels
-}
-
-func (l *LabelProviderImpl) Annotate(labels map[string]string, annotations map[string]string) {
-	for k, v := range annotations {
-		labels[l.AnnotationPrefix(k)] = v
-	}
 }
 
 // ManagedByFilter returns a Docker label filter string for managed-by.

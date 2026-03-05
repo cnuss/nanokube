@@ -9,9 +9,12 @@ import (
 	"sync"
 
 	"github.com/containerd/errdefs"
-	"k8s.io/component-base/version"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-connections/nat"
 	"google.golang.org/grpc"
+	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -133,8 +136,87 @@ func (s *Server) ReopenContainerLog(context.Context, *runtimeapi.ReopenContainer
 }
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
-func (s *Server) RunPodSandbox(context.Context, *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	panic("unimplemented")
+func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
+	logger.Trace().Str("name", req.Config.Metadata.Name).Str("namespace", req.Config.Metadata.Namespace).Str("uid", req.Config.Metadata.Uid).Msg("RunPodSandbox")
+
+	config := req.GetConfig()
+	meta := config.GetMetadata()
+
+	b := s.backend.labels.NewBuilder(config.GetLabels()).
+		WithSandbox(meta.GetUid()).
+		WithPod(meta.GetName(), meta.GetNamespace(), meta.GetUid()).
+		WithAnnotations(config.GetAnnotations())
+
+	dockerConfig := &container.Config{
+		Image:    defaultPauseImage,
+		Hostname: config.GetHostname(),
+		Labels:   b.BuildLabels(),
+	}
+
+	hostConfig := &container.HostConfig{
+		IpcMode: container.IpcMode("shareable"),
+	}
+
+	// DNS
+	if dns := config.GetDnsConfig(); dns != nil {
+		hostConfig.DNS = dns.GetServers()
+		hostConfig.DNSSearch = dns.GetSearches()
+		hostConfig.DNSOptions = dns.GetOptions()
+	}
+
+	// Port mappings
+	if pms := config.GetPortMappings(); len(pms) > 0 {
+		dockerConfig.ExposedPorts = nat.PortSet{}
+		hostConfig.PortBindings = nat.PortMap{}
+		for _, pm := range pms {
+			port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
+			dockerConfig.ExposedPorts[port] = struct{}{}
+			hostPort := pm.GetHostPort()
+			if hostPort == 0 {
+				hostPort = pm.GetContainerPort()
+			}
+			hostConfig.PortBindings[port] = []nat.PortBinding{
+				{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
+			}
+		}
+	}
+
+	// Linux namespace options
+	if linux := config.GetLinux(); linux != nil {
+		if sc := linux.GetSecurityContext(); sc != nil {
+			if sc.GetPrivileged() {
+				hostConfig.Privileged = true
+			}
+			if ns := sc.GetNamespaceOptions(); ns != nil {
+				if ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
+					hostConfig.NetworkMode = "host"
+				}
+				if ns.GetPid() == runtimeapi.NamespaceMode_NODE {
+					hostConfig.PidMode = "host"
+				}
+				if ns.GetIpc() == runtimeapi.NamespaceMode_NODE {
+					hostConfig.IpcMode = "host"
+				}
+			}
+		}
+	}
+
+	// Ensure pause image is available
+	imgSpec := &runtimeapi.ImageSpec{Image: dockerConfig.Image}
+	status, _ := s.ImageStatus(ctx, &runtimeapi.ImageStatusRequest{Image: imgSpec})
+	if status.Image == nil {
+		if _, err := s.PullImage(ctx, &runtimeapi.PullImageRequest{Image: imgSpec}); err != nil {
+			return nil, fmt.Errorf("pull sandbox image: %w", err)
+		}
+	}
+
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, nil, b.BuildName())
+	if err != nil {
+		return nil, fmt.Errorf("create sandbox: %w", err)
+	}
+
+	logger.Debug().Str("id", resp.ID[:12]).Msg("sandbox created")
+	return &runtimeapi.RunPodSandboxResponse{PodSandboxId: resp.ID}, nil
 }
 
 // RuntimeConfig implements [v1.RuntimeServiceServer].
