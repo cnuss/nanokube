@@ -435,8 +435,9 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 }
 
 // PortForward implements [v1.RuntimeServiceServer].
-func (s *Server) PortForward(context.Context, *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
-	panic("PortForward: unimplemented")
+func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
+	logger.Warn().Str("sandbox", req.GetPodSandboxId()).Interface("ports", req.GetPort()).Msg("PortForward: unimplemented")
+	return nil, fmt.Errorf("PortForward: unimplemented")
 }
 
 // RemoveContainer implements [v1.RuntimeServiceServer].
