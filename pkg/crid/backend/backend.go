@@ -53,6 +53,8 @@ type Driver interface {
 
 	ImageServer() runtimeapi.ImageServiceServer
 	ContainerServer() runtimeapi.RuntimeServiceServer
+
+	Run(img string, cmd []string, binds []string, host bool) (string, error)
 }
 
 // Backend is the full interface consumers use
@@ -74,9 +76,6 @@ type Backend interface {
 	HostUtils() hostutil.HostUtils
 	EventRecorder() record.EventRecorder
 	Prober() prober.Manager
-
-	RunProbe(cmd []string) (string, error)
-	RunHostProbe(cmd []string) (string, error)
 
 	Hostname() string
 }
@@ -313,16 +312,8 @@ func (b *BackendImpl) Prober() prober.Manager {
 	return b.prober
 }
 
-func (b *BackendImpl) RunProbe(cmd []string) (string, error) {
-	return "", fmt.Errorf("probe not implemented for backend %s", b.Name())
-}
-
-func (b *BackendImpl) RunHostProbe(cmd []string) (string, error) {
-	return "", fmt.Errorf("host probe not implemented for backend %s", b.Name())
-}
-
 func (b *BackendImpl) Hostname() string {
-	hostname, err := b.RunHostProbe([]string{"hostname"})
+	hostname, err := b.Run("busybox", []string{"hostname"}, []string{}, true)
 	if err != nil {
 		b.log.Warn().Err(err).Msg("failed to get hostname from backend, using fallback")
 		return "localhost"

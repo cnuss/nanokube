@@ -143,8 +143,10 @@ func (b *LabelBuilder) Build() (string, map[string]string, error) {
 		return "", nil, b.err
 	}
 	b.built = true
-	name := fmt.Sprintf("k8s_%s_%s_%s_%s",
+	containerName := b.labels[kubelettypes.KubernetesContainerNameLabel]
+	name := fmt.Sprintf("k8s_%s_%s_%s_%s_%s",
 		b.labels[b.lp.Prefix(typeKey)],
+		containerName,
 		b.labels[kubelettypes.KubernetesPodNameLabel],
 		b.labels[kubelettypes.KubernetesPodNamespaceLabel],
 		b.labels[kubelettypes.KubernetesPodUIDLabel],

@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -16,12 +17,12 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/labels"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"k8s.io/client-go/tools/remotecommand"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	utilexec "k8s.io/utils/exec"
-
 )
 
 var logger = component.NewLogger("crid-docker")
@@ -69,7 +70,7 @@ func Detect(ctx context.Context, dataDir string) backend.Backend {
 	}
 
 	dataDir = filepath.Join(dataDir, string(backend.Docker))
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil
 	}
 
@@ -251,6 +252,47 @@ func (b *DockerBackend) PortForward(ctx context.Context, podSandboxID string, po
 	}()
 	wg.Wait()
 	return nil
+}
+
+// RunCmd implements [backend.Driver].
+func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool) (string, error) {
+	reader, err := b.client.ImagePull(b.ctx, img, image.PullOptions{})
+	if err != nil {
+		return "", wrapErr(err)
+	}
+	io.Copy(io.Discard, reader)
+	reader.Close()
+
+	hostConfig := &container.HostConfig{AutoRemove: true, Binds: binds}
+	if host {
+		hostConfig.NetworkMode = "host"
+		hostConfig.PidMode = "host"
+		hostConfig.Privileged = true
+	}
+
+	resp, err := b.client.ContainerCreate(b.ctx, &container.Config{
+		Image:        img,
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, hostConfig, nil, nil, "")
+	if err != nil {
+		return "", wrapErr(err)
+	}
+
+	attach, err := b.client.ContainerAttach(b.ctx, resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return "", wrapErr(err)
+	}
+	defer attach.Close()
+
+	if err := b.client.ContainerStart(b.ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", wrapErr(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	stdcopy.StdCopy(&stdout, &stderr, attach.Reader)
+	return stdout.String(), nil
 }
 
 // proxyStreams proxies stdin/stdout/stderr to/from a hijacked Docker connection.

@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
@@ -257,8 +259,71 @@ func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtim
 
 // ExecSync implements [v1.RuntimeServiceServer].
 func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	logger.Warn().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync: unimplemented")
-	return nil, fmt.Errorf("ExecSync: unimplemented")
+	logger.Trace().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
+	id := req.GetContainerId()
+
+	exec, err := s.backend.client.ContainerExecCreate(ctx, id, container.ExecOptions{
+		Cmd:          req.GetCmd(),
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	resp, err := s.backend.client.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	defer resp.Close()
+
+	if timeout := req.GetTimeout(); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
+
+	var stdout, stderr bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdout, &stderr, resp.Reader)
+		done <- err
+	}()
+
+	timedOut := false
+	select {
+	case <-ctx.Done():
+		timedOut = true
+	case err := <-done:
+		if err != nil {
+			return nil, wrapErr(err)
+		}
+	}
+
+	ei, err := s.backend.client.ContainerExecInspect(context.Background(), exec.ID)
+	if timedOut {
+		if err == nil && ei.Pid > 0 {
+			if _, err := s.backend.Run("busybox", []string{"kill", "-9", fmt.Sprintf("%d", ei.Pid)}, nil, true); err != nil {
+				logger.Warn().Err(err).Int("pid", ei.Pid).Msg("ExecSync: failed to kill timed-out process")
+			}
+		}
+		return &runtimeapi.ExecSyncResponse{
+			Stdout:   stdout.Bytes(),
+			Stderr:   stderr.Bytes(),
+			ExitCode: -1,
+		}, nil
+	}
+
+	var exitCode int32
+	if err == nil {
+		exitCode = int32(ei.ExitCode)
+	}
+	return &runtimeapi.ExecSyncResponse{
+		Stdout:   stdout.Bytes(),
+		Stderr:   stderr.Bytes(),
+		ExitCode: exitCode,
+
+		}, nil
 }
 
 // GetContainerEvents implements [v1.RuntimeServiceServer].
