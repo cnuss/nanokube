@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
@@ -20,6 +21,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
+	"gorm.io/gorm/logger"
 	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
@@ -29,12 +31,13 @@ import (
 const defaultPauseImage = "registry.k8s.io/pause:3.10"
 
 func NewServer(b *DockerBackend, parent backend.Backend) *Server {
-	return &Server{backend: b, streaming: parent.Streaming()}
+	return &Server{backend: b, streaming: parent.Streaming(), log: component.NewLogger("docker-server")}
 }
 
 type Server struct {
 	runtimeapi.UnsafeImageServiceServer
 	runtimeapi.UnsafeRuntimeServiceServer
+	log       component.Logger
 	backend   *DockerBackend
 	streaming streaming.Server
 }
@@ -45,13 +48,14 @@ func (s *Server) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*ru
 }
 
 // CheckpointContainer implements [v1.RuntimeServiceServer].
-func (s *Server) CheckpointContainer(context.Context, *runtimeapi.CheckpointContainerRequest) (*runtimeapi.CheckpointContainerResponse, error) {
-	panic("CheckpointContainer: unimplemented")
+func (s *Server) CheckpointContainer(ctx context.Context, req *runtimeapi.CheckpointContainerRequest) (*runtimeapi.CheckpointContainerResponse, error) {
+	s.log.Warn().Str("method", "CheckpointContainer").Str("id", req.ContainerId).Msg("not implemented")
+	return nil, wrapErr(fmt.Errorf("not implemented"))
 }
 
 // ContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ContainerStats(ctx context.Context, req *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {
-	logger.Trace().Str("id", req.ContainerId).Msg("ContainerStats")
+	s.log.Trace().Str("id", req.ContainerId).Msg("ContainerStats")
 	id := req.GetContainerId()
 
 	statusResp, err := s.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{ContainerId: id})
@@ -98,7 +102,7 @@ func (s *Server) ContainerStats(ctx context.Context, req *runtimeapi.ContainerSt
 
 // ContainerStatus implements [v1.RuntimeServiceServer].
 func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerStatusRequest) (*runtimeapi.ContainerStatusResponse, error) {
-	logger.Trace().Str("id", req.ContainerId).Msg("ContainerStatus")
+	s.log.Trace().Str("id", req.ContainerId).Msg("ContainerStatus")
 
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetContainerId())
 	if err != nil {
@@ -157,7 +161,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 // CreateContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
-	logger.Trace().Str("name", req.Config.Metadata.Name).Str("sandbox", req.PodSandboxId).Str("image", req.Config.Image.Image).Msg("CreateContainer")
+	s.log.Trace().Str("name", req.Config.Metadata.Name).Str("sandbox", req.PodSandboxId).Str("image", req.Config.Image.Image).Msg("CreateContainer")
 
 	config := req.GetConfig()
 	sandboxID := req.GetPodSandboxId()
@@ -249,7 +253,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		return nil, wrapErr(err)
 	}
 
-	logger.Debug().Str("id", resp.ID).Msg("container created")
+	s.log.Debug().Str("id", resp.ID).Msg("container created")
 	return &runtimeapi.CreateContainerResponse{ContainerId: resp.ID}, nil
 }
 
@@ -260,7 +264,7 @@ func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtim
 
 // ExecSync implements [v1.RuntimeServiceServer].
 func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	logger.Trace().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
+	s.log.Trace().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
 	id := req.GetContainerId()
 
 	exec, err := s.backend.client.ContainerExecCreate(ctx, id, container.ExecOptions{
@@ -328,12 +332,13 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 
 // GetContainerEvents implements [v1.RuntimeServiceServer].
 func (s *Server) GetContainerEvents(*runtimeapi.GetEventsRequest, grpc.ServerStreamingServer[runtimeapi.ContainerEventResponse]) error {
-	panic("GetContainerEvents: unimplemented")
+	s.log.Warn().Str("method", "GetContainerEvents").Msg("not implemented")
+	return wrapErr(fmt.Errorf("not implemented"))
 }
 
 // ListContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
-	logger.Trace().Msg("ListContainerStats")
+	s.log.Trace().Msg("ListContainerStats")
 
 	filter := req.GetFilter()
 	containers, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
@@ -351,7 +356,7 @@ func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListCon
 	for _, c := range containers.Containers {
 		resp, err := s.ContainerStats(ctx, &runtimeapi.ContainerStatsRequest{ContainerId: c.Id})
 		if err != nil {
-			logger.Warn().Str("id", c.Id).Err(err).Msg("ListContainerStats: skipping container")
+			s.log.Warn().Str("id", c.Id).Err(err).Msg("ListContainerStats: skipping container")
 			continue
 		}
 		stats = append(stats, resp.Stats)
@@ -361,7 +366,7 @@ func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListCon
 
 // ListContainers implements [v1.RuntimeServiceServer].
 func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContainersRequest) (*runtimeapi.ListContainersResponse, error) {
-	logger.Trace().Msg("ListContainers")
+	s.log.Trace().Msg("ListContainers")
 
 	lb := s.backend.labels.NewBuilder(nil).WithType("container")
 	f := s.backend.Into.Filters(lb)
@@ -406,12 +411,13 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 
 // ListMetricDescriptors implements [v1.RuntimeServiceServer].
 func (s *Server) ListMetricDescriptors(context.Context, *runtimeapi.ListMetricDescriptorsRequest) (*runtimeapi.ListMetricDescriptorsResponse, error) {
-	panic("ListMetricDescriptors: unimplemented")
+	s.log.Warn().Str("method", "ListMetricDescriptors").Msg("not implemented")
+	return nil, wrapErr(fmt.Errorf("not implemented"))
 }
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
-	logger.Trace().Msg("ListPodSandbox")
+	s.log.Trace().Msg("ListPodSandbox")
 
 	f := s.backend.Into.Filters(s.backend.labels.NewBuilder(nil).WithType("sandbox"))
 
@@ -450,22 +456,25 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 
 // ListPodSandboxMetrics implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandboxMetrics(context.Context, *runtimeapi.ListPodSandboxMetricsRequest) (*runtimeapi.ListPodSandboxMetricsResponse, error) {
-	panic("ListPodSandboxMetrics: unimplemented")
+	s.log.Warn().Str("method", "ListPodSandboxMetrics").Msg("not implemented")
+	return nil, wrapErr(fmt.Errorf("not implemented"))
 }
 
 // ListPodSandboxStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandboxStats(context.Context, *runtimeapi.ListPodSandboxStatsRequest) (*runtimeapi.ListPodSandboxStatsResponse, error) {
-	panic("ListPodSandboxStats: unimplemented")
+	s.log.Warn().Str("method", "ListPodSandboxStats").Msg("not implemented")
+	return nil, wrapErr(fmt.Errorf("not implemented"))
 }
 
 // PodSandboxStats implements [v1.RuntimeServiceServer].
 func (s *Server) PodSandboxStats(context.Context, *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
-	panic("PodSandboxStats: unimplemented")
+	s.log.Warn().Str("method", "PodSandboxStats").Msg("not implemented")
+	return nil, wrapErr(fmt.Errorf("not implemented"))
 }
 
 // PodSandboxStatus implements [v1.RuntimeServiceServer].
 func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandboxStatusRequest) (*runtimeapi.PodSandboxStatusResponse, error) {
-	logger.Trace().Str("id", req.PodSandboxId).Msg("PodSandboxStatus")
+	s.log.Trace().Str("id", req.PodSandboxId).Msg("PodSandboxStatus")
 
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetPodSandboxId())
 	if err != nil {
@@ -506,7 +515,7 @@ func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardReq
 
 // RemoveContainer implements [v1.RuntimeServiceServer].
 func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
-	logger.Trace().Str("id", req.ContainerId).Msg("RemoveContainer")
+	s.log.Trace().Str("id", req.ContainerId).Msg("RemoveContainer")
 	id := req.GetContainerId()
 
 	// Stop first (timeout 0 = immediate)
@@ -523,7 +532,7 @@ func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveCont
 
 // RemovePodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePodSandboxRequest) (*runtimeapi.RemovePodSandboxResponse, error) {
-	logger.Trace().Str("id", req.PodSandboxId).Msg("RemovePodSandbox")
+	s.log.Trace().Str("id", req.PodSandboxId).Msg("RemovePodSandbox")
 	id := req.GetPodSandboxId()
 
 	// Find and remove all containers belonging to this sandbox
@@ -545,7 +554,7 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 
 // ReopenContainerLog implements [v1.RuntimeServiceServer].
 func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenContainerLogRequest) (*runtimeapi.ReopenContainerLogResponse, error) {
-	logger.Trace().Str("id", req.ContainerId).Msg("ReopenContainerLog")
+	s.log.Trace().Str("id", req.ContainerId).Msg("ReopenContainerLog")
 	id := req.GetContainerId()
 	s.backend.StopLogs(id)
 	s.backend.StartLogs(id)
@@ -554,7 +563,7 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	logger.Trace().Str("name", req.Config.Metadata.Name).Str("namespace", req.Config.Metadata.Namespace).Str("uid", req.Config.Metadata.Uid).Msg("RunPodSandbox")
+	s.log.Trace().Str("name", req.Config.Metadata.Name).Str("namespace", req.Config.Metadata.Namespace).Str("uid", req.Config.Metadata.Uid).Msg("RunPodSandbox")
 
 	config := req.GetConfig()
 	meta := config.GetMetadata()
@@ -650,19 +659,19 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		return nil, wrapErr(err)
 	}
 
-	logger.Debug().Str("id", resp.ID).Msg("sandbox started")
+	s.log.Debug().Str("id", resp.ID).Msg("sandbox started")
 	return &runtimeapi.RunPodSandboxResponse{PodSandboxId: resp.ID}, nil
 }
 
 // RuntimeConfig implements [v1.RuntimeServiceServer].
 func (s *Server) RuntimeConfig(ctx context.Context, req *runtimeapi.RuntimeConfigRequest) (*runtimeapi.RuntimeConfigResponse, error) {
-	logger.Trace().Msg("RuntimeConfig")
+	s.log.Trace().Msg("RuntimeConfig")
 	return &runtimeapi.RuntimeConfigResponse{}, nil
 }
 
 // StartContainer implements [v1.RuntimeServiceServer].
 func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
-	logger.Trace().Str("id", req.ContainerId).Msg("StartContainer")
+	s.log.Trace().Str("id", req.ContainerId).Msg("StartContainer")
 	id := req.GetContainerId()
 
 	if err := s.backend.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
@@ -675,7 +684,7 @@ func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContai
 
 // Status implements [v1.RuntimeServiceServer].
 func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
-	logger.Trace().Msg("Status")
+	s.log.Trace().Msg("Status")
 
 	info, err := s.backend.client.Info(ctx)
 	_, netErr := s.backend.client.NetworkInspect(ctx, "bridge", network.InspectOptions{})
@@ -699,7 +708,7 @@ func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*ru
 
 // StopContainer implements [v1.RuntimeServiceServer].
 func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContainerRequest) (*runtimeapi.StopContainerResponse, error) {
-	logger.Trace().Str("id", req.ContainerId).Msg("StopContainer")
+	s.log.Trace().Str("id", req.ContainerId).Msg("StopContainer")
 	id := req.GetContainerId()
 
 	s.backend.StopLogs(id)
@@ -716,7 +725,7 @@ func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContaine
 
 // StopPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSandboxRequest) (*runtimeapi.StopPodSandboxResponse, error) {
-	logger.Trace().Str("id", req.PodSandboxId).Msg("StopPodSandbox")
+	s.log.Trace().Str("id", req.PodSandboxId).Msg("StopPodSandbox")
 	id := req.GetPodSandboxId()
 
 	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
@@ -736,18 +745,38 @@ func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSand
 }
 
 // UpdateContainerResources implements [v1.RuntimeServiceServer].
-func (s *Server) UpdateContainerResources(context.Context, *runtimeapi.UpdateContainerResourcesRequest) (*runtimeapi.UpdateContainerResourcesResponse, error) {
-	panic("UpdateContainerResources: unimplemented")
+func (s *Server) UpdateContainerResources(ctx context.Context, req *runtimeapi.UpdateContainerResourcesRequest) (*runtimeapi.UpdateContainerResourcesResponse, error) {
+	s.log.Trace().Str("id", req.ContainerId).Msg("UpdateContainerResources")
+	resources := req.Linux
+	if resources == nil {
+		return &runtimeapi.UpdateContainerResourcesResponse{}, nil
+	}
+	_, err := s.backend.client.ContainerUpdate(ctx, req.ContainerId, container.UpdateConfig{
+		Resources: container.Resources{
+			CPUPeriod:  resources.CpuPeriod,
+			CPUQuota:   resources.CpuQuota,
+			CPUShares:  resources.CpuShares,
+			Memory:     resources.MemoryLimitInBytes,
+			MemorySwap: resources.MemoryLimitInBytes,
+			CpusetCpus: resources.CpusetCpus,
+			CpusetMems: resources.CpusetMems,
+		},
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	return &runtimeapi.UpdateContainerResourcesResponse{}, nil
 }
 
 // UpdatePodSandboxResources implements [v1.RuntimeServiceServer].
 func (s *Server) UpdatePodSandboxResources(context.Context, *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
-	panic("UpdatePodSandboxResources: unimplemented")
+	s.log.Warn().Str("method", "UpdatePodSandboxResources").Msg("not implemented")
+	return nil, wrapErr(fmt.Errorf("not implemented"))
 }
 
 // UpdateRuntimeConfig implements [v1.RuntimeServiceServer].
 func (s *Server) UpdateRuntimeConfig(ctx context.Context, req *runtimeapi.UpdateRuntimeConfigRequest) (*runtimeapi.UpdateRuntimeConfigResponse, error) {
-	logger.Trace().Msg("UpdateRuntimeConfig")
+	s.log.Trace().Msg("UpdateRuntimeConfig")
 	return &runtimeapi.UpdateRuntimeConfigResponse{}, nil
 }
 

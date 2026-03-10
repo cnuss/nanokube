@@ -21,15 +21,15 @@ import (
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"gorm.io/gorm/logger"
 	"k8s.io/client-go/tools/remotecommand"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	utilexec "k8s.io/utils/exec"
 )
 
-var logger = component.NewLogger("crid-docker")
-
 type DockerBackend struct {
 	ctx        context.Context
+	log        component.Logger
 	dataDir    string
 	client     *dockerclient.Client
 	server     *Server
