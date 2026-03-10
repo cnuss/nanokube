@@ -21,7 +21,6 @@ import (
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"gorm.io/gorm/logger"
 	"k8s.io/client-go/tools/remotecommand"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	utilexec "k8s.io/utils/exec"
@@ -119,7 +118,7 @@ func (b *DockerBackend) Labels() labels.LabelProvider {
 func (b *DockerBackend) StartLogs(containerID string) {
 	inspect, err := b.client.ContainerInspect(b.ctx, containerID)
 	if err != nil {
-		logger.Warn().Str("id", containerID[:12]).Err(err).Msg("failed to start log writer")
+		b.log.Warn().Str("id", containerID[:12]).Err(err).Msg("failed to start log writer")
 		return
 	}
 	if logPath := b.labels.LogPath(inspect.Config.Labels); logPath != "" {
@@ -152,7 +151,7 @@ func (b *DockerBackend) Exec(ctx context.Context, containerID string, cmd []stri
 		Tty:          tty,
 	}
 
-	logger.Info().Str("container", containerID[:12]).Strs("cmd", cmd).Bool("tty", tty).Msg("exec")
+	b.log.Info().Str("container", containerID[:12]).Strs("cmd", cmd).Bool("tty", tty).Msg("exec")
 
 	createResp, err := b.client.ContainerExecCreate(ctx, containerID, execConfig)
 	if err != nil {
@@ -183,7 +182,7 @@ func (b *DockerBackend) Exec(ctx context.Context, containerID string, cmd []stri
 		return nil
 	}
 	if inspect.ExitCode != 0 {
-		logger.Info().Str("container", containerID[:12]).Int("code", inspect.ExitCode).Msg("exec exited")
+		b.log.Info().Str("container", containerID[:12]).Int("code", inspect.ExitCode).Msg("exec exited")
 		return utilexec.CodeExitError{
 			Err:  fmt.Errorf("command terminated with exit code %d", inspect.ExitCode),
 			Code: inspect.ExitCode,
@@ -201,7 +200,7 @@ func (b *DockerBackend) Attach(ctx context.Context, containerID string, stdin io
 		Stderr: stderr != nil,
 	}
 
-	logger.Info().Str("container", containerID[:12]).Msg("attach")
+	b.log.Info().Str("container", containerID[:12]).Msg("attach")
 
 	attachResp, err := b.client.ContainerAttach(ctx, containerID, opts)
 	if err != nil {
@@ -235,7 +234,7 @@ func (b *DockerBackend) PortForward(ctx context.Context, podSandboxID string, po
 		return fmt.Errorf("no IP address for sandbox %s", podSandboxID)
 	}
 
-	logger.Info().Str("sandbox", podSandboxID[:12]).Int32("port", port).Str("ip", ip).Msg("port-forward")
+	b.log.Info().Str("sandbox", podSandboxID[:12]).Int32("port", port).Str("ip", ip).Msg("port-forward")
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 10*time.Second)
 	if err != nil {

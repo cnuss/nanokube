@@ -21,7 +21,6 @@ import (
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
-	"gorm.io/gorm/logger"
 	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
@@ -309,7 +308,7 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 	if timedOut {
 		if err == nil && ei.Pid > 0 {
 			if err := s.backend.Run("busybox", []string{"kill", "-9", fmt.Sprintf("%d", ei.Pid)}, nil, true, func(string) error { return nil }); err != nil {
-				logger.Warn().Err(err).Int("pid", ei.Pid).Msg("ExecSync: failed to kill timed-out process")
+				s.log.Warn().Err(err).Int("pid", ei.Pid).Msg("ExecSync: failed to kill timed-out process")
 			}
 		}
 		return &runtimeapi.ExecSyncResponse{
