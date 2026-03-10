@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -30,7 +31,9 @@ var rootCmd = &cobra.Command{
 		log.Debug().Msg("debug logging enabled")
 
 		cfg := config.NewConfig(options)
-		cfg.SetCRID(crid.NewCRID(sigCtx, cfg.DataDir))
+		if err := cfg.SetCRID(crid.NewCRID(sigCtx, cfg.DataDir)); err != nil {
+			return fmt.Errorf("failed to initialize CRID: %w", err)
+		}
 
 		cfg.Components = append(cfg.Components, cfg.CRID)
 		// cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))

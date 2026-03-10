@@ -6,8 +6,8 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/crid/labels"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/kubelet/pkg/cri/streaming"
 	internalapi "k8s.io/cri-api/pkg/apis"
+	"k8s.io/kubelet/pkg/cri/streaming"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
@@ -39,5 +39,10 @@ func (n *NoopBackend) Subpath() subpath.Interface              { return nil }
 func (n *NoopBackend) HostUtils() hostutil.HostUtils           { return nil }
 func (n *NoopBackend) EventRecorder() record.EventRecorder     { return nil }
 func (n *NoopBackend) Prober() prober.Manager                  { return nil }
-func (n *NoopBackend) Streaming() streaming.Server { return nil }
-func (n *NoopBackend) Hostname() string             { return "localhost" }
+func (n *NoopBackend) Streaming() streaming.Server             { return nil }
+func (n *NoopBackend) HostInfo() (*HostInfo, error) {
+	return &HostInfo{
+		Hostname: "localhost",
+		CpuInfo:  []CpuInfo{},
+	}, nil
+}

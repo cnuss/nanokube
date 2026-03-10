@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -258,10 +259,10 @@ func (b *DockerBackend) PortForward(ctx context.Context, podSandboxID string, po
 }
 
 // RunCmd implements [backend.Driver].
-func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool) (string, error) {
+func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error {
 	reader, err := b.client.ImagePull(b.ctx, img, image.PullOptions{})
 	if err != nil {
-		return "", wrapErr(err)
+		return wrapErr(err)
 	}
 	io.Copy(io.Discard, reader)
 	reader.Close()
@@ -280,22 +281,38 @@ func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool)
 		AttachStderr: true,
 	}, hostConfig, nil, nil, "")
 	if err != nil {
-		return "", wrapErr(err)
+		return wrapErr(err)
 	}
 
 	attach, err := b.client.ContainerAttach(b.ctx, resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
-		return "", wrapErr(err)
+		return wrapErr(err)
 	}
 	defer attach.Close()
 
 	if err := b.client.ContainerStart(b.ctx, resp.ID, container.StartOptions{}); err != nil {
-		return "", wrapErr(err)
+		return wrapErr(err)
 	}
 
 	var stdout, stderr bytes.Buffer
 	stdcopy.StdCopy(&stdout, &stderr, attach.Reader)
-	return stdout.String(), nil
+
+	waitCh, errCh := b.client.ContainerWait(b.ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			return fmt.Errorf("exit code %d: %s", result.StatusCode, strings.TrimSpace(stderr.String()))
+		}
+	case err := <-errCh:
+		if err != nil {
+			return fmt.Errorf("waiting for container: %w", err)
+		}
+	}
+
+	if err := cb(strings.TrimSpace(stdout.String())); err != nil {
+		return err
+	}
+	return nil
 }
 
 // proxyStreams proxies stdin/stdout/stderr to/from a hijacked Docker connection.

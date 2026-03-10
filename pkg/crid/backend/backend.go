@@ -54,7 +54,7 @@ type Driver interface {
 	ImageServer() runtimeapi.ImageServiceServer
 	ContainerServer() runtimeapi.RuntimeServiceServer
 
-	Run(img string, cmd []string, binds []string, host bool) (string, error)
+	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
 }
 
 // Backend is the full interface consumers use
@@ -78,7 +78,8 @@ type Backend interface {
 	EventRecorder() record.EventRecorder
 	Prober() prober.Manager
 
-	Hostname() string
+	// Host information — probed from inside the container runtime
+	HostInfo() (*HostInfo, error)
 }
 
 var _ Backend = &BackendImpl{}
@@ -106,6 +107,7 @@ type BackendImpl struct {
 	eventRecorder record.EventRecorder
 	prober        prober.Manager
 	traceProvider tp.TracerProvider
+	hostInfo      *HostInfo
 
 	// sync
 	mu sync.Mutex
@@ -316,13 +318,17 @@ func (b *BackendImpl) Prober() prober.Manager {
 	return b.prober
 }
 
-func (b *BackendImpl) Hostname() string {
-	hostname, err := b.Run("busybox", []string{"hostname"}, []string{}, true)
-	if err != nil {
-		b.log.Warn().Err(err).Msg("failed to get hostname from backend, using fallback")
-		return "localhost"
+func (b *BackendImpl) HostInfo() (*HostInfo, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.hostInfo == nil {
+		var err error
+		b.hostInfo, err = NewHostInfo(b.Driver)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return hostname
+	return b.hostInfo, nil
 }
 
 func (b *BackendImpl) socket() string {

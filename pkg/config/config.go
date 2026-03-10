@@ -44,9 +44,14 @@ func NewConfig(options *Options) *Config {
 	}
 }
 
-func (c *Config) SetCRID(crid *crid.CRID) {
+func (c *Config) SetCRID(crid *crid.CRID) error {
+	host, err := crid.DefaultBackend().HostInfo()
+	if err != nil {
+		return fmt.Errorf("crid host probe: %w", err)
+	}
 	c.CRID = crid
-	c.Certs.Hostname = crid.DefaultBackend().Hostname()
+	c.Certs.Hostname = host.Hostname
+	return nil
 }
 
 func (c *Config) KubeletConfig() *kubeletconfig.KubeletConfiguration {

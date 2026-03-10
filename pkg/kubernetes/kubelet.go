@@ -59,7 +59,9 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	f := options.NewKubeletFlags()
 	f.RootDirectory = kubeletRoot
 	f.CertDirectory = filepath.Join(kubeletRoot, "pki")
-	f.HostnameOverride = k.config.CRID.DefaultBackend().Hostname()
+	if host, err := k.config.CRID.DefaultBackend().HostInfo(); err == nil {
+		f.HostnameOverride = host.Hostname
+	}
 	f.MinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
 	f.MaxContainerCount = 100
 	f.MaxPerPodContainerCount = 2

@@ -304,7 +304,7 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 	ei, err := s.backend.client.ContainerExecInspect(context.Background(), exec.ID)
 	if timedOut {
 		if err == nil && ei.Pid > 0 {
-			if _, err := s.backend.Run("busybox", []string{"kill", "-9", fmt.Sprintf("%d", ei.Pid)}, nil, true); err != nil {
+			if err := s.backend.Run("busybox", []string{"kill", "-9", fmt.Sprintf("%d", ei.Pid)}, nil, true, func(string) error { return nil }); err != nil {
 				logger.Warn().Err(err).Int("pid", ei.Pid).Msg("ExecSync: failed to kill timed-out process")
 			}
 		}
