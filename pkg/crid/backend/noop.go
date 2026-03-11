@@ -24,7 +24,8 @@ type NoopBackend struct{}
 
 var _ Backend = &NoopBackend{}
 
-func (n *NoopBackend) Name() Runtime { return "noop" }
+func (n *NoopBackend) Name() Runtime            { return "noop" }
+func (n *NoopBackend) Context() context.Context { return context.Background() }
 func (n *NoopBackend) Start(context.Context, record.EventBroadcaster) error {
 	return fmt.Errorf("no backend")
 }

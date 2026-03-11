@@ -15,6 +15,7 @@ type HostInfo struct {
 	SystemUUID    string
 	BootID        string
 	KernelVersion string
+	OSVersion     string
 	CpuInfo       []CpuInfo
 	mu            sync.Mutex
 	driver        Driver
@@ -70,7 +71,10 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 	}
 
 	run := func(cmd []string, cb func(string) error) error {
-		return driver.Run("busybox", cmd, []string{}, true, cb)
+		return driver.Run("busybox", cmd, []string{
+			"/etc:/host/etc:ro",
+			"/sys:/host/sys:ro",
+		}, true, cb)
 	}
 
 	if err := run([]string{"hostname"}, func(out string) error {
@@ -85,6 +89,49 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("failed to probe cpuinfo: %w", err)
+	}
+
+	if err := run([]string{"cat", "/host/etc/machine-id"}, func(out string) error {
+		h.WithMachineID(strings.TrimSpace(out))
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to probe machine-id: %w", err)
+	}
+
+	if err := run([]string{"cat", "/proc/sys/kernel/random/boot_id"}, func(out string) error {
+		h.WithBootID(strings.TrimSpace(out))
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to probe boot_id: %w", err)
+	}
+
+	if err := run([]string{"cat", "/host/sys/class/dmi/id/product_uuid"}, func(out string) error {
+		h.WithSystemUUID(strings.TrimSpace(out))
+		return nil
+	}); err != nil {
+		// Not available on all platforms (e.g. ARM, containers); fall back to boot_id
+		h.WithSystemUUID(h.BootID)
+	}
+
+	if err := run([]string{"uname", "-r"}, func(out string) error {
+		h.WithKernelVersion(strings.TrimSpace(out))
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to probe kernel version: %w", err)
+	}
+
+	if err := run([]string{"cat", "/host/etc/os-release"}, func(out string) error {
+		for line := range strings.SplitSeq(out, "\n") {
+			key, val := parseKV(line, "=")
+			if key == "PRETTY_NAME" {
+				h.WithOSVersion(strings.Trim(val, "\""))
+				return nil
+			}
+		}
+		return nil
+	}); err != nil {
+		// Non-fatal — some minimal images lack /etc/os-release
+		h.WithOSVersion("unknown")
 	}
 
 	return h, nil
@@ -168,6 +215,42 @@ func (h *HostInfo) MemInfo() (MemoryInfo, error) {
 	return mem, err
 }
 
+// CpuUsage fetches cumulative CPU usage in nanoseconds by probing /proc/stat.
+// Parses the first "cpu" line: user nice system idle iowait irq softirq steal.
+// Returns the sum of active fields (all except idle and iowait) in nanoseconds.
+func (h *HostInfo) CpuUsage() (uint64, error) {
+	var totalNs uint64
+	err := h.driver.Run("busybox", []string{"cat", "/proc/stat"}, []string{}, true, func(out string) error {
+		for line := range strings.SplitSeq(out, "\n") {
+			if !strings.HasPrefix(line, "cpu ") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				return fmt.Errorf("unexpected /proc/stat cpu line: %q", line)
+			}
+			// fields[0]="cpu", [1]=user, [2]=nice, [3]=system, [4]=idle,
+			// [5]=iowait, [6]=irq, [7]=softirq, [8]=steal
+			var activeJiffies uint64
+			for i, f := range fields[1:] {
+				v, err := strconv.ParseUint(f, 10, 64)
+				if err != nil {
+					continue
+				}
+				if i == 3 || i == 4 { // skip idle and iowait
+					continue
+				}
+				activeJiffies += v
+			}
+			// Convert jiffies (1/100s) to nanoseconds
+			totalNs = activeJiffies * 10_000_000
+			return nil
+		}
+		return fmt.Errorf("/proc/stat: no cpu line found")
+	})
+	return totalNs, err
+}
+
 func (h *HostInfo) WithHostname(hostname string) *HostInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -200,6 +283,13 @@ func (h *HostInfo) WithKernelVersion(kernelVersion string) *HostInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.KernelVersion = kernelVersion
+	return h
+}
+
+func (h *HostInfo) WithOSVersion(osVersion string) *HostInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.OSVersion = osVersion
 	return h
 }
 

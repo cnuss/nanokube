@@ -60,6 +60,7 @@ type Driver interface {
 // Backend is the full interface consumers use
 type Backend interface {
 	Name() Runtime
+	Context() context.Context
 
 	Start(ctx context.Context, broadcaster record.EventBroadcaster) error
 	Stop(ctx context.Context) error
@@ -88,6 +89,8 @@ var _ Backend = &BackendImpl{}
 // BackendImpl adds shared behavior on top of a Driver
 type BackendImpl struct {
 	Driver
+	// context
+	ctx context.Context
 
 	// servers
 	grpc      *grpc.Server
@@ -127,8 +130,13 @@ func NewBackend(d Driver) Backend {
 	return backend
 }
 
+func (b *BackendImpl) Context() context.Context {
+	return b.ctx
+}
+
 func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadcaster) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
+	b.ctx = ctx
 	b.broadcaster = broadcaster
 
 	os.MkdirAll(b.DataDir(), 0o755)
