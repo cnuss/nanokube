@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var rootLog = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+var rootLog = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}).With().Timestamp().Logger()
 
 type Started <-chan struct{}
 type Stopped <-chan struct{}
@@ -36,7 +36,7 @@ type Logger struct {
 // Setup parses flags from the cobra command, applies the log level,
 // sets up log file mirroring, and returns the command, root logger, and cleanup func.
 func Setup(cmd *cobra.Command) (*cobra.Command, zerolog.Logger, func()) {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.TimeFieldFormat = time.RFC3339
 	cmd.ParseFlags(os.Args[1:])
 
 	v, _ := cmd.Flags().GetCount("verbose")
@@ -57,7 +57,7 @@ func Setup(cmd *cobra.Command) (*cobra.Command, zerolog.Logger, func()) {
 	}
 
 	multi := zerolog.MultiLevelWriter(
-		zerolog.ConsoleWriter{Out: os.Stderr},
+		zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339},
 		logFile,
 	)
 	rootLog = zerolog.New(multi).With().Timestamp().Logger()
