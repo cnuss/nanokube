@@ -624,21 +624,36 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	s.log.Trace().Str("id", req.PodSandboxId).Msg("RemovePodSandbox")
 	id := req.GetPodSandboxId()
 
-	lb := s.backend.labels.NewBuilder(nil).WithSandbox(id).WithType("container")
+	lb := s.backend.labels.NewBuilder(nil).WithSandbox(id).WithoutType()
 	filters := s.backend.Into.Filters(lb)
-	s.log.Info().Str("id", id[:min(12, len(id))]).Any("filters", filters).Msg("stopping containers")
+	s.log.Info().Str("id", id[:min(12, len(id))]).Any("filters", filters).Msg("pruning containers")
 
 	for {
-		containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: filters})
+		// Stop any running containers before pruning
+		stopFilters := filters.Clone()
+		stopFilters.Add("status", "running")
+		stopFilters.Add("status", "paused")
+		stopFilters.Add("status", "restarting")
+		stopFilters.Add("status", "created")
+		running, err := s.backend.client.ContainerList(ctx, container.ListOptions{Filters: stopFilters})
 		if err != nil {
-			s.log.Warn().Err(err).Str("id", id[:min(12, len(id))]).Msg("failed to list containers")
-		} else if len(containers) == 0 {
-			break
-		}
-
-		for _, c := range containers {
-			if _, err := s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: c.ID}); err != nil {
-				s.log.Warn().Err(err).Str("id", c.ID).Msg("failed to remove container")
+			s.log.Warn().Err(err).Str("id", id[:min(12, len(id))]).Msg("failed to list containers for pruning")
+		} else if len(running) > 0 {
+			// stop containers
+			for _, c := range running {
+				s.log.Info().Str("id", c.ID[:min(12, len(c.ID))]).Msg("stopping container before pruning")
+				if err := s.backend.client.ContainerStop(ctx, c.ID, container.StopOptions{}); err != nil {
+					s.log.Warn().Err(err).Str("id", c.ID[:min(12, len(c.ID))]).Msg("failed to stop container before pruning")
+				}
+			}
+		} else {
+			report, err := s.backend.client.ContainersPrune(ctx, filters)
+			s.log.Info().Err(err).Any("report", report).Msg("prune attempt")
+			if err != nil {
+				s.log.Warn().Err(err).Str("id", id[:min(12, len(id))]).Msg("failed to prune containers")
+			} else if len(report.ContainersDeleted) == 0 {
+				s.log.Info().Str("id", id[:min(12, len(id))]).Msg("no containers to prune")
+				break
 			}
 		}
 
@@ -649,7 +664,6 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 		}
 	}
 
-	s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: id})
 	return &runtimeapi.RemovePodSandboxResponse{}, nil
 }
 

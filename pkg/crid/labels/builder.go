@@ -52,6 +52,12 @@ func (b *LabelBuilder) WithType(t string) *LabelBuilder {
 	return b
 }
 
+// WithoutType clears the resource type label, leaving it empty.
+func (b *LabelBuilder) WithoutType() *LabelBuilder {
+	b.set(b.lp.Prefix(typeKey), "")
+	return b
+}
+
 // WithSandbox marks this as a sandbox and sets the sandbox ID.
 func (b *LabelBuilder) WithSandbox(uid string) *LabelBuilder {
 	b.set(b.lp.Prefix(typeKey), sandboxType)

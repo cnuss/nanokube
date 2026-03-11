@@ -20,6 +20,9 @@ type DockerInto struct {
 func (i *DockerInto) Filters(b *labels.LabelBuilder) filters.Args {
 	f := filters.NewArgs()
 	for k, v := range b.InternalLabels() {
+		if v == "" {
+			continue
+		}
 		f.Add("label", k+"="+v)
 	}
 	return f
@@ -47,7 +50,6 @@ func (i *DockerInto) CreatedAt(ts string) int64 {
 	t, _ := time.Parse(time.RFC3339Nano, ts)
 	return t.UnixNano()
 }
-
 
 func (i *DockerInto) Container(c container.Summary) *runtimeapi.Container {
 	return &runtimeapi.Container{
