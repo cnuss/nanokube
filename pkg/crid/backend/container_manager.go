@@ -25,9 +25,11 @@ import (
 )
 
 func NewContainerManager(backend *BackendImpl) cm.ContainerManager {
-	containerManager := &ContainerManagerImpl{backend: backend, log: component.NewLogger("container-manager")}
-	// TODO: start
-	return containerManager
+	return &ContainerManagerImpl{
+		backend: backend,
+		log:     component.NewLogger("container-manager"),
+		updates: make(chan resourceupdates.Update, 64),
+	}
 }
 
 type ContainerManagerImpl struct {
@@ -41,7 +43,7 @@ type ContainerManagerImpl struct {
 	podStatusProvider status.PodStatusProvider
 	runtimeService    internalapi.RuntimeService
 	updates           chan resourceupdates.Update
-	containerEvents   chan *runtimeapi.ContainerEventResponse
+	events            <-chan Event
 }
 
 func (m *ContainerManagerImpl) Start(ctx context.Context, node *v1.Node, activePods cm.ActivePodsFunc, getNode cm.GetNodeFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, runtimeService internalapi.RuntimeService, localStorageCapacityIsolation bool) error {
@@ -60,12 +62,7 @@ func (m *ContainerManagerImpl) Start(ctx context.Context, node *v1.Node, activeP
 	m.log.Info().Str("node", node.Name).Msg("container manager started")
 
 	if m.backend != nil {
-		go func() {
-			m.log.Info().Msg("starting container event stream")
-			if err := m.backend.containers.GetContainerEvents(ctx, m.containerEvents, func(runtimeapi.RuntimeService_GetContainerEventsClient) {}); err != nil {
-				m.log.Warn().Err(err).Msg("container event stream ended")
-			}
-		}()
+		m.events = m.backend.Subscribe()
 		go m.streamContainerEvents(ctx)
 	}
 
@@ -73,24 +70,32 @@ func (m *ContainerManagerImpl) Start(ctx context.Context, node *v1.Node, activeP
 }
 
 func (m *ContainerManagerImpl) streamContainerEvents(ctx context.Context) {
-	for ev := range m.containerEvents {
-		uid := ""
-		if ev.PodSandboxStatus != nil && ev.PodSandboxStatus.Metadata != nil {
-			uid = ev.PodSandboxStatus.Metadata.Uid
-		}
-		if uid == "" {
-			continue
-		}
-		m.log.Info().
-			Str("pod", uid).
-			Str("container", ev.ContainerId[:min(12, len(ev.ContainerId))]).
-			Int32("event", int32(ev.ContainerEventType)).
-			Msg("container event")
-
+	for {
 		select {
-		case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
 		case <-ctx.Done():
 			return
+		case ev, ok := <-m.events:
+			if !ok {
+				return
+			}
+			if ev.Resource != ResourceContainer {
+				continue
+			}
+			uid := ev.Attributes[kubelettypes.KubernetesPodUIDLabel]
+			if uid == "" {
+				continue
+			}
+			m.log.Info().
+				Str("pod", uid).
+				Str("id", ev.ID[:min(12, len(ev.ID))]).
+				Str("action", string(ev.Action)).
+				Msg("container event")
+
+			select {
+			case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -319,7 +324,7 @@ func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, s
 	if p.backend == nil {
 		return nil, ""
 	}
-	sandboxes, err := p.backend.containers.ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
+	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
 		LabelSelector: map[string]string{
 			kubelettypes.KubernetesPodUIDLabel: string(pod.UID),
 		},
@@ -343,7 +348,7 @@ func (p *podContainerManager) Exists(pod *v1.Pod) bool {
 	if p.backend == nil {
 		return true
 	}
-	sandboxes, err := p.backend.containers.ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
+	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
 		LabelSelector: map[string]string{
 			kubelettypes.KubernetesPodUIDLabel: string(pod.UID),
 		},
