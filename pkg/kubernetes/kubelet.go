@@ -60,7 +60,42 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubelet config: %w", err)
 	}
-	k.config.ApplyKubeletConfig(c)
+	// c.ContainerRuntimeEndpoint = k.config.CRID.Endpoint()
+	// c.StaticPodPath = filepath.Join(k.config.DataDir, "manifests")
+	// c.PodLogsDir = filepath.Join(k.config.DataDir, "logs")
+	// c.ClusterDomain = k.config.CRID.Domain()
+	// c.ClusterDNS = k.config.CRID.Nameservers()
+	// c.Authentication = kubeletconfig.KubeletAuthentication{
+	// 	Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
+	// 	Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
+	// }
+	// c.Authorization = kubeletconfig.KubeletAuthorization{
+	// 	Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
+	// }
+	// c.TLSCertFile = k.config.Certs.CertPath()
+	// c.TLSPrivateKeyFile = k.config.Certs.KeyPath()
+	// c.EnableServer = true
+	// c.Port = 10250
+	// c.ReadOnlyPort = 0
+	// c.EnableControllerAttachDetach = false
+	// c.HairpinMode = kubeletconfig.HairpinVeth
+	c.CgroupsPerQOS = false
+	c.CgroupDriver = "cgroupfs"
+	c.EnforceNodeAllocatable = []string{}
+	c.EvictionHard = map[string]string{}
+	c.ImageGCHighThresholdPercent = 100
+	c.FailSwapOn = false
+	c.LocalStorageCapacityIsolation = false
+	c.RotateCertificates = false
+	c.ServerTLSBootstrap = false
+	c.RegisterNode = true
+	c.CPUCFSQuota = false
+	// c.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
+	c.ContainerLogMaxFiles = 5
+	c.ContainerLogMaxWorkers = 1
+	// c.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
+	c.ProtectKernelDefaults = false
+	// c.FeatureGates = k.config.FeatureGates
 
 	// Create k8s clients from kubeconfig
 	kubeconfigPath := k.config.KubeconfigPath()

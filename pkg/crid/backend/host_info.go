@@ -72,7 +72,8 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 
 	run := func(cmd []string, cb func(string) error) error {
 		return driver.Run("busybox", cmd, []string{
-			"/etc:/host/etc:ro",
+			"/etc/machine-id:/etc/machine-id:ro",
+			"/etc/os-release:/etc/os-release:ro",
 			"/sys:/host/sys:ro",
 		}, true, cb)
 	}
@@ -91,11 +92,12 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 		return nil, fmt.Errorf("failed to probe cpuinfo: %w", err)
 	}
 
-	if err := run([]string{"cat", "/host/etc/machine-id"}, func(out string) error {
+	if err := run([]string{"cat", "/etc/machine-id"}, func(out string) error {
 		h.WithMachineID(strings.TrimSpace(out))
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("failed to probe machine-id: %w", err)
+		// Not available on all platforms (e.g. macOS); fall back to empty
+		h.WithMachineID("")
 	}
 
 	if err := run([]string{"cat", "/proc/sys/kernel/random/boot_id"}, func(out string) error {
@@ -120,7 +122,7 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 		return nil, fmt.Errorf("failed to probe kernel version: %w", err)
 	}
 
-	if err := run([]string{"cat", "/host/etc/os-release"}, func(out string) error {
+	if err := run([]string{"cat", "/etc/os-release"}, func(out string) error {
 		for line := range strings.SplitSeq(out, "\n") {
 			key, val := parseKV(line, "=")
 			if key == "PRETTY_NAME" {
