@@ -61,7 +61,7 @@ type Driver interface {
 type Backend interface {
 	Name() Runtime
 
-	Start(ctx context.Context) error
+	Start(ctx context.Context, broadcaster record.EventBroadcaster) error
 	Stop(ctx context.Context) error
 
 	Streaming() streaming.Server
@@ -75,6 +75,7 @@ type Backend interface {
 	OS() container.OSInterface
 	Subpath() subpath.Interface
 	HostUtils() hostutil.HostUtils
+	EventBroadcaster() record.EventBroadcaster
 	EventRecorder() record.EventRecorder
 	Prober() prober.Manager
 
@@ -109,6 +110,9 @@ type BackendImpl struct {
 	traceProvider tp.TracerProvider
 	hostInfo      *HostInfo
 
+	// events
+	broadcaster record.EventBroadcaster
+
 	// sync
 	mu sync.Mutex
 }
@@ -123,8 +127,9 @@ func NewBackend(d Driver) Backend {
 	return backend
 }
 
-func (b *BackendImpl) Start(ctx context.Context) error {
+func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadcaster) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
+	b.broadcaster = broadcaster
 
 	os.MkdirAll(b.DataDir(), 0o755)
 	os.Remove(b.socket())
@@ -156,6 +161,7 @@ func (b *BackendImpl) Start(ctx context.Context) error {
 			b.log.Error().Err(err).Msg("backend gRPC server exited")
 		}
 	}()
+
 	b.log.Info().Msg("backend started")
 	return nil
 }
@@ -298,6 +304,12 @@ func (b *BackendImpl) HostUtils() hostutil.HostUtils {
 		b.hostUtils = NewHostUtils(b)
 	}
 	return b.hostUtils
+}
+
+func (b *BackendImpl) EventBroadcaster() record.EventBroadcaster {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.broadcaster
 }
 
 func (b *BackendImpl) EventRecorder() record.EventRecorder {

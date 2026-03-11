@@ -24,22 +24,25 @@ type NoopBackend struct{}
 
 var _ Backend = &NoopBackend{}
 
-func (n *NoopBackend) Name() Runtime                           { return "noop" }
-func (n *NoopBackend) Start(context.Context) error             { return fmt.Errorf("no backend") }
-func (n *NoopBackend) Stop(context.Context) error              { return nil }
-func (n *NoopBackend) Labels() labels.LabelProvider            { return labels.NewLabels("noop") }
-func (n *NoopBackend) Images() internalapi.ImageManagerService { return nil }
-func (n *NoopBackend) Containers() internalapi.RuntimeService  { return nil }
-func (n *NoopBackend) ContainerManager() cm.ContainerManager   { return nil }
-func (n *NoopBackend) VolumePlugin() volume.VolumePlugin       { return nil }
-func (n *NoopBackend) Mounter() mount.Interface                { return nil }
-func (n *NoopBackend) Cadvisor() cadvisor.Interface            { return nil }
-func (n *NoopBackend) OS() container.OSInterface               { return nil }
-func (n *NoopBackend) Subpath() subpath.Interface              { return nil }
-func (n *NoopBackend) HostUtils() hostutil.HostUtils           { return nil }
-func (n *NoopBackend) EventRecorder() record.EventRecorder     { return nil }
-func (n *NoopBackend) Prober() prober.Manager                  { return nil }
-func (n *NoopBackend) Streaming() streaming.Server             { return nil }
+func (n *NoopBackend) Name() Runtime { return "noop" }
+func (n *NoopBackend) Start(context.Context, record.EventBroadcaster) error {
+	return fmt.Errorf("no backend")
+}
+func (n *NoopBackend) Stop(context.Context) error                { return nil }
+func (n *NoopBackend) Labels() labels.LabelProvider              { return labels.NewLabels("noop") }
+func (n *NoopBackend) Images() internalapi.ImageManagerService   { return nil }
+func (n *NoopBackend) Containers() internalapi.RuntimeService    { return nil }
+func (n *NoopBackend) ContainerManager() cm.ContainerManager     { return nil }
+func (n *NoopBackend) VolumePlugin() volume.VolumePlugin         { return nil }
+func (n *NoopBackend) Mounter() mount.Interface                  { return nil }
+func (n *NoopBackend) Cadvisor() cadvisor.Interface              { return nil }
+func (n *NoopBackend) OS() container.OSInterface                 { return nil }
+func (n *NoopBackend) Subpath() subpath.Interface                { return nil }
+func (n *NoopBackend) HostUtils() hostutil.HostUtils             { return nil }
+func (n *NoopBackend) EventBroadcaster() record.EventBroadcaster { return nil }
+func (n *NoopBackend) EventRecorder() record.EventRecorder       { return nil }
+func (n *NoopBackend) Prober() prober.Manager                    { return nil }
+func (n *NoopBackend) Streaming() streaming.Server               { return nil }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

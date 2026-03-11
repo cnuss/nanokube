@@ -9,6 +9,9 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/docker"
 	"github.com/cnuss/nanokube/pkg/crid/podman"
+	clientset "k8s.io/client-go/kubernetes"
+	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/record"
 )
 
 type CRID struct {
@@ -17,7 +20,8 @@ type CRID struct {
 	stop   func() bool
 	log    component.Logger
 
-	backends map[backend.Runtime]backend.Backend
+	backends    map[backend.Runtime]backend.Backend
+	broadcaster record.EventBroadcaster
 }
 
 var _ component.Component = &CRID{}
@@ -37,9 +41,11 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 	c.cancel = cancel
 	c.stop = context.AfterFunc(c.ctx, func() { cancel() })
 
+	c.broadcaster = record.NewBroadcaster(record.WithContext(ctx))
+
 	for name, backend := range c.backends {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
-		if err := backend.Start(ctx); err != nil {
+		if err := backend.Start(ctx, c.broadcaster); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}
@@ -56,6 +62,10 @@ func (c *CRID) Stop() component.Stopped {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
+		if c.broadcaster != nil {
+			c.broadcaster.Shutdown()
+		}
+
 		for name, backend := range c.backends {
 			c.log.Info().Str("backend", string(name)).Msg("stopping backend")
 			if err := backend.Stop(ctx); err != nil {
@@ -64,6 +74,7 @@ func (c *CRID) Stop() component.Stopped {
 			}
 			c.log.Info().Str("backend", string(name)).Msg("backend stopped")
 		}
+
 		if c.stop != nil {
 			c.stop()
 		}
@@ -71,6 +82,14 @@ func (c *CRID) Stop() component.Stopped {
 			c.cancel()
 		}
 	})
+}
+
+func (c *CRID) WithClient(client clientset.Interface) *CRID {
+	if c.broadcaster != nil {
+		c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
+		c.log.Info().Msg("event sink connected")
+	}
+	return c
 }
 
 func (c *CRID) Backends() map[backend.Runtime]backend.Backend {

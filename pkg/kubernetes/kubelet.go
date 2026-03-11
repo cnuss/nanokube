@@ -17,9 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
-	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
@@ -28,8 +26,7 @@ import (
 var kubeletLog = newLogger("kubelet")
 
 type Kubelet struct {
-	config           *config.Config
-	eventBroadcaster record.EventBroadcaster
+	config *config.Config
 }
 
 func NewKubelet(config *config.Config) *Kubelet {
@@ -39,11 +36,7 @@ func NewKubelet(config *config.Config) *Kubelet {
 }
 
 func (k *Kubelet) Stop() component.Stopped {
-	return component.Closed("tcp", "127.0.0.1:10250", func() {
-		if k.eventBroadcaster != nil {
-			k.eventBroadcaster.Shutdown()
-		}
-	})
+	return component.Closed("tcp", "127.0.0.1:10250", nil)
 }
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
@@ -52,9 +45,9 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	// Build KubeletFlags — use a dedicated subdirectory so the kubelet's
 	// internal cleanup doesn't interfere with certs, etcd data, etc.
 	kubeletRoot := filepath.Join(k.config.DataDir, "kubelet")
-	os.MkdirAll(kubeletRoot, 0755)
-	os.MkdirAll(filepath.Join(k.config.DataDir, "manifests"), 0755)
-	os.MkdirAll(filepath.Join(k.config.DataDir, "volumes"), 0755)
+	os.MkdirAll(kubeletRoot, 0o755)
+	os.MkdirAll(filepath.Join(k.config.DataDir, "manifests"), 0o755)
+	os.MkdirAll(filepath.Join(k.config.DataDir, "volumes"), 0o755)
 
 	f := options.NewKubeletFlags()
 	f.RootDirectory = kubeletRoot
@@ -96,9 +89,8 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		return nil, fmt.Errorf("kubelet heartbeat client: %w", err)
 	}
 
-	// Event broadcaster — records Kubernetes Events to the API server
-	k.eventBroadcaster = record.NewBroadcaster(record.WithContext(ctx))
-	k.eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
+	// Connect the CRID to the kubernetes API server
+	volumePlugin := k.config.CRID.WithClient(client).DefaultBackend().VolumePlugin()
 
 	// Connect to CRI socket via remote clients
 	// endpoint := k.config.CRI.Endpoint()
@@ -135,12 +127,12 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		k.config.CRID.DefaultBackend().Containers(),
 		k.config.CRID.DefaultBackend().ContainerManager(),
 	)
+	hk.KubeletDeps.VolumePlugins = append(hk.KubeletDeps.VolumePlugins, volumePlugin)
 	hk.KubeletDeps.OSInterface = k.config.CRID.DefaultBackend().OS()
-	hk.KubeletDeps.VolumePlugins = append(hk.KubeletDeps.VolumePlugins, k.config.CRID.DefaultBackend().VolumePlugin())
 	hk.KubeletDeps.Mounter = k.config.CRID.DefaultBackend().Mounter()
 	hk.KubeletDeps.Subpather = k.config.CRID.DefaultBackend().Subpath()
 	hk.KubeletDeps.HostUtil = k.config.CRID.DefaultBackend().HostUtils()
-	// hk.KubeletDeps.Recorder = k.eventBroadcaster.NewRecorder(legacyscheme.Scheme, v1.EventSource{Component: "kubelet", Host: f.HostnameOverride})
+	hk.KubeletDeps.Recorder = k.config.CRID.DefaultBackend().EventRecorder()
 	hk.KubeletDeps.ProbeManager = k.config.CRID.DefaultBackend().Prober()
 	hk.KubeletDeps.TLSOptions = &server.TLSOptions{
 		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
@@ -208,7 +200,7 @@ func runProvisioner(ctx context.Context, client clientset.Interface, dataDir str
 					continue
 				}
 			}
-			os.MkdirAll(volPath, 0755)
+			os.MkdirAll(volPath, 0o755)
 
 			capacity := pvc.Spec.Resources.Requests[v1.ResourceStorage]
 			pv := &v1.PersistentVolume{
