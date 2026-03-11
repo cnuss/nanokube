@@ -6,6 +6,6 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 )
 
-func Detect(ctx context.Context, dataDir string) backend.Backend {
+func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 	return nil
 }

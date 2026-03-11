@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	dockervolume "github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"k8s.io/client-go/tools/remotecommand"
@@ -48,7 +49,7 @@ func (b *DockerBackend) DataDir() string {
 	return b.dataDir
 }
 
-func Detect(ctx context.Context, dataDir string) backend.Backend {
+func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 	home, _ := os.UserHomeDir()
 	paths := []string{
 		// TODO: OS Agnostic
@@ -98,7 +99,7 @@ func Detect(ctx context.Context, dataDir string) backend.Backend {
 	}
 	lp := labels.NewLabels(string(backend.Docker))
 	d := &DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}}
-	b := backend.NewBackend(d)
+	b := backend.NewBackend(name, d)
 	d.parent = b
 	return b
 }
@@ -316,6 +317,36 @@ func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool,
 	return nil
 }
 
+// CreateVolume implements [backend.Driver]. Returns the volume's host mountpoint.
+func (b *DockerBackend) CreateVolume(name, sandboxID string) (string, error) {
+	volName, volLabels, err := b.labels.NewBuilder(nil).WithVolume(sandboxID, name).Build()
+	if err != nil {
+		return "", fmt.Errorf("build volume labels: %w", err)
+	}
+	resp, err := b.client.VolumeCreate(b.ctx, dockervolume.CreateOptions{
+		Name:   volName,
+		Labels: volLabels,
+	})
+	if err != nil {
+		return "", err
+	}
+	b.log.Debug().Str("name", resp.Name).Str("mountpoint", resp.Mountpoint).Msg("created volume")
+	return resp.Mountpoint, nil
+}
+
+// RemoveVolume implements [backend.Driver].
+func (b *DockerBackend) RemoveVolume(name string) error {
+	volName, _, err := b.labels.NewBuilder(nil).WithVolume("", name).Build()
+	if err != nil {
+		return fmt.Errorf("build volume name: %w", err)
+	}
+	if err := b.client.VolumeRemove(b.ctx, volName, true); err != nil {
+		return err
+	}
+	b.log.Debug().Str("name", volName).Msg("removed volume")
+	return nil
+}
+
 // Events implements [backend.Driver]. Streams Docker engine events filtered
 // to containers, images, volumes, and networks managed by this backend.
 func (b *DockerBackend) Events(ctx context.Context) (<-chan backend.Event, <-chan error) {
@@ -344,7 +375,7 @@ func (b *DockerBackend) Events(ctx context.Context) (<-chan backend.Event, <-cha
 				if !ok {
 					return
 				}
-				ev, ok := dockerEventToBackend(msg, b.labels)
+				ev, ok := dockerEventToBackend(msg)
 				if !ok {
 					continue
 				}
@@ -398,7 +429,7 @@ var dockerActionMap = map[events.Action]backend.EventAction{
 	events.ActionHealthStatusUnhealthy: backend.ActionHealthStatusUnhealthy,
 }
 
-func dockerEventToBackend(msg events.Message, lp labels.LabelProvider) (backend.Event, bool) {
+func dockerEventToBackend(msg events.Message) (backend.Event, bool) {
 	resource, ok := dockerResourceMap[msg.Type]
 	if !ok {
 		return backend.Event{}, false

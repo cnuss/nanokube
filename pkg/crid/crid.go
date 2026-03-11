@@ -26,11 +26,11 @@ type CRID struct {
 
 var _ component.Component = &CRID{}
 
-func NewCRID(ctx context.Context, dataDir string) *CRID {
+func NewCRID(ctx context.Context, name, dataDir string) *CRID {
 	log := component.NewLogger("crid")
 	log.Info().Msg("initializing")
 
-	crid := &CRID{ctx: ctx, log: log, backends: detectBackends(ctx, dataDir)}
+	crid := &CRID{ctx: ctx, log: log, backends: detectBackends(ctx, name, dataDir)}
 	return crid
 }
 
@@ -112,14 +112,14 @@ func (c *CRID) DefaultBackend() backend.Backend {
 	return &backend.NoopBackend{}
 }
 
-func detectBackends(ctx context.Context, dataDir string) map[backend.Runtime]backend.Backend {
+func detectBackends(ctx context.Context, name, dataDir string) map[backend.Runtime]backend.Backend {
 	backends := make(map[backend.Runtime]backend.Backend)
 
-	if b := docker.Detect(ctx, dataDir); b != nil {
+	if b := docker.Detect(ctx, name, dataDir); b != nil {
 		backends[backend.Docker] = b
 	}
 
-	if b := podman.Detect(ctx, dataDir); b != nil {
+	if b := podman.Detect(ctx, name, dataDir); b != nil {
 		backends[backend.Podman] = b
 	}
 

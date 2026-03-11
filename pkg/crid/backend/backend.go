@@ -110,6 +110,9 @@ type Driver interface {
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
 	Events(ctx context.Context) (<-chan Event, <-chan error)
+
+	CreateVolume(name, sandboxID string) (string, error)
+	RemoveVolume(name string) error
 }
 
 // Backend is the full interface consumers use
@@ -148,6 +151,8 @@ var _ Backend = &BackendImpl{}
 // BackendImpl adds shared behavior on top of a Driver
 type BackendImpl struct {
 	Driver
+	// identity
+	name string
 	// context
 	ctx context.Context
 
@@ -180,9 +185,10 @@ type BackendImpl struct {
 	mu sync.Mutex
 }
 
-func NewBackend(d Driver) Backend {
+func NewBackend(name string, d Driver) Backend {
 	backend := &BackendImpl{
 		Driver:        d,
+		name:          name,
 		log:           component.NewLogger(string(d.Name())),
 		klog:          klog.Background(),
 		traceProvider: tp.NewTracerProvider(),
@@ -376,6 +382,7 @@ func (b *BackendImpl) Mounter() mount.Interface {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.mounter == nil {
+		b.mounter = NewMounter(b)
 	}
 	return b.mounter
 }
