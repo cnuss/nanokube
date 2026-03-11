@@ -11,11 +11,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
-	"github.com/cnuss/nanokube/pkg/cri"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
@@ -92,31 +88,6 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	// Connect the CRID to the kubernetes API server
 	volumePlugin := k.config.CRID.WithClient(client).DefaultBackend().VolumePlugin()
 
-	// Connect to CRI socket via remote clients
-	// endpoint := k.config.CRI.Endpoint()
-	// logger := klog.Background()
-	// tp := noop.NewTracerProvider()
-	// runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 30*time.Second, tp, &logger)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("kubelet runtime service: %w", err)
-	// }
-	// imageService, err := remote.NewRemoteImageService(endpoint, 30*time.Second, tp, &logger)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("kubelet image service: %w", err)
-	// }
-
-	// Get the runtime backend from CRI for cadvisor + capacity
-	// var backend cri.Backend
-	// criImpl, _ := k.config.CRI.(*cri.CRI)
-	// if criImpl != nil {
-	// 	backend = criImpl.RuntimeBackend()
-	// }
-
-	// Create cadvisor + container manager
-	// cadvisorInterface := cri.NewCadvisor(ctx, k.config.CRI.Hostname(), backend)
-	// containerManager := deps.NewContainerManager(ctx, backend)
-	// volumePlugin := cri.NewVolumePlugin(ctx, backend, k.config.DataDir)
-
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(
 		f, c,
@@ -159,78 +130,10 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					kubeletLog.Info().Msg("kubelet is ready")
-					// go runProvisioner(ctx, client, k.config.DataDir, backend, volumePlugin.GetPluginName())
 					return component.Ready(), nil
 				}
 			}
 			time.Sleep(100 * time.Millisecond)
-		}
-	}
-}
-
-// runProvisioner watches for PVCs annotated with our provisioner and creates PVs.
-func runProvisioner(ctx context.Context, client clientset.Interface, dataDir string, backend cri.Backend, pluginName string) {
-	for {
-		watcher, err := client.CoreV1().PersistentVolumeClaims("").Watch(ctx, metav1.ListOptions{})
-		if err != nil {
-			kubeletLog.Warn().Err(err).Msg("provisioner: watch failed, retrying")
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		for event := range watcher.ResultChan() {
-			if event.Type != watch.Added && event.Type != watch.Modified {
-				continue
-			}
-			pvc, ok := event.Object.(*v1.PersistentVolumeClaim)
-			if !ok || pvc.Status.Phase != v1.ClaimPending || pvc.Spec.VolumeName != "" {
-				continue
-			}
-			ann := pvc.Annotations
-			if ann["volume.kubernetes.io/storage-provisioner"] != pluginName &&
-				ann["volume.beta.kubernetes.io/storage-provisioner"] != pluginName {
-				continue
-			}
-
-			pvName := "pvc-" + string(pvc.UID)
-			volPath := filepath.Join(dataDir, "volumes", pvName)
-
-			if backend != nil {
-				if _, err := backend.CreateVolume(ctx, pvName); err != nil {
-					kubeletLog.Warn().Err(err).Str("pvc", pvc.Name).Msg("provisioner: create volume failed")
-					continue
-				}
-			}
-			os.MkdirAll(volPath, 0o755)
-
-			capacity := pvc.Spec.Resources.Requests[v1.ResourceStorage]
-			pv := &v1.PersistentVolume{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: pvName,
-				},
-				Spec: v1.PersistentVolumeSpec{
-					Capacity:                      v1.ResourceList{v1.ResourceStorage: capacity},
-					AccessModes:                   pvc.Spec.AccessModes,
-					PersistentVolumeReclaimPolicy: v1.PersistentVolumeReclaimRetain,
-					ClaimRef: &v1.ObjectReference{
-						Namespace: pvc.Namespace,
-						Name:      pvc.Name,
-						UID:       pvc.UID,
-					},
-					PersistentVolumeSource: v1.PersistentVolumeSource{
-						HostPath: &v1.HostPathVolumeSource{Path: volPath},
-					},
-				},
-			}
-			if _, err := client.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{}); err != nil {
-				if !errors.IsAlreadyExists(err) {
-					kubeletLog.Warn().Err(err).Str("pv", pvName).Msg("provisioner: create PV failed")
-				}
-				continue
-			}
-			kubeletLog.Info().Str("pv", pvName).Str("pvc", pvc.Name).Msg("provisioner: created PV")
-		}
-		if ctx.Err() != nil {
-			return
 		}
 	}
 }
