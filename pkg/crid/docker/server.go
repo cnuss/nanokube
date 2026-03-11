@@ -601,13 +601,13 @@ func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveCont
 
 		s.log.Info().Str("id", id[:min(12, len(id))]).Str("status", inspect.State.Status).Msg("removing container")
 		switch inspect.State.Status {
-		case "running", "paused", "restarting":
-			if err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
-				s.log.Warn().Err(err).Str("id", id).Msg("failed to stop container before removal")
-			}
-		default:
+		case "exited", "dead", "created":
 			if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{}); err != nil {
 				s.log.Warn().Err(err).Str("id", id[:min(12, len(id))]).Msg("failed to remove container")
+			}
+		default:
+			if err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+				s.log.Warn().Err(err).Str("id", id).Msg("failed to stop container before removal")
 			}
 		}
 
@@ -756,7 +756,10 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	}
 
 	if err := s.backend.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		s.backend.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{})
+		s.log.Warn().Err(err).Str("id", resp.ID).Msg("failed to start sandbox container, removing")
+		if _, err := s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: resp.ID}); err != nil {
+			s.log.Warn().Err(err).Str("id", resp.ID).Msg("failed to remove sandbox container after failed start")
+		}
 		return nil, wrapErr(err)
 	}
 
