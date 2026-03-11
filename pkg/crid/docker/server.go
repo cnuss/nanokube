@@ -591,17 +591,32 @@ func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardReq
 func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
 	s.log.Trace().Str("id", req.ContainerId).Msg("RemoveContainer")
 	id := req.GetContainerId()
+	s.backend.StopLogs(id)
 
-	// Stop first (timeout 0 = immediate)
-	s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: id, Timeout: 0})
-
-	if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{}); err != nil {
-		if errdefs.IsNotFound(err) {
+	for {
+		inspect, err := s.backend.client.ContainerInspect(ctx, id)
+		if err != nil {
 			return &runtimeapi.RemoveContainerResponse{}, nil
 		}
-		return nil, wrapErr(err)
+
+		s.log.Info().Str("id", id[:min(12, len(id))]).Str("status", inspect.State.Status).Msg("removing container")
+		switch inspect.State.Status {
+		case "running", "paused", "restarting":
+			if err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
+				s.log.Warn().Err(err).Str("id", id).Msg("failed to stop container before removal")
+			}
+		default:
+			if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{}); err != nil {
+				s.log.Warn().Err(err).Str("id", id[:min(12, len(id))]).Msg("failed to remove container")
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	return &runtimeapi.RemoveContainerResponse{}, nil
 }
 
 // RemovePodSandbox implements [v1.RuntimeServiceServer].
@@ -609,20 +624,32 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	s.log.Trace().Str("id", req.PodSandboxId).Msg("RemovePodSandbox")
 	id := req.GetPodSandboxId()
 
-	// Find and remove all containers belonging to this sandbox
-	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
-		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
-	})
-	if err != nil {
-		return nil, wrapErr(err)
-	}
-	for _, c := range resp.Containers {
-		s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: c.Id})
+	lb := s.backend.labels.NewBuilder(nil).WithSandbox(id).WithType("container")
+	filters := s.backend.Into.Filters(lb)
+	s.log.Info().Str("id", id[:min(12, len(id))]).Any("filters", filters).Msg("stopping containers")
+
+	for {
+		containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: filters})
+		if err != nil {
+			s.log.Warn().Err(err).Str("id", id[:min(12, len(id))]).Msg("failed to list containers")
+		} else if len(containers) == 0 {
+			break
+		}
+
+		for _, c := range containers {
+			if _, err := s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: c.ID}); err != nil {
+				s.log.Warn().Err(err).Str("id", c.ID).Msg("failed to remove container")
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 
-	// Remove the sandbox itself
 	s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: id})
-
 	return &runtimeapi.RemovePodSandboxResponse{}, nil
 }
 
@@ -784,17 +811,37 @@ func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*ru
 func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContainerRequest) (*runtimeapi.StopContainerResponse, error) {
 	s.log.Trace().Str("id", req.ContainerId).Msg("StopContainer")
 	id := req.GetContainerId()
-
 	s.backend.StopLogs(id)
 
 	t := int(req.GetTimeout())
-	if err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{Timeout: &t}); err != nil {
-		if errdefs.IsNotFound(err) || errdefs.IsNotModified(err) {
+	for {
+		inspect, err := s.backend.client.ContainerInspect(ctx, id)
+		if err != nil {
 			return &runtimeapi.StopContainerResponse{}, nil
 		}
-		return nil, wrapErr(err)
+
+		s.log.Info().Str("id", id[:min(12, len(id))]).Str("status", inspect.State.Status).Msg("stopping container")
+		switch inspect.State.Status {
+		case "exited", "dead":
+			return &runtimeapi.StopContainerResponse{}, nil
+		case "created":
+			err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{})
+			if err != nil {
+				s.log.Warn().Err(err).Str("id", id).Msg("failed to remove container in created state")
+			}
+		default:
+			err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{Timeout: &t})
+			if err != nil {
+				s.log.Warn().Err(err).Str("id", id).Msg("failed to stop container")
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	return &runtimeapi.StopContainerResponse{}, nil
 }
 
 // StopPodSandbox implements [v1.RuntimeServiceServer].
@@ -809,11 +856,17 @@ func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSand
 		return nil, wrapErr(err)
 	}
 	for _, c := range resp.Containers {
-		s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: c.Id, Timeout: 0})
+		_, err := s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: c.Id, Timeout: 0})
+		if err != nil {
+			return nil, wrapErr(err)
+		}
 	}
 
 	// Stop the sandbox container itself
-	s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: id, Timeout: 0})
+	_, err = s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: id, Timeout: 0})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
 
 	return &runtimeapi.StopPodSandboxResponse{}, nil
 }

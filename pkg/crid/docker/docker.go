@@ -97,7 +97,7 @@ func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 		client.Close()
 		return nil
 	}
-	lp := labels.NewLabels(string(backend.Docker))
+	lp := labels.NewLabels(name)
 	d := &DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}}
 	b := backend.NewBackend(name, d)
 	d.parent = b

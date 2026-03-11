@@ -21,32 +21,30 @@ type logWriter struct {
 	mu      sync.Mutex
 	ctx     context.Context
 	client  *dockerclient.Client
-	writers map[string]context.CancelFunc
+	cancels map[string]func()
 }
 
 func newLogWriter(ctx context.Context, client *dockerclient.Client) *logWriter {
 	return &logWriter{
 		ctx:     ctx,
 		client:  client,
-		writers: make(map[string]context.CancelFunc),
+		cancels: make(map[string]func()),
 	}
 }
 
 // Start begins streaming logs for a container to the given path.
 func (lw *logWriter) Start(containerID, logPath string) {
 	os.MkdirAll(filepath.Dir(logPath), 0o755)
-	if f, err := os.Create(logPath); err == nil {
-		f.Close()
-	}
-	ctx, cancel := context.WithCancel(lw.ctx)
-	lw.mu.Lock()
-	if old, ok := lw.writers[containerID]; ok {
-		old()
-	}
-	lw.writers[containerID] = cancel
-	lw.mu.Unlock()
+	lw.Stop(containerID)
+
 	go func() {
-		defer lw.Stop(containerID)
+		ctx, cancel := context.WithCancel(lw.ctx)
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			cancel()
+			return
+		}
+
 		reader, err := lw.client.ContainerLogs(ctx, containerID, container.LogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
@@ -54,21 +52,26 @@ func (lw *logWriter) Start(containerID, logPath string) {
 			Timestamps: true,
 		})
 		if err != nil {
+			cancel()
+			f.Close()
 			return
 		}
-		defer reader.Close()
 
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return
+		lw.mu.Lock()
+		lw.cancels[containerID] = func() {
+			cancel()
+			f.Close()
+			reader.Close()
 		}
-		defer f.Close()
+		lw.mu.Unlock()
+		defer lw.Stop(containerID)
 
 		// Docker multiplexes stdout/stderr with an 8-byte header per frame:
 		// [stream_type(1)][0][0][0][size(4 big-endian)]
 		hdr := make([]byte, 8)
 		for {
 			if _, err := io.ReadFull(reader, hdr); err != nil {
+				lw.Stop(containerID)
 				return
 			}
 			stream := "stdout"
@@ -81,6 +84,7 @@ func (lw *logWriter) Start(containerID, logPath string) {
 			}
 			payload := make([]byte, size)
 			if _, err := io.ReadFull(reader, payload); err != nil {
+				lw.Stop(containerID)
 				return
 			}
 			line := string(payload)
@@ -102,9 +106,9 @@ func (lw *logWriter) Start(containerID, logPath string) {
 // Stop cancels and removes the log writer for a container.
 func (lw *logWriter) Stop(containerID string) {
 	lw.mu.Lock()
-	if cancel, ok := lw.writers[containerID]; ok {
+	if cancel, ok := lw.cancels[containerID]; ok {
 		cancel()
-		delete(lw.writers, containerID)
+		delete(lw.cancels, containerID)
 	}
 	lw.mu.Unlock()
 }
