@@ -18,6 +18,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/labels"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -312,6 +314,106 @@ func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool,
 		return err
 	}
 	return nil
+}
+
+// Events implements [backend.Driver]. Streams Docker engine events filtered
+// to containers, images, volumes, and networks managed by this backend.
+func (b *DockerBackend) Events(ctx context.Context) (<-chan backend.Event, <-chan error) {
+	out := make(chan backend.Event, 64)
+	outErr := make(chan error, 1)
+
+	msgCh, errCh := b.client.Events(ctx, events.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", b.labels.ManagedByFilter()),
+		),
+	})
+
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-errCh:
+				if ctx.Err() != nil {
+					return
+				}
+				outErr <- err
+				return
+			case msg, ok := <-msgCh:
+				if !ok {
+					return
+				}
+				ev, ok := dockerEventToBackend(msg, b.labels)
+				if !ok {
+					continue
+				}
+				select {
+				case out <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return out, outErr
+}
+
+var dockerResourceMap = map[events.Type]backend.EventResource{
+	events.ContainerEventType: backend.ResourceContainer,
+	events.ImageEventType:     backend.ResourceImage,
+	events.VolumeEventType:    backend.ResourceVolume,
+	events.NetworkEventType:   backend.ResourceNetwork,
+}
+
+var dockerActionMap = map[events.Action]backend.EventAction{
+	events.ActionCreate:     backend.ActionCreate,
+	events.ActionStart:      backend.ActionStart,
+	events.ActionRestart:    backend.ActionRestart,
+	events.ActionStop:       backend.ActionStop,
+	events.ActionKill:       backend.ActionKill,
+	events.ActionDie:        backend.ActionDie,
+	events.ActionOOM:        backend.ActionOOM,
+	events.ActionPause:      backend.ActionPause,
+	events.ActionUnPause:    backend.ActionUnpause,
+	events.ActionDestroy:    backend.ActionDestroy,
+	events.ActionRemove:     backend.ActionRemove,
+	events.ActionPull:       backend.ActionPull,
+	events.ActionPush:       backend.ActionPush,
+	events.ActionTag:        backend.ActionTag,
+	events.ActionUnTag:      backend.ActionUntag,
+	events.ActionDelete:     backend.ActionDelete,
+	events.ActionMount:      backend.ActionMount,
+	events.ActionUnmount:    backend.ActionUnmount,
+	events.ActionConnect:    backend.ActionConnect,
+	events.ActionDisconnect: backend.ActionDisconnect,
+	events.ActionExecCreate: backend.ActionExecCreate,
+	events.ActionExecStart:  backend.ActionExecStart,
+	events.ActionExecDie:    backend.ActionExecDie,
+
+	events.ActionHealthStatus:          backend.ActionHealthStatus,
+	events.ActionHealthStatusRunning:   backend.ActionHealthStatusRunning,
+	events.ActionHealthStatusHealthy:   backend.ActionHealthStatusHealthy,
+	events.ActionHealthStatusUnhealthy: backend.ActionHealthStatusUnhealthy,
+}
+
+func dockerEventToBackend(msg events.Message, lp labels.LabelProvider) (backend.Event, bool) {
+	resource, ok := dockerResourceMap[msg.Type]
+	if !ok {
+		return backend.Event{}, false
+	}
+	action, ok := dockerActionMap[msg.Action]
+	if !ok {
+		return backend.Event{}, false
+	}
+	return backend.Event{
+		Resource:   resource,
+		Action:     action,
+		ID:         msg.Actor.ID,
+		Attributes: msg.Actor.Attributes,
+		TimeNano:   msg.TimeNano,
+	}, true
 }
 
 // proxyStreams proxies stdin/stdout/stderr to/from a hijacked Docker connection.

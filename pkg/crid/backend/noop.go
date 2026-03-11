@@ -44,6 +44,7 @@ func (n *NoopBackend) EventBroadcaster() record.EventBroadcaster { return nil }
 func (n *NoopBackend) EventRecorder() record.EventRecorder       { return nil }
 func (n *NoopBackend) Prober() prober.Manager                    { return nil }
 func (n *NoopBackend) Streaming() streaming.Server               { return nil }
+func (n *NoopBackend) Subscribe() <-chan Event                    { return make(chan Event) }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

@@ -330,9 +330,84 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 }
 
 // GetContainerEvents implements [v1.RuntimeServiceServer].
-func (s *Server) GetContainerEvents(*runtimeapi.GetEventsRequest, grpc.ServerStreamingServer[runtimeapi.ContainerEventResponse]) error {
-	s.log.Warn().Str("method", "GetContainerEvents").Msg("not implemented")
-	return wrapErr(fmt.Errorf("not implemented"))
+func (s *Server) GetContainerEvents(_ *runtimeapi.GetEventsRequest, stream grpc.ServerStreamingServer[runtimeapi.ContainerEventResponse]) error {
+	s.log.Info().Msg("GetContainerEvents stream started")
+
+	ctx := stream.Context()
+	events := s.backend.parent.Subscribe()
+	lp := s.backend.labels
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ev, ok := <-events:
+			if !ok {
+				return nil
+			}
+			if ev.Resource != backend.ResourceContainer {
+				continue
+			}
+
+			var evType runtimeapi.ContainerEventType
+			switch ev.Action {
+			case backend.ActionCreate:
+				evType = runtimeapi.ContainerEventType_CONTAINER_CREATED_EVENT
+			case backend.ActionStart:
+				evType = runtimeapi.ContainerEventType_CONTAINER_STARTED_EVENT
+			case backend.ActionDie, backend.ActionStop, backend.ActionKill:
+				evType = runtimeapi.ContainerEventType_CONTAINER_STOPPED_EVENT
+			case backend.ActionDestroy, backend.ActionRemove:
+				evType = runtimeapi.ContainerEventType_CONTAINER_DELETED_EVENT
+			default:
+				continue
+			}
+
+			// Skip sandbox containers — CRI events are for app containers only
+			if ev.Attributes[lp.Prefix("type")] == "sandbox" {
+				continue
+			}
+
+			containerID := ev.ID
+			sandboxID := lp.SandboxID(ev.Attributes)
+
+			var sandboxStatus *runtimeapi.PodSandboxStatus
+			if sandboxID != "" {
+				if resp, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: sandboxID}); err == nil {
+					sandboxStatus = resp.Status
+				}
+			}
+
+			var containerStatuses []*runtimeapi.ContainerStatus
+			if sandboxID != "" {
+				if resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
+					Filter: &runtimeapi.ContainerFilter{PodSandboxId: sandboxID},
+				}); err == nil {
+					for _, c := range resp.Containers {
+						if st, err := s.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{ContainerId: c.Id}); err == nil {
+							containerStatuses = append(containerStatuses, st.Status)
+						}
+					}
+				}
+			}
+
+			s.log.Debug().
+				Str("container", containerID[:min(12, len(containerID))]).
+				Str("action", string(ev.Action)).
+				Int32("criEvent", int32(evType)).
+				Msg("container event")
+
+			if err := stream.Send(&runtimeapi.ContainerEventResponse{
+				ContainerId:        containerID,
+				ContainerEventType: evType,
+				CreatedAt:          ev.TimeNano,
+				PodSandboxStatus:   sandboxStatus,
+				ContainersStatuses: containerStatuses,
+			}); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // ListContainerStats implements [v1.RuntimeServiceServer].

@@ -36,6 +36,60 @@ const (
 	Podman Runtime = "podman"
 )
 
+// EventResource classifies the source of an event.
+type EventResource string
+
+const (
+	ResourceContainer EventResource = "container"
+	ResourceImage     EventResource = "image"
+	ResourceVolume    EventResource = "volume"
+	ResourceNetwork   EventResource = "network"
+)
+
+// EventAction classifies what happened.
+type EventAction string
+
+const (
+	ActionCreate  EventAction = "create"
+	ActionStart   EventAction = "start"
+	ActionRestart EventAction = "restart"
+	ActionStop    EventAction = "stop"
+	ActionKill    EventAction = "kill"
+	ActionDie     EventAction = "die"
+	ActionOOM     EventAction = "oom"
+	ActionPause   EventAction = "pause"
+	ActionUnpause EventAction = "unpause"
+	ActionDestroy EventAction = "destroy"
+	ActionRemove  EventAction = "remove"
+	ActionPull    EventAction = "pull"
+	ActionPush    EventAction = "push"
+	ActionTag     EventAction = "tag"
+	ActionUntag   EventAction = "untag"
+	ActionDelete  EventAction = "delete"
+	ActionMount   EventAction = "mount"
+	ActionUnmount EventAction = "unmount"
+	ActionConnect EventAction = "connect"
+	ActionDisconnect EventAction = "disconnect"
+
+	ActionExecCreate EventAction = "exec_create"
+	ActionExecStart  EventAction = "exec_start"
+	ActionExecDie    EventAction = "exec_die"
+
+	ActionHealthStatus          EventAction = "health_status"
+	ActionHealthStatusRunning   EventAction = "health_status: running"
+	ActionHealthStatusHealthy   EventAction = "health_status: healthy"
+	ActionHealthStatusUnhealthy EventAction = "health_status: unhealthy"
+)
+
+// Event is a generic lifecycle event emitted by a Driver.
+type Event struct {
+	Resource   EventResource
+	Action     EventAction
+	ID         string
+	Attributes map[string]string
+	TimeNano   int64
+}
+
 type Into[State any, Container any] interface {
 	Container(Container) *runtimeapi.Container
 	PodSandbox(Container) *runtimeapi.PodSandbox
@@ -55,6 +109,7 @@ type Driver interface {
 	ContainerServer() runtimeapi.RuntimeServiceServer
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
+	Events(ctx context.Context) (<-chan Event, <-chan error)
 }
 
 // Backend is the full interface consumers use
@@ -82,6 +137,10 @@ type Backend interface {
 
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)
+
+	// Subscribe returns a channel that receives all container lifecycle events.
+	// Each subscriber gets its own channel; closing the context unsubscribes.
+	Subscribe() <-chan Event
 }
 
 var _ Backend = &BackendImpl{}
@@ -115,6 +174,7 @@ type BackendImpl struct {
 
 	// events
 	broadcaster record.EventBroadcaster
+	subscribers []chan Event
 
 	// sync
 	mu sync.Mutex
@@ -170,8 +230,50 @@ func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadca
 		}
 	}()
 
+	// Start consuming driver events and fan out to subscribers
+	eventCh, errCh := b.Driver.Events(ctx)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-errCh:
+				if ctx.Err() != nil {
+					return
+				}
+				b.log.Error().Err(err).Msg("driver event stream error")
+				return
+			case ev, ok := <-eventCh:
+				if !ok {
+					return
+				}
+				b.log.Debug().
+					Str("resource", string(ev.Resource)).
+					Str("action", string(ev.Action)).
+					Str("id", ev.ID).
+					Msg("event")
+				b.mu.Lock()
+				for _, sub := range b.subscribers {
+					select {
+					case sub <- ev:
+					default:
+					}
+				}
+				b.mu.Unlock()
+			}
+		}
+	}()
+
 	b.log.Info().Msg("backend started")
 	return nil
+}
+
+func (b *BackendImpl) Subscribe() <-chan Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ch := make(chan Event, 64)
+	b.subscribers = append(b.subscribers, ch)
+	return ch
 }
 
 func (b *BackendImpl) Stop(ctx context.Context) error {

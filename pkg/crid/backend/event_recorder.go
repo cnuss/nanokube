@@ -6,8 +6,10 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	kubelettypes "k8s.io/kubelet/pkg/types"
 )
 
 func NewEventRecorder(backend *BackendImpl) record.EventRecorder {
@@ -24,8 +26,24 @@ func NewEventRecorder(backend *BackendImpl) record.EventRecorder {
 		recorder = record.NewFakeRecorder(100)
 	}
 
-	eventRecorder := &EventRecorderImpl{log: log, backend: backend, recorder: recorder}
-	return eventRecorder
+	impl := &EventRecorderImpl{log: log, backend: backend, recorder: recorder}
+
+	events := backend.Subscribe()
+	go func() {
+		for {
+			select {
+			case <-backend.ctx.Done():
+				return
+			case ev, ok := <-events:
+				if !ok {
+					return
+				}
+				impl.handleEvent(ev)
+			}
+		}
+	}()
+
+	return impl
 }
 
 type EventRecorderImpl struct {
@@ -50,6 +68,51 @@ func (e *EventRecorderImpl) Event(object runtime.Object, eventtype string, reaso
 func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
 	e.log.Info().Str("type", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
 	e.recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+}
+
+func (e *EventRecorderImpl) handleEvent(ev Event) {
+	if ev.Resource != ResourceContainer {
+		return
+	}
+
+	var reason, message string
+	switch ev.Action {
+	case ActionCreate:
+		reason = "Created"
+		message = "Created container"
+	case ActionStart:
+		reason = "Started"
+		message = "Started container"
+	case ActionStop, ActionKill, ActionDie:
+		reason = "Killing"
+		message = "Stopping container"
+	case ActionOOM:
+		reason = "OOMKilled"
+		message = "Container was OOM killed"
+	default:
+		return
+	}
+
+	name := kubelettypes.GetPodName(ev.Attributes)
+	namespace := kubelettypes.GetPodNamespace(ev.Attributes)
+	uid := kubelettypes.GetPodUID(ev.Attributes)
+	containerName := kubelettypes.GetContainerName(ev.Attributes)
+
+	if name == "" || namespace == "" || uid == "" {
+		return
+	}
+
+	if containerName != "" {
+		message = fmt.Sprintf("%s %s", message, containerName)
+	}
+
+	ref := &v1.ObjectReference{
+		Kind:      "Pod",
+		Name:      name,
+		Namespace: namespace,
+		UID:       types.UID(uid),
+	}
+	e.recorder.Event(ref, v1.EventTypeNormal, reason, message)
 }
 
 var _ record.EventRecorder = &EventRecorderImpl{}
