@@ -11,6 +11,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid"
+	"github.com/cnuss/nanokube/pkg/etcd"
+	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -36,35 +38,62 @@ var rootCmd = &cobra.Command{
 		}
 
 		cfg.Components = append(cfg.Components, cfg.CRID)
-		// cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
+		cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
 
 		if options.Kubelet {
-			// cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
+			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
 		}
 
 		// Each component gets its own context so we can cancel them
 		// in reverse order during shutdown, keeping dependencies alive.
 		cancels := make([]context.CancelFunc, len(cfg.Components))
+		started := 0
 		for i, c := range cfg.Components {
 			compCtx, cancel := context.WithCancel(context.Background())
 			cancels[i] = cancel
-			started, err := c.Start(compCtx)
-			if err != nil {
+
+			// Allow ctrl+c to abort startup
+			done := make(chan error, 1)
+			go func() {
+				s, err := c.Start(compCtx)
+				if err != nil {
+					done <- err
+					return
+				}
+				<-s
+				done <- nil
+			}()
+
+			select {
+			case err := <-done:
+				if err != nil {
+					cancel()
+					return err
+				}
+				started = i + 1
+			case <-sigCtx.Done():
 				cancel()
-				return err
+				log.Info().Msg("startup interrupted")
+				goto shutdown
 			}
-			<-started
 		}
 
 		<-sigCtx.Done()
+	shutdown:
 		log.Info().Msg("shutting down")
 
-		for i := len(cfg.Components) - 1; i >= 0; i-- {
+		names := make([]string, len(cfg.Components))
+		for i, c := range cfg.Components {
+			names[i] = fmt.Sprintf("%T", c)
+		}
+		for i := started - 1; i >= 0; i-- {
+			log.Info().Str("component", names[i]).Msg("stopping")
 			cancels[i]()
 			<-cfg.Components[i].Stop()
+			log.Info().Str("component", names[i]).Msg("stopped")
 		}
 		return nil
 	},

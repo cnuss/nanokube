@@ -15,6 +15,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
+	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
@@ -60,25 +61,24 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubelet config: %w", err)
 	}
-	// c.ContainerRuntimeEndpoint = k.config.CRID.Endpoint()
-	// c.StaticPodPath = filepath.Join(k.config.DataDir, "manifests")
-	// c.PodLogsDir = filepath.Join(k.config.DataDir, "logs")
-	// c.ClusterDomain = k.config.CRID.Domain()
-	// c.ClusterDNS = k.config.CRID.Nameservers()
-	// c.Authentication = kubeletconfig.KubeletAuthentication{
-	// 	Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
-	// 	Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
-	// }
-	// c.Authorization = kubeletconfig.KubeletAuthorization{
-	// 	Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
-	// }
-	// c.TLSCertFile = k.config.Certs.CertPath()
-	// c.TLSPrivateKeyFile = k.config.Certs.KeyPath()
-	// c.EnableServer = true
-	// c.Port = 10250
-	// c.ReadOnlyPort = 0
-	// c.EnableControllerAttachDetach = false
-	// c.HairpinMode = kubeletconfig.HairpinVeth
+	c.StaticPodPath = filepath.Join(k.config.DataDir, "manifests")
+	c.PodLogsDir = filepath.Join(k.config.DataDir, "logs")
+	c.ClusterDomain = "cluster.local"
+	c.ClusterDNS = []string{}
+	c.Authentication = kubeletconfig.KubeletAuthentication{
+		Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
+		Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
+	}
+	c.Authorization = kubeletconfig.KubeletAuthorization{
+		Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
+	}
+	c.TLSCertFile = k.config.Certs.CertPath()
+	c.TLSPrivateKeyFile = k.config.Certs.KeyPath()
+	c.EnableServer = true
+	c.Port = 10250
+	c.ReadOnlyPort = 0
+	c.EnableControllerAttachDetach = false
+	c.HairpinMode = kubeletconfig.HairpinVeth
 	c.CgroupsPerQOS = false
 	c.CgroupDriver = "cgroupfs"
 	c.EnforceNodeAllocatable = []string{}
@@ -145,30 +145,44 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		CertFile: c.TLSCertFile,
 		KeyFile:  c.TLSPrivateKeyFile,
 	}
-	go hk.Run(ctx)
+	exited := make(chan error, 1)
+	go func() {
+		kubeletLog.Info().Msg("hollow kubelet goroutine starting")
+		hk.Run(ctx)
+		kubeletLog.Warn().Msg("hollow kubelet goroutine exited")
+		exited <- fmt.Errorf("kubelet exited unexpectedly")
+	}()
 
 	// Wait for kubelet to be healthy
 	httpClient := &http.Client{
-		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		default:
-			resp, err := httpClient.Get("https://127.0.0.1:10250/healthz")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					kubeletLog.Info().Msg("kubelet is ready")
-					return component.Ready(), nil
-				}
+		case err := <-exited:
+			return nil, err
+		case <-ticker.C:
+			reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			req, _ := http.NewRequestWithContext(reqCtx, "GET", "https://127.0.0.1:10250/healthz", nil)
+			resp, err := httpClient.Do(req)
+			cancel()
+			if err != nil {
+				kubeletLog.Debug().Err(err).Msg("healthz probe failed")
+				continue
 			}
-			time.Sleep(100 * time.Millisecond)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				kubeletLog.Info().Msg("kubelet is ready")
+				return component.Ready(), nil
+			}
+			kubeletLog.Debug().Int("status", resp.StatusCode).Msg("healthz returned non-200")
 		}
 	}
 }

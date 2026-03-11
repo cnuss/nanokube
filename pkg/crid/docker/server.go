@@ -21,7 +21,6 @@ import (
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
-	"k8s.io/component-base/version"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
 	kubelettypes "k8s.io/kubelet/pkg/types"
@@ -931,7 +930,7 @@ func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*
 		return nil, wrapErr(err)
 	}
 	return &runtimeapi.VersionResponse{
-		Version:           version.Get().GitVersion,
+		Version:           req.GetVersion(),
 		RuntimeName:       string(s.backend.Name()),
 		RuntimeVersion:    v.Version,
 		RuntimeApiVersion: req.GetVersion(),

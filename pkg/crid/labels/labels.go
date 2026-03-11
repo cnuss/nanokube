@@ -11,8 +11,8 @@ var (
 	sandboxIDKey   = "sandbox-id"
 	containerIDKey = "container-id"
 	volumeIDKey    = "volume-id"
-	logDirKey  = "log-directory"
-	logPathKey = "container-log-path"
+	logDirKey      = "log-directory"
+	logPathKey     = "container-log-path"
 
 	unknownType   = "unknown"
 	sandboxType   = "sandbox"

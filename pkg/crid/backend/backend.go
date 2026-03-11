@@ -50,25 +50,25 @@ const (
 type EventAction string
 
 const (
-	ActionCreate  EventAction = "create"
-	ActionStart   EventAction = "start"
-	ActionRestart EventAction = "restart"
-	ActionStop    EventAction = "stop"
-	ActionKill    EventAction = "kill"
-	ActionDie     EventAction = "die"
-	ActionOOM     EventAction = "oom"
-	ActionPause   EventAction = "pause"
-	ActionUnpause EventAction = "unpause"
-	ActionDestroy EventAction = "destroy"
-	ActionRemove  EventAction = "remove"
-	ActionPull    EventAction = "pull"
-	ActionPush    EventAction = "push"
-	ActionTag     EventAction = "tag"
-	ActionUntag   EventAction = "untag"
-	ActionDelete  EventAction = "delete"
-	ActionMount   EventAction = "mount"
-	ActionUnmount EventAction = "unmount"
-	ActionConnect EventAction = "connect"
+	ActionCreate     EventAction = "create"
+	ActionStart      EventAction = "start"
+	ActionRestart    EventAction = "restart"
+	ActionStop       EventAction = "stop"
+	ActionKill       EventAction = "kill"
+	ActionDie        EventAction = "die"
+	ActionOOM        EventAction = "oom"
+	ActionPause      EventAction = "pause"
+	ActionUnpause    EventAction = "unpause"
+	ActionDestroy    EventAction = "destroy"
+	ActionRemove     EventAction = "remove"
+	ActionPull       EventAction = "pull"
+	ActionPush       EventAction = "push"
+	ActionTag        EventAction = "tag"
+	ActionUntag      EventAction = "untag"
+	ActionDelete     EventAction = "delete"
+	ActionMount      EventAction = "mount"
+	ActionUnmount    EventAction = "unmount"
+	ActionConnect    EventAction = "connect"
 	ActionDisconnect EventAction = "disconnect"
 
 	ActionExecCreate EventAction = "exec_create"
@@ -431,9 +431,20 @@ func (b *BackendImpl) EventBroadcaster() record.EventBroadcaster {
 
 func (b *BackendImpl) EventRecorder() record.EventRecorder {
 	b.mu.Lock()
+	if b.eventRecorder != nil {
+		defer b.mu.Unlock()
+		return b.eventRecorder
+	}
+	b.mu.Unlock()
+
+	// Build outside the lock — NewEventRecorder calls Subscribe() which
+	// also takes b.mu, so we must not hold it here.
+	er := NewEventRecorder(b)
+
+	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.eventRecorder == nil {
-		b.eventRecorder = NewEventRecorder(b)
+		b.eventRecorder = er
 	}
 	return b.eventRecorder
 }
