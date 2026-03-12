@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -34,14 +33,11 @@ import (
 const defaultPauseImage = "registry.k8s.io/pause:3.10"
 
 func NewServer(b *DockerBackend, parent backend.Backend) *Server {
-	s := &Server{
+	return &Server{
 		backend:   b,
 		streaming: parent.Streaming(),
 		log:       component.NewLogger("docker-server"),
-		exited:    make(map[string]*exitedContainer),
 	}
-	go s.watchExits(b.ctx, parent)
-	return s
 }
 
 type Server struct {
@@ -50,120 +46,6 @@ type Server struct {
 	log       component.Logger
 	backend   *DockerBackend
 	streaming streaming.Server
-
-	exitMu sync.Mutex
-	exited map[string]*exitedContainer // container ID → cached state
-}
-
-// exitedContainer caches a container's final state after it exits,
-// because Docker may remove the container before the kubelet can poll it.
-type exitedContainer struct {
-	container *runtimeapi.Container       // for ListContainers
-	status    *runtimeapi.ContainerStatus // for ContainerStatus
-}
-
-// watchExits listens for container die events and snapshots the exited
-// container's state before Docker can garbage-collect it.
-func (s *Server) watchExits(ctx context.Context, parent backend.Backend) {
-	events := parent.Subscribe()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, ok := <-events:
-			if !ok {
-				return
-			}
-			if ev.Resource != backend.ResourceContainer {
-				continue
-			}
-			if ev.Action != backend.ActionDie {
-				continue
-			}
-			// Skip sandbox containers
-			if ev.Attributes[s.backend.labels.Prefix("type")] == "sandbox" {
-				continue
-			}
-			s.cacheExitedContainer(ctx, ev.ID)
-		}
-	}
-}
-
-// cacheExitedContainer snapshots a dying container's state from Docker.
-func (s *Server) cacheExitedContainer(ctx context.Context, id string) {
-	inspect, err := s.backend.client.ContainerInspect(ctx, id)
-	if err != nil {
-		s.log.Warn().Str("id", id[:min(12, len(id))]).Err(err).Msg("failed to cache exited container")
-		return
-	}
-
-	createdAt := s.backend.Into.CreatedAt(inspect.Created)
-	state := s.backend.Into.ContainerState(inspect.State.Status)
-	labels := inspect.Config.Labels
-
-	rc := &runtimeapi.Container{
-		Id:           inspect.ID,
-		PodSandboxId: s.backend.labels.SandboxID(labels),
-		Metadata: &runtimeapi.ContainerMetadata{
-			Name:    s.backend.labels.ContainerName(labels),
-			Attempt: s.backend.labels.Attempt(labels),
-		},
-		Image:       &runtimeapi.ImageSpec{Image: inspect.Config.Image},
-		ImageRef:    inspect.Image,
-		State:       state,
-		CreatedAt:   createdAt,
-		Labels:      s.backend.labels.ExtractLabels(labels),
-		Annotations: s.backend.labels.ExtractAnnotations(labels),
-	}
-
-	st := &runtimeapi.ContainerStatus{
-		Id:       inspect.ID,
-		Metadata: rc.Metadata,
-		State:    state,
-		CreatedAt: createdAt,
-		Image:       rc.Image,
-		ImageRef:    rc.ImageRef,
-		Labels:      rc.Labels,
-		Annotations: rc.Annotations,
-		ExitCode:    int32(inspect.State.ExitCode),
-	}
-
-	if inspect.State.OOMKilled {
-		st.Reason = "OOMKilled"
-	} else if inspect.State.ExitCode == 0 {
-		st.Reason = "Completed"
-	} else if inspect.State.Error != "" {
-		st.Reason = inspect.State.Error
-	} else {
-		st.Reason = "Error"
-	}
-
-	if logPath := s.backend.labels.LogPath(labels); logPath != "" {
-		st.LogPath = logPath
-	} else {
-		st.LogPath = inspect.LogPath
-	}
-
-	if inspect.State.StartedAt != "" && inspect.State.StartedAt != "0001-01-01T00:00:00Z" {
-		st.StartedAt = s.backend.Into.CreatedAt(inspect.State.StartedAt)
-	}
-	if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
-		st.FinishedAt = s.backend.Into.CreatedAt(inspect.State.FinishedAt)
-	}
-
-	for _, m := range inspect.Mounts {
-		st.Mounts = append(st.Mounts, &runtimeapi.Mount{
-			ContainerPath: m.Destination,
-			HostPath:      m.Source,
-			Readonly:      !m.RW,
-		})
-	}
-
-	s.exitMu.Lock()
-	s.exited[id] = &exitedContainer{container: rc, status: st}
-	s.exitMu.Unlock()
-
-	s.log.Info().Str("id", id[:min(12, len(id))]).Int32("exitCode", st.ExitCode).Str("reason", st.Reason).Msg("cached exited container")
 }
 
 // Attach implements [v1.RuntimeServiceServer].
@@ -230,13 +112,6 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetContainerId())
 	if err != nil {
-		// Container may have been removed by Docker; check the exit cache
-		s.exitMu.Lock()
-		ec, ok := s.exited[req.GetContainerId()]
-		s.exitMu.Unlock()
-		if ok {
-			return &runtimeapi.ContainerStatusResponse{Status: ec.status}, nil
-		}
 		return nil, wrapErr(err)
 	}
 
@@ -348,11 +223,11 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		Tty:        config.GetTty(),
 	}
 
-	// Host config: share sandbox namespaces (PID is not shared by default,
-	// matching upstream Kubernetes behavior)
+	// Host config: share sandbox namespaces
 	hostConfig := &container.HostConfig{
 		NetworkMode: container.NetworkMode("container:" + sandboxID),
 		IpcMode:     container.IpcMode("container:" + sandboxID),
+		PidMode:     container.PidMode("container:" + sandboxID),
 	}
 
 	// Mounts
@@ -609,7 +484,7 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 				f.Add("status", container.StateDead)
 			}
 		}
-		for k, v := range filter.GetLabelSelector() {
+		for k, v := range s.backend.labels.TranslateKeys(filter.GetLabelSelector()) {
 			f.Add("label", k+"="+v)
 		}
 	}
@@ -619,46 +494,10 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 		return nil, wrapErr(err)
 	}
 
-	// Collect live containers from Docker
-	liveIDs := make(map[string]bool, len(containers))
-	var result []*runtimeapi.Container
+	result := make([]*runtimeapi.Container, 0, len(containers))
 	for _, c := range containers {
-		liveIDs[c.ID] = true
 		result = append(result, s.backend.Into.Container(c))
 	}
-
-	// Merge cached exited containers that Docker has already removed
-	filter := req.GetFilter()
-	s.exitMu.Lock()
-	for id, ec := range s.exited {
-		if liveIDs[id] {
-			continue // still in Docker, already included
-		}
-		// Apply filters
-		if filter != nil {
-			if filter.Id != "" && filter.Id != id {
-				continue
-			}
-			if filter.PodSandboxId != "" && ec.container.PodSandboxId != filter.PodSandboxId {
-				continue
-			}
-			if filter.State != nil && ec.container.State != filter.State.State {
-				continue
-			}
-			match := true
-			for k, v := range filter.GetLabelSelector() {
-				if ec.container.Labels[k] != v {
-					match = false
-					break
-				}
-			}
-			if !match {
-				continue
-			}
-		}
-		result = append(result, ec.container)
-	}
-	s.exitMu.Unlock()
 
 	return &runtimeapi.ListContainersResponse{Containers: result}, nil
 }
@@ -691,7 +530,7 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 				f.Add("status", container.StateDead)
 			}
 		}
-		for k, v := range filter.GetLabelSelector() {
+		for k, v := range s.backend.labels.TranslateKeys(filter.GetLabelSelector()) {
 			f.Add("label", k+"="+v)
 		}
 	}
@@ -772,11 +611,6 @@ func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveCont
 	s.log.Info().Str("id", req.ContainerId[:min(12, len(req.ContainerId))]).Msg("RemoveContainer")
 	id := req.GetContainerId()
 	s.backend.StopLogs(id)
-
-	// Clear exit cache entry
-	s.exitMu.Lock()
-	delete(s.exited, id)
-	s.exitMu.Unlock()
 
 	for {
 		inspect, err := s.backend.client.ContainerInspect(ctx, id)

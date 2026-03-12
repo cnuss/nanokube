@@ -1,6 +1,7 @@
 package labels
 
 import (
+	"encoding/base64"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -44,6 +45,8 @@ type LabelProvider interface {
 	ManagedByFilter() string
 	TypeFilter(t string) string
 	SandboxIDFilter(id string) string
+	TranslateKey(key string) (string, bool)
+	TranslateKeys(labels map[string]string) map[string]string
 	IsInternal(key string) bool
 	IsAnnotation(key string) bool
 	ExtractLabels(dockerLabels map[string]string) map[string]string
@@ -143,6 +146,53 @@ func (l *LabelProviderImpl) SandboxIDFilter(id string) string {
 	return l.Prefix(sandboxIDKey) + "=" + id
 }
 
+// encodeAnnotationKey base64-encodes an annotation key to keep Docker labels
+// free of io.kubernetes.* strings.
+func encodeAnnotationKey(k string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(k))
+}
+
+// decodeAnnotationKey reverses encodeAnnotationKey.
+func decodeAnnotationKey(k string) string {
+	b, err := base64.RawURLEncoding.DecodeString(k)
+	if err != nil {
+		return k // pass through if not encoded
+	}
+	return string(b)
+}
+
+// kubeToInternal maps io.kubernetes.* label keys to internal key suffixes.
+var kubeToInternal = map[string]string{
+	"io.kubernetes.pod.name":       podNameKey,
+	"io.kubernetes.pod.namespace":  podNamespaceKey,
+	"io.kubernetes.pod.uid":        podUIDKey,
+	"io.kubernetes.container.name": containerNameKey,
+}
+
+// TranslateKey maps an io.kubernetes.* label key to its nanokube-prefixed
+// equivalent. Returns the translated key and true, or "" and false if the
+// key does not need translation.
+func (l *LabelProviderImpl) TranslateKey(key string) (string, bool) {
+	if suffix, ok := kubeToInternal[key]; ok {
+		return l.Prefix(suffix), true
+	}
+	return "", false
+}
+
+// TranslateKeys returns a copy of the map with any io.kubernetes.* keys
+// replaced by their nanokube-prefixed equivalents.
+func (l *LabelProviderImpl) TranslateKeys(labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if translated, ok := l.TranslateKey(k); ok {
+			out[translated] = v
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // IsInternal returns true if the label key is an internal management label.
 func (l *LabelProviderImpl) IsInternal(key string) bool {
 	prefix := l.name + "."
@@ -162,12 +212,28 @@ func (l *LabelProviderImpl) IsAnnotation(key string) bool {
 	return strings.HasPrefix(key, l.Prefix("annotation."))
 }
 
-// ExtractLabels extracts CRI labels from Docker labels, excluding
-// annotation-prefixed labels.
+// ExtractLabels extracts CRI labels from Docker labels, excluding internal
+// and annotation-prefixed labels, and reverse-translating nanokube-prefixed
+// identity keys back to io.kubernetes.* for the kubelet.
 func (l *LabelProviderImpl) ExtractLabels(dockerLabels map[string]string) map[string]string {
+	// Build reverse map: nanokube.pod-name → io.kubernetes.pod.name
+	reverse := make(map[string]string, len(kubeToInternal))
+	for kubeKey, suffix := range kubeToInternal {
+		reverse[l.Prefix(suffix)] = kubeKey
+	}
+
 	out := make(map[string]string)
 	for k, v := range dockerLabels {
 		if l.IsAnnotation(k) {
+			continue
+		}
+		// Reverse-translate identity keys back to io.kubernetes.*
+		if kubeKey, ok := reverse[k]; ok {
+			out[kubeKey] = v
+			continue
+		}
+		// Skip remaining internal management labels
+		if l.IsInternal(k) {
 			continue
 		}
 		out[k] = v
@@ -175,13 +241,14 @@ func (l *LabelProviderImpl) ExtractLabels(dockerLabels map[string]string) map[st
 	return out
 }
 
-// ExtractAnnotations extracts CRI annotations from Docker labels.
+// ExtractAnnotations extracts CRI annotations from Docker labels, expanding
+// shortened k8s.* and k8s/* keys back to their io.kubernetes.* originals.
 func (l *LabelProviderImpl) ExtractAnnotations(dockerLabels map[string]string) map[string]string {
 	annPrefix := l.Prefix("annotation.")
 	out := make(map[string]string)
 	for k, v := range dockerLabels {
-		if strings.HasPrefix(k, annPrefix) {
-			out[strings.TrimPrefix(k, annPrefix)] = v
+		if after, ok := strings.CutPrefix(k, annPrefix); ok {
+			out[decodeAnnotationKey(after)] = v
 		}
 	}
 	return out

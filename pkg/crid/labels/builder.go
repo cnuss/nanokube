@@ -105,18 +105,24 @@ func (b *LabelBuilder) WithUID(uid string) *LabelBuilder {
 	return b
 }
 
-// WithLabels merges additional labels into the builder.
+// WithLabels merges additional labels into the builder, translating any
+// io.kubernetes.* keys to their nanokube-prefixed equivalents.
 func (b *LabelBuilder) WithLabels(labels map[string]string) *LabelBuilder {
 	for k, v := range labels {
-		b.set(k, v)
+		if translated, ok := b.lp.TranslateKey(k); ok {
+			b.set(translated, v)
+		} else {
+			b.set(k, v)
+		}
 	}
 	return b
 }
 
-// WithAnnotations stores CRI annotations as prefixed labels.
+// WithAnnotations stores CRI annotations as prefixed labels, shortening
+// io.kubernetes.* and kubernetes.io/* keys to k8s.* and k8s/* respectively.
 func (b *LabelBuilder) WithAnnotations(annotations map[string]string) *LabelBuilder {
 	for k, v := range annotations {
-		b.set(b.lp.AnnotationPrefix(k), v)
+		b.set(b.lp.AnnotationPrefix(encodeAnnotationKey(k)), v)
 	}
 	return b
 }
@@ -148,7 +154,8 @@ func (b *LabelBuilder) Build() (string, map[string]string, error) {
 	b.built = true
 	containerName := b.labels[b.lp.Prefix(containerNameKey)]
 	attempt := b.labels[b.lp.Prefix(containerAttemptKey)]
-	name := fmt.Sprintf("k8s_%s_%s_%s_%s_%s_%s",
+	name := fmt.Sprintf("%s_%s_%s_%s_%s_%s_%s",
+		b.lp.name,
 		b.labels[b.lp.Prefix(typeKey)],
 		containerName,
 		b.labels[b.lp.Prefix(podNameKey)],
