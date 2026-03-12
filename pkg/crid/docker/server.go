@@ -348,11 +348,11 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		Tty:        config.GetTty(),
 	}
 
-	// Host config: share sandbox namespaces
+	// Host config: share sandbox namespaces (PID is not shared by default,
+	// matching upstream Kubernetes behavior)
 	hostConfig := &container.HostConfig{
 		NetworkMode: container.NetworkMode("container:" + sandboxID),
 		IpcMode:     container.IpcMode("container:" + sandboxID),
-		PidMode:     container.PidMode("container:" + sandboxID),
 	}
 
 	// Mounts
