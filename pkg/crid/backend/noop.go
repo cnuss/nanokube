@@ -46,6 +46,7 @@ func (n *NoopBackend) Streaming() streaming.Server                              
 func (n *NoopBackend) Subscribe() <-chan Event                                   { return make(chan Event) }
 func (n *NoopBackend) CSI() *CSI                                                 { return nil }
 func (n *NoopBackend) StorageClass() *storagev1ac.StorageClassApplyConfiguration { return nil }
+func (n *NoopBackend) Cleanup(context.Context) error { return nil }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

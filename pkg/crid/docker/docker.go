@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	dockervolume "github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"k8s.io/client-go/tools/remotecommand"
@@ -49,21 +51,36 @@ func (b *DockerBackend) DataDir() string {
 	return b.dataDir
 }
 
-// Cleanup force-removes all containers managed by this backend.
+// Cleanup force-removes all containers and volumes managed by this backend.
 func (b *DockerBackend) Cleanup(ctx context.Context) error {
-	b.log.Info().Msg("cleanup: removing managed containers")
+	b.log.Info().Msg("cleanup: removing managed containers and volumes")
 	f := filters.NewArgs()
 	f.Add("label", b.labels.ManagedByFilter())
+	var errs []error
 
-	all, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	containers, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
 		return err
 	}
-	for _, c := range all {
-		b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+	for _, c := range containers {
+		b.log.Info().Str("id", c.ID[:min(12, len(c.ID))]).Strs("names", c.Names).Msg("cleanup: removing container")
+		if err := b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			errs = append(errs, fmt.Errorf("remove container %s: %w", c.ID[:min(12, len(c.ID))], err))
+		}
 	}
-	b.log.Info().Int("removed", len(all)).Msg("cleanup: done")
-	return nil
+
+	volumes, err := b.client.VolumeList(ctx, dockervolume.ListOptions{Filters: f})
+	if err != nil {
+		return err
+	}
+	for _, v := range volumes.Volumes {
+		b.log.Info().Str("name", v.Name).Msg("cleanup: removing volume")
+		if err := b.client.VolumeRemove(ctx, v.Name, true); err != nil {
+			errs = append(errs, fmt.Errorf("remove volume %s: %w", v.Name, err))
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 func Detect(ctx context.Context, name, dataDir string) backend.Backend {
@@ -115,7 +132,7 @@ func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 		return nil
 	}
 	lp := labels.NewLabels(name)
-	d := &DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}}
+	d := &DockerBackend{ctx: ctx, client: client, dataDir: dataDir, labels: lp, log: component.NewLogger("docker"), logs: newLogWriter(ctx, client), Into: DockerInto{labels: lp}}
 	b := backend.NewBackend(name, d)
 	d.parent = b
 	return b

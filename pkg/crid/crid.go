@@ -29,11 +29,20 @@ type CRID struct {
 
 var _ component.Component = &CRID{}
 
-func NewCRID(ctx context.Context, name, dataDir string) *CRID {
+func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 	log := component.NewLogger("crid")
 	log.Info().Msg("initializing")
 
-	crid := &CRID{ctx: ctx, log: log, backends: detectBackends(ctx, name, dataDir)}
+	backends := detectBackends(ctx, name, dataDir)
+	if clean {
+		for _, b := range backends {
+			if err := b.Cleanup(ctx); err != nil {
+				log.Error().Err(err).Msg("cleanup failed")
+			}
+		}
+	}
+
+	crid := &CRID{ctx: ctx, log: log, backends: backends}
 	return crid
 }
 

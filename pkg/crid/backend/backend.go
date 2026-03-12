@@ -147,6 +147,9 @@ type Backend interface {
 	// Subscribe returns a channel that receives all container lifecycle events.
 	// Each subscriber gets its own channel; closing the context unsubscribes.
 	Subscribe() <-chan Event
+
+	// Cleanup force-removes all containers managed by this backend.
+	Cleanup(ctx context.Context) error
 }
 
 var _ Backend = &BackendImpl{}
@@ -301,11 +304,6 @@ func (b *BackendImpl) Subscribe() <-chan Event {
 
 func (b *BackendImpl) Stop(ctx context.Context) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("stopping")
-
-	// Clean up all managed containers directly via the driver (bypasses gRPC)
-	if err := b.Cleanup(ctx); err != nil {
-		b.log.Error().Err(err).Msg("failed to clean up containers")
-	}
 
 	if b.grpc != nil {
 		done := make(chan struct{})

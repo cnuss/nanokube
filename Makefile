@@ -59,7 +59,7 @@ WHAT ?=
 define run-nanokube
 	@D=$$(mktemp -d); \
 	trap 'kill $$! 2>/dev/null; wait; rm -rf "$$D"' EXIT; \
-	./nanokube $(1) --data "$$D" & \
+	./nanokube $(1) $(ARGS) --data "$$D" & \
 	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
 	$(3)
 endef
