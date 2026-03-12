@@ -11,8 +11,10 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/labels"
+	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	tp "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
+	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -106,12 +108,10 @@ type Driver interface {
 
 	ImageServer() runtimeapi.ImageServiceServer
 	ContainerServer() runtimeapi.RuntimeServiceServer
+	VolumeServer() csipb.ControllerServer
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
 	Events(ctx context.Context) (<-chan Event, <-chan error)
-
-	CreateVolume(name, sandboxID string) (string, error)
-	RemoveVolume(name string) error
 }
 
 // Backend is the full interface consumers use
@@ -135,6 +135,10 @@ type Backend interface {
 	EventBroadcaster() record.EventBroadcaster
 	EventRecorder() record.EventRecorder
 	Prober() prober.Manager
+
+	// Storage
+	CSI() *CSI
+	StorageClass() *storagev1ac.StorageClassApplyConfiguration
 
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)
@@ -468,6 +472,10 @@ func (b *BackendImpl) CSI() *CSI {
 		b.csi = NewCSI(b)
 	}
 	return b.csi
+}
+
+func (b *BackendImpl) StorageClass() *storagev1ac.StorageClassApplyConfiguration {
+	return b.CSI().StorageClass()
 }
 
 func (b *BackendImpl) HostInfo() (*HostInfo, error) {

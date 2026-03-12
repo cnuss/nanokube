@@ -16,12 +16,12 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/labels"
+	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
-	dockervolume "github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"k8s.io/client-go/tools/remotecommand"
@@ -140,6 +140,11 @@ func (b *DockerBackend) ImageServer() runtimeapi.ImageServiceServer {
 }
 
 func (b *DockerBackend) ContainerServer() runtimeapi.RuntimeServiceServer {
+	b.init()
+	return b.server
+}
+
+func (b *DockerBackend) VolumeServer() csipb.ControllerServer {
 	b.init()
 	return b.server
 }
@@ -314,36 +319,6 @@ func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool,
 	if err := cb(strings.TrimSpace(stdout.String())); err != nil {
 		return err
 	}
-	return nil
-}
-
-// CreateVolume implements [backend.Driver]. Returns the volume's host mountpoint.
-func (b *DockerBackend) CreateVolume(name, sandboxID string) (string, error) {
-	volName, volLabels, err := b.labels.NewBuilder(nil).WithVolume(sandboxID, name).Build()
-	if err != nil {
-		return "", fmt.Errorf("build volume labels: %w", err)
-	}
-	resp, err := b.client.VolumeCreate(b.ctx, dockervolume.CreateOptions{
-		Name:   volName,
-		Labels: volLabels,
-	})
-	if err != nil {
-		return "", err
-	}
-	b.log.Debug().Str("name", resp.Name).Str("mountpoint", resp.Mountpoint).Msg("created volume")
-	return resp.Mountpoint, nil
-}
-
-// RemoveVolume implements [backend.Driver].
-func (b *DockerBackend) RemoveVolume(name string) error {
-	volName, _, err := b.labels.NewBuilder(nil).WithVolume("", name).Build()
-	if err != nil {
-		return fmt.Errorf("build volume name: %w", err)
-	}
-	if err := b.client.VolumeRemove(b.ctx, volName, true); err != nil {
-		return err
-	}
-	b.log.Debug().Str("name", volName).Msg("removed volume")
 	return nil
 }
 

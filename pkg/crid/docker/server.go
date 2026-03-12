@@ -13,14 +13,19 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
+	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	dockervolume "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubelet/pkg/cri/streaming"
 	kubelettypes "k8s.io/kubelet/pkg/types"
@@ -1061,6 +1066,176 @@ func (s *Server) RemoveImage(ctx context.Context, req *runtimeapi.RemoveImageReq
 	return &runtimeapi.RemoveImageResponse{}, nil
 }
 
+// --- CSI Controller ---
+
+// CreateVolume implements [csipb.ControllerServer].
+func (s *Server) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRequest) (*csipb.CreateVolumeResponse, error) {
+	name := req.GetName()
+	s.log.Info().Str("name", name).Msg("CreateVolume")
+
+	volName, volLabels, err := s.backend.labels.NewBuilder(nil).WithVolume(name).Build()
+	if err != nil {
+		return nil, wrapErr(fmt.Errorf("build volume labels: %w", err))
+	}
+	resp, err := s.backend.client.VolumeCreate(ctx, dockervolume.CreateOptions{
+		Name:   volName,
+		Labels: volLabels,
+	})
+	if err != nil {
+		return nil, wrapErr(fmt.Errorf("create volume %q: %w", name, err))
+	}
+
+	return &csipb.CreateVolumeResponse{
+		Volume: &csipb.Volume{
+			VolumeId:      name,
+			VolumeContext: map[string]string{"mountpoint": resp.Mountpoint},
+		},
+	}, nil
+}
+
+// DeleteVolume implements [csipb.ControllerServer].
+func (s *Server) DeleteVolume(ctx context.Context, req *csipb.DeleteVolumeRequest) (*csipb.DeleteVolumeResponse, error) {
+	volumeID := req.GetVolumeId()
+	s.log.Info().Str("volume", volumeID).Msg("DeleteVolume")
+
+	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
+	if err != nil {
+		return nil, wrapErr(fmt.Errorf("build volume name: %w", err))
+	}
+	if err := s.backend.client.VolumeRemove(ctx, volName, true); err != nil {
+		return nil, wrapErr(fmt.Errorf("delete volume %q: %w", volumeID, err))
+	}
+
+	return &csipb.DeleteVolumeResponse{}, nil
+}
+
+// ControllerGetCapabilities implements [csipb.ControllerServer].
+func (s *Server) ControllerGetCapabilities(_ context.Context, _ *csipb.ControllerGetCapabilitiesRequest) (*csipb.ControllerGetCapabilitiesResponse, error) {
+	caps := []csipb.ControllerServiceCapability_RPC_Type{
+		csipb.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+		csipb.ControllerServiceCapability_RPC_LIST_VOLUMES,
+		csipb.ControllerServiceCapability_RPC_GET_VOLUME,
+		csipb.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
+	}
+	result := make([]*csipb.ControllerServiceCapability, len(caps))
+	for i, c := range caps {
+		result[i] = &csipb.ControllerServiceCapability{
+			Type: &csipb.ControllerServiceCapability_Rpc{
+				Rpc: &csipb.ControllerServiceCapability_RPC{Type: c},
+			},
+		}
+	}
+	return &csipb.ControllerGetCapabilitiesResponse{Capabilities: result}, nil
+}
+
+// ControllerPublishVolume implements [csipb.ControllerServer].
+// No-op for local Docker volumes — they're already available on the single node.
+func (s *Server) ControllerPublishVolume(_ context.Context, _ *csipb.ControllerPublishVolumeRequest) (*csipb.ControllerPublishVolumeResponse, error) {
+	return &csipb.ControllerPublishVolumeResponse{}, nil
+}
+
+// ControllerUnpublishVolume implements [csipb.ControllerServer].
+// No-op for local Docker volumes.
+func (s *Server) ControllerUnpublishVolume(_ context.Context, _ *csipb.ControllerUnpublishVolumeRequest) (*csipb.ControllerUnpublishVolumeResponse, error) {
+	return &csipb.ControllerUnpublishVolumeResponse{}, nil
+}
+
+// ValidateVolumeCapabilities implements [csipb.ControllerServer].
+func (s *Server) ValidateVolumeCapabilities(ctx context.Context, req *csipb.ValidateVolumeCapabilitiesRequest) (*csipb.ValidateVolumeCapabilitiesResponse, error) {
+	volumeID := req.GetVolumeId()
+	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
+	if err != nil {
+		return nil, wrapErr(fmt.Errorf("build volume name: %w", err))
+	}
+	if _, err := s.backend.client.VolumeInspect(ctx, volName); err != nil {
+		return nil, status.Errorf(codes.NotFound, "volume %q not found: %v", volumeID, err)
+	}
+	return &csipb.ValidateVolumeCapabilitiesResponse{
+		Confirmed: &csipb.ValidateVolumeCapabilitiesResponse_Confirmed{
+			VolumeCapabilities: req.GetVolumeCapabilities(),
+		},
+	}, nil
+}
+
+// ListVolumes implements [csipb.ControllerServer].
+func (s *Server) ListVolumes(ctx context.Context, _ *csipb.ListVolumesRequest) (*csipb.ListVolumesResponse, error) {
+	resp, err := s.backend.client.VolumeList(ctx, dockervolume.ListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("label", s.backend.labels.ManagedByFilter()),
+			filters.Arg("label", s.backend.labels.TypeFilter("volume")),
+		),
+	})
+	if err != nil {
+		return nil, wrapErr(fmt.Errorf("list volumes: %w", err))
+	}
+	volumeIDKey := s.backend.labels.Prefix("volume-id")
+	entries := make([]*csipb.ListVolumesResponse_Entry, 0, len(resp.Volumes))
+	for _, v := range resp.Volumes {
+		entries = append(entries, &csipb.ListVolumesResponse_Entry{
+			Volume: &csipb.Volume{
+				VolumeId:      v.Labels[volumeIDKey],
+				VolumeContext: map[string]string{"mountpoint": v.Mountpoint},
+			},
+		})
+	}
+	return &csipb.ListVolumesResponse{Entries: entries}, nil
+}
+
+// GetCapacity implements [csipb.ControllerServer].
+func (s *Server) GetCapacity(_ context.Context, _ *csipb.GetCapacityRequest) (*csipb.GetCapacityResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "GetCapacity not supported")
+}
+
+// CreateSnapshot implements [csipb.ControllerServer].
+func (s *Server) CreateSnapshot(_ context.Context, _ *csipb.CreateSnapshotRequest) (*csipb.CreateSnapshotResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "snapshots not supported")
+}
+
+// DeleteSnapshot implements [csipb.ControllerServer].
+func (s *Server) DeleteSnapshot(_ context.Context, _ *csipb.DeleteSnapshotRequest) (*csipb.DeleteSnapshotResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "snapshots not supported")
+}
+
+// ListSnapshots implements [csipb.ControllerServer].
+func (s *Server) ListSnapshots(_ context.Context, _ *csipb.ListSnapshotsRequest) (*csipb.ListSnapshotsResponse, error) {
+	return &csipb.ListSnapshotsResponse{}, nil
+}
+
+// ControllerExpandVolume implements [csipb.ControllerServer].
+// No-op — Docker volumes are not fixed-size.
+func (s *Server) ControllerExpandVolume(_ context.Context, req *csipb.ControllerExpandVolumeRequest) (*csipb.ControllerExpandVolumeResponse, error) {
+	return &csipb.ControllerExpandVolumeResponse{
+		CapacityBytes:         req.GetCapacityRange().GetRequiredBytes(),
+		NodeExpansionRequired: false,
+	}, nil
+}
+
+// ControllerGetVolume implements [csipb.ControllerServer].
+func (s *Server) ControllerGetVolume(ctx context.Context, req *csipb.ControllerGetVolumeRequest) (*csipb.ControllerGetVolumeResponse, error) {
+	volumeID := req.GetVolumeId()
+	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
+	if err != nil {
+		return nil, wrapErr(fmt.Errorf("build volume name: %w", err))
+	}
+	v, err := s.backend.client.VolumeInspect(ctx, volName)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "volume %q not found: %v", volumeID, err)
+	}
+	return &csipb.ControllerGetVolumeResponse{
+		Volume: &csipb.Volume{
+			VolumeId:      volumeID,
+			VolumeContext: map[string]string{"mountpoint": v.Mountpoint},
+		},
+		Status: &csipb.ControllerGetVolumeResponse_VolumeStatus{},
+	}, nil
+}
+
+// ControllerModifyVolume implements [csipb.ControllerServer].
+// No-op — Docker volumes have no mutable properties.
+func (s *Server) ControllerModifyVolume(_ context.Context, _ *csipb.ControllerModifyVolumeRequest) (*csipb.ControllerModifyVolumeResponse, error) {
+	return &csipb.ControllerModifyVolumeResponse{}, nil
+}
+
 // wrapErr wraps an error with the calling function's name.
 func wrapErr(err error) error {
 	pc, _, _, _ := runtime.Caller(1)
@@ -1074,4 +1249,5 @@ func wrapErr(err error) error {
 var (
 	_ runtimeapi.ImageServiceServer   = &Server{}
 	_ runtimeapi.RuntimeServiceServer = &Server{}
+	_ csipb.ControllerServer          = &Server{}
 )

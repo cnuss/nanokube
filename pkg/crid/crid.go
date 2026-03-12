@@ -9,6 +9,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/docker"
 	"github.com/cnuss/nanokube/pkg/crid/podman"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
@@ -96,6 +97,32 @@ func (c *CRID) WithClient(client clientset.Interface) *CRID {
 	if c.broadcaster != nil {
 		c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
 		c.log.Info().Msg("event sink connected")
+	}
+	for _, b := range c.backends {
+		csi := b.CSI()
+		if csi == nil {
+			continue
+		}
+		fm := metav1.ApplyOptions{FieldManager: string(b.Name()), Force: true}
+
+		if drv := csi.CSIDriver(); drv != nil {
+			c.log.Info().Str("backend", string(b.Name())).Str("driver", *drv.GetName()).Msg("reconciling CSIDriver")
+			if _, err := client.StorageV1().CSIDrivers().Apply(c.ctx, drv, fm); err != nil {
+				c.log.Warn().Err(err).Str("driver", *drv.GetName()).Msg("failed to apply CSIDriver")
+			}
+		}
+
+		if sc := b.StorageClass(); sc != nil {
+			c.log.Info().Str("backend", string(b.Name())).Str("storageclass", *sc.GetName()).Msg("reconciling storage class")
+			sc.WithAnnotations(map[string]string{
+				"storageclass.kubernetes.io/is-default-class": fmt.Sprintf("%t", b.Name() == c.DefaultBackend().Name()),
+			})
+			if _, err := client.StorageV1().StorageClasses().Apply(c.ctx, sc, fm); err != nil {
+				c.log.Warn().Err(err).Str("storageclass", *sc.GetName()).Msg("failed to apply StorageClass")
+			}
+		}
+
+		go backend.StartProvisioner(c.ctx, client, b)
 	}
 	return c
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/cnuss/nanokube/pkg/crid/labels"
+	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	"k8s.io/kubelet/pkg/cri/streaming"
@@ -28,21 +29,23 @@ func (n *NoopBackend) Context() context.Context { return context.Background() }
 func (n *NoopBackend) Start(context.Context, record.EventBroadcaster, string, string) error {
 	return fmt.Errorf("no backend")
 }
-func (n *NoopBackend) Stop(context.Context) error                { return nil }
-func (n *NoopBackend) Labels() labels.LabelProvider              { return labels.NewLabels("noop") }
-func (n *NoopBackend) Images() internalapi.ImageManagerService   { return nil }
-func (n *NoopBackend) Containers() internalapi.RuntimeService    { return nil }
-func (n *NoopBackend) ContainerManager() cm.ContainerManager     { return nil }
-func (n *NoopBackend) Mounter() mount.Interface                  { return nil }
-func (n *NoopBackend) Cadvisor() cadvisor.Interface              { return nil }
-func (n *NoopBackend) OS() container.OSInterface                 { return nil }
-func (n *NoopBackend) Subpath() subpath.Interface                { return nil }
-func (n *NoopBackend) HostUtils() hostutil.HostUtils             { return nil }
-func (n *NoopBackend) EventBroadcaster() record.EventBroadcaster { return nil }
-func (n *NoopBackend) EventRecorder() record.EventRecorder       { return nil }
-func (n *NoopBackend) Prober() prober.Manager                    { return nil }
-func (n *NoopBackend) Streaming() streaming.Server               { return nil }
-func (n *NoopBackend) Subscribe() <-chan Event                   { return make(chan Event) }
+func (n *NoopBackend) Stop(context.Context) error                                { return nil }
+func (n *NoopBackend) Labels() labels.LabelProvider                              { return labels.NewLabels("noop") }
+func (n *NoopBackend) Images() internalapi.ImageManagerService                   { return nil }
+func (n *NoopBackend) Containers() internalapi.RuntimeService                    { return nil }
+func (n *NoopBackend) ContainerManager() cm.ContainerManager                     { return nil }
+func (n *NoopBackend) Mounter() mount.Interface                                  { return nil }
+func (n *NoopBackend) Cadvisor() cadvisor.Interface                              { return nil }
+func (n *NoopBackend) OS() container.OSInterface                                 { return nil }
+func (n *NoopBackend) Subpath() subpath.Interface                                { return nil }
+func (n *NoopBackend) HostUtils() hostutil.HostUtils                             { return nil }
+func (n *NoopBackend) EventBroadcaster() record.EventBroadcaster                 { return nil }
+func (n *NoopBackend) EventRecorder() record.EventRecorder                       { return nil }
+func (n *NoopBackend) Prober() prober.Manager                                    { return nil }
+func (n *NoopBackend) Streaming() streaming.Server                               { return nil }
+func (n *NoopBackend) Subscribe() <-chan Event                                   { return make(chan Event) }
+func (n *NoopBackend) CSI() *CSI                                                 { return nil }
+func (n *NoopBackend) StorageClass() *storagev1ac.StorageClassApplyConfiguration { return nil }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

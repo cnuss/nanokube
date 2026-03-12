@@ -11,6 +11,9 @@ import (
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"google.golang.org/grpc"
+	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
 	versionutil "k8s.io/component-base/version"
 	pluginreg "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 )
@@ -55,6 +58,7 @@ func (c *CSI) Start(ctx context.Context, pluginsDir, registrationDir string) err
 	}
 	c.csiSrv = grpc.NewServer()
 	csipb.RegisterIdentityServer(c.csiSrv, c)
+	csipb.RegisterControllerServer(c.csiSrv, c.backend.Driver.VolumeServer())
 	csipb.RegisterNodeServer(c.csiSrv, c)
 	go func() {
 		c.log.Info().Str("socket", c.endpoint).Msg("CSI endpoint serving")
@@ -100,6 +104,10 @@ func (c *CSI) Stop() {
 	if c.regSrv != nil {
 		c.regSrv.GracefulStop()
 	}
+}
+
+func (c *CSI) DriverName() string {
+	return c.driverName
 }
 
 // --- pluginregistration.Registration ---
@@ -171,15 +179,9 @@ func (c *CSI) NodeGetCapabilities(_ context.Context, _ *csipb.NodeGetCapabilitie
 func (c *CSI) NodePublishVolume(_ context.Context, req *csipb.NodePublishVolumeRequest) (*csipb.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	targetPath := req.GetTargetPath()
-	c.log.Info().Str("volume", volumeID).Str("target", targetPath).Msg("NodePublishVolume")
+	mountpoint := req.GetVolumeContext()["mountpoint"]
+	c.log.Info().Str("volume", volumeID).Str("target", targetPath).Str("mountpoint", mountpoint).Msg("NodePublishVolume")
 
-	// Create Docker volume
-	mountpoint, err := c.backend.Driver.CreateVolume(volumeID, "")
-	if err != nil {
-		return nil, fmt.Errorf("create volume %q: %w", volumeID, err)
-	}
-
-	// Ensure target directory exists and symlink to the Docker volume mountpoint
 	os.MkdirAll(filepath.Dir(targetPath), 0o755)
 	os.Remove(targetPath)
 	if err := os.Symlink(mountpoint, targetPath); err != nil {
@@ -190,17 +192,36 @@ func (c *CSI) NodePublishVolume(_ context.Context, req *csipb.NodePublishVolumeR
 }
 
 func (c *CSI) NodeUnpublishVolume(_ context.Context, req *csipb.NodeUnpublishVolumeRequest) (*csipb.NodeUnpublishVolumeResponse, error) {
-	volumeID := req.GetVolumeId()
 	targetPath := req.GetTargetPath()
-	c.log.Info().Str("volume", volumeID).Str("target", targetPath).Msg("NodeUnpublishVolume")
-
+	c.log.Info().Str("target", targetPath).Msg("NodeUnpublishVolume")
 	os.Remove(targetPath)
-
-	if err := c.backend.Driver.RemoveVolume(volumeID); err != nil {
-		c.log.Warn().Err(err).Str("volume", volumeID).Msg("failed to remove volume")
-	}
-
 	return &csipb.NodeUnpublishVolumeResponse{}, nil
+}
+
+func (c *CSI) CSIDriver() *storagev1ac.CSIDriverApplyConfiguration {
+	return storagev1ac.CSIDriver(c.driverName).
+		WithSpec(storagev1ac.CSIDriverSpec().
+			WithAttachRequired(false).
+			WithPodInfoOnMount(true).
+			WithVolumeLifecycleModes(storagev1.VolumeLifecyclePersistent))
+}
+
+func (c *CSI) StorageClass() *storagev1ac.StorageClassApplyConfiguration {
+	sc := storagev1ac.StorageClass(c.driverName).
+		WithProvisioner(c.driverName).
+		WithReclaimPolicy(corev1.PersistentVolumeReclaimRetain).
+		WithVolumeBindingMode(storagev1.VolumeBindingImmediate)
+
+	caps, err := c.backend.Driver.VolumeServer().ControllerGetCapabilities(context.Background(), &csipb.ControllerGetCapabilitiesRequest{})
+	if err != nil {
+		return sc
+	}
+	for _, cap := range caps.GetCapabilities() {
+		if rpc := cap.GetRpc(); rpc != nil && rpc.GetType() == csipb.ControllerServiceCapability_RPC_EXPAND_VOLUME {
+			sc.WithAllowVolumeExpansion(true)
+		}
+	}
+	return sc
 }
 
 var (

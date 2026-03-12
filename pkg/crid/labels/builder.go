@@ -74,9 +74,8 @@ func (b *LabelBuilder) WithContainer(sandboxID, name string) *LabelBuilder {
 }
 
 // WithVolume marks this as a volume.
-func (b *LabelBuilder) WithVolume(sandboxID, volumeID string) *LabelBuilder {
+func (b *LabelBuilder) WithVolume(volumeID string) *LabelBuilder {
 	b.set(b.lp.Prefix(typeKey), volumeType)
-	b.set(b.lp.Prefix(sandboxIDKey), sandboxID)
 	b.set(b.lp.Prefix(volumeIDKey), volumeID)
 	return b
 }
