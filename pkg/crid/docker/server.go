@@ -178,7 +178,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 // CreateContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
-	s.log.Trace().Str("name", req.Config.Metadata.Name).Str("sandbox", req.PodSandboxId).Str("image", req.Config.Image.Image).Msg("CreateContainer")
+	s.log.Info().Str("name", req.Config.Metadata.Name).Str("sandbox", req.PodSandboxId).Str("image", req.Config.Image.Image).Msg("CreateContainer")
 
 	config := req.GetConfig()
 	sandboxID := req.GetPodSandboxId()
@@ -617,7 +617,7 @@ func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardReq
 // RemoveContainer implements [v1.RuntimeServiceServer].
 func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
 	id := req.GetContainerId()
-	s.log.Trace().Str("id", id[:min(12, len(id))]).Msg("RemoveContainer")
+	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemoveContainer")
 	s.backend.StopLogs(id)
 
 	if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
@@ -632,7 +632,7 @@ func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveCont
 // RemovePodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePodSandboxRequest) (*runtimeapi.RemovePodSandboxResponse, error) {
 	id := req.GetPodSandboxId()
-	s.log.Trace().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
+	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
 
 	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
@@ -665,7 +665,7 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	s.log.Trace().Str("name", req.Config.Metadata.Name).Str("namespace", req.Config.Metadata.Namespace).Str("uid", req.Config.Metadata.Uid).Msg("RunPodSandbox")
+	s.log.Info().Str("name", req.Config.Metadata.Name).Str("namespace", req.Config.Metadata.Namespace).Str("uid", req.Config.Metadata.Uid).Msg("RunPodSandbox")
 
 	config := req.GetConfig()
 	meta := config.GetMetadata()
@@ -776,7 +776,7 @@ func (s *Server) RuntimeConfig(ctx context.Context, req *runtimeapi.RuntimeConfi
 
 // StartContainer implements [v1.RuntimeServiceServer].
 func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
-	s.log.Trace().Str("id", req.ContainerId).Msg("StartContainer")
+	s.log.Info().Str("id", req.ContainerId).Msg("StartContainer")
 	id := req.GetContainerId()
 
 	if err := s.backend.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
@@ -830,7 +830,7 @@ func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContaine
 // StopPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSandboxRequest) (*runtimeapi.StopPodSandboxResponse, error) {
 	id := req.GetPodSandboxId()
-	s.log.Trace().Str("id", id[:min(12, len(id))]).Msg("StopPodSandbox")
+	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("StopPodSandbox")
 
 	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},

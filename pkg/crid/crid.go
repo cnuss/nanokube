@@ -13,6 +13,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 type CRID struct {
@@ -79,6 +80,16 @@ func (c *CRID) Stop() component.Stopped {
 	return component.NotReady(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+
+		// Clean up sandboxes
+		if sandboxes, err := c.Backend(backend.Docker).Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
+			for _, sb := range sandboxes {
+				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
+				if err := c.Backend(backend.Docker).Containers().RemovePodSandbox(ctx, sb.Id); err != nil {
+					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
+				}
+			}
+		}
 
 		if c.broadcaster != nil {
 			c.broadcaster.Shutdown()
