@@ -22,6 +22,7 @@ var (
 	logDirKey           = "log-directory"
 	logPathKey          = "container-log-path"
 	labelsKey           = "labels"
+	annotationsKey      = "annotations"
 
 	unknownType   = "unknown"
 	sandboxType   = "sandbox"
@@ -32,7 +33,6 @@ var (
 type LabelProvider interface {
 	Name() string
 	Prefix(key string) string
-	AnnotationPrefix(key string) string
 	NewBuilder(userLabels map[string]string) *LabelBuilder
 	LogDirectory(dockerLabels map[string]string) string
 	LogPath(dockerLabels map[string]string) string
@@ -48,7 +48,6 @@ type LabelProvider interface {
 	TypeFilter(t string) string
 	SandboxIDFilter(id string) string
 	IsInternal(key string) bool
-	IsAnnotation(key string) bool
 	ExtractLabels(dockerLabels map[string]string) map[string]string
 	ExtractAnnotations(dockerLabels map[string]string) map[string]string
 }
@@ -68,10 +67,6 @@ func (l *LabelProviderImpl) Name() string {
 
 func (l *LabelProviderImpl) Prefix(key string) string {
 	return l.name + "." + key
-}
-
-func (l *LabelProviderImpl) AnnotationPrefix(key string) string {
-	return l.Prefix("annotation." + key)
 }
 
 // LogDirectory extracts the CRI log directory from a Docker labels map.
@@ -146,20 +141,6 @@ func (l *LabelProviderImpl) SandboxIDFilter(id string) string {
 	return l.Prefix(sandboxIDKey) + "=" + id
 }
 
-// encodeAnnotationKey base64-encodes an annotation key to keep Docker labels
-// free of io.kubernetes.* strings.
-func encodeAnnotationKey(k string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(k))
-}
-
-// decodeAnnotationKey reverses encodeAnnotationKey.
-func decodeAnnotationKey(k string) string {
-	b, err := base64.RawURLEncoding.DecodeString(k)
-	if err != nil {
-		return k // pass through if not encoded
-	}
-	return string(b)
-}
 
 // IsInternal returns true if the label key is an internal management label.
 func (l *LabelProviderImpl) IsInternal(key string) bool {
@@ -169,15 +150,10 @@ func (l *LabelProviderImpl) IsInternal(key string) bool {
 	}
 	suffix := key[len(prefix):]
 	switch suffix {
-	case typeKey, managedByKey, sandboxIDKey, containerIDKey, containerAttemptKey, containerNameKey, podNameKey, podNamespaceKey, podUIDKey, logDirKey, logPathKey, labelsKey:
+	case typeKey, managedByKey, sandboxIDKey, containerIDKey, containerAttemptKey, containerNameKey, podNameKey, podNamespaceKey, podUIDKey, logDirKey, logPathKey, labelsKey, annotationsKey:
 		return true
 	}
 	return false
-}
-
-// IsAnnotation returns true if the label key is a stored annotation.
-func (l *LabelProviderImpl) IsAnnotation(key string) bool {
-	return strings.HasPrefix(key, l.Prefix("annotation."))
 }
 
 // encodeLabelsBlob serializes a map to base64-encoded JSON.
@@ -209,15 +185,12 @@ func (l *LabelProviderImpl) ExtractLabels(dockerLabels map[string]string) map[st
 	return make(map[string]string)
 }
 
-// ExtractAnnotations extracts CRI annotations from Docker labels, expanding
-// shortened k8s.* and k8s/* keys back to their io.kubernetes.* originals.
+// ExtractAnnotations deserializes the packed annotations blob back into a map.
 func (l *LabelProviderImpl) ExtractAnnotations(dockerLabels map[string]string) map[string]string {
-	annPrefix := l.Prefix("annotation.")
-	out := make(map[string]string)
-	for k, v := range dockerLabels {
-		if after, ok := strings.CutPrefix(k, annPrefix); ok {
-			out[decodeAnnotationKey(after)] = v
+	if blob, ok := dockerLabels[l.Prefix(annotationsKey)]; ok {
+		if m := decodeLabelsBlob(blob); m != nil {
+			return m
 		}
 	}
-	return out
+	return make(map[string]string)
 }

@@ -124,12 +124,22 @@ func (b *LabelBuilder) WithLabels(labels map[string]string) *LabelBuilder {
 	return b
 }
 
-// WithAnnotations stores CRI annotations as prefixed labels, shortening
-// io.kubernetes.* and kubernetes.io/* keys to k8s.* and k8s/* respectively.
+// WithAnnotations packs all CRI annotations into a single base64+JSON blob.
 func (b *LabelBuilder) WithAnnotations(annotations map[string]string) *LabelBuilder {
-	for k, v := range annotations {
-		b.set(b.lp.AnnotationPrefix(encodeAnnotationKey(k)), v)
+	if len(annotations) == 0 {
+		return b
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	blobKey := b.lp.Prefix(annotationsKey)
+	packed := decodeLabelsBlob(b.labels[blobKey])
+	if packed == nil {
+		packed = make(map[string]string, len(annotations))
+	}
+	for k, v := range annotations {
+		packed[k] = v
+	}
+	b.labels[blobKey] = encodeLabelsBlob(packed)
 	return b
 }
 

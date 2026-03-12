@@ -484,9 +484,6 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 				f.Add("status", container.StateDead)
 			}
 		}
-		for k, v := range s.translateFilterKeys(filter.GetLabelSelector()) {
-			f.Add("label", k+"="+v)
-		}
 	}
 
 	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
@@ -494,8 +491,12 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 		return nil, wrapErr(err)
 	}
 
+	selector := req.GetFilter().GetLabelSelector()
 	result := make([]*runtimeapi.Container, 0, len(containers))
 	for _, c := range containers {
+		if !s.matchLabels(c.Labels, selector) {
+			continue
+		}
 		result = append(result, s.backend.Into.Container(c))
 	}
 
@@ -530,9 +531,6 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 				f.Add("status", container.StateDead)
 			}
 		}
-		for k, v := range s.translateFilterKeys(filter.GetLabelSelector()) {
-			f.Add("label", k+"="+v)
-		}
 	}
 
 	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
@@ -540,8 +538,12 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 		return nil, wrapErr(err)
 	}
 
+	selector := req.GetFilter().GetLabelSelector()
 	var result []*runtimeapi.PodSandbox
 	for _, c := range containers {
+		if !s.matchLabels(c.Labels, selector) {
+			continue
+		}
 		result = append(result, s.backend.Into.PodSandbox(c))
 	}
 	return &runtimeapi.ListPodSandboxResponse{Items: result}, nil
@@ -1251,25 +1253,20 @@ func (s *Server) ControllerModifyVolume(_ context.Context, _ *csipb.ControllerMo
 	return &csipb.ControllerModifyVolumeResponse{}, nil
 }
 
-// translateFilterKeys maps CRI label selector keys (io.kubernetes.*) to their
-// nanokube-prefixed Docker label equivalents for container filtering.
-var filterKeyMap = map[string]string{
-	"io.kubernetes.pod.name":       "pod-name",
-	"io.kubernetes.pod.namespace":  "pod-namespace",
-	"io.kubernetes.pod.uid":        "pod-uid",
-	"io.kubernetes.container.name": "container-name",
-}
-
-func (s *Server) translateFilterKeys(selector map[string]string) map[string]string {
-	out := make(map[string]string, len(selector))
-	for k, v := range selector {
-		if suffix, ok := filterKeyMap[k]; ok {
-			out[s.backend.labels.Prefix(suffix)] = v
-		} else {
-			out[k] = v
-		}
+// matchLabels returns true if the container's labels (including the packed
+// labels blob) satisfy every key=value pair in the selector.
+func (s *Server) matchLabels(dockerLabels map[string]string, selector map[string]string) bool {
+	if len(selector) == 0 {
+		return true
 	}
-	return out
+	unpacked := s.backend.labels.ExtractLabels(dockerLabels)
+	for k, v := range selector {
+		if unpacked[k] == v || dockerLabels[k] == v {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // wrapErr wraps an error with the calling function's name.
