@@ -2,17 +2,23 @@ package labels
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 var (
-	typeKey        = "type"
-	managedByKey   = "managed-by"
-	sandboxIDKey   = "sandbox-id"
-	containerIDKey = "container-id"
-	volumeIDKey    = "volume-id"
-	logDirKey      = "log-directory"
-	logPathKey     = "container-log-path"
+	typeKey             = "type"
+	managedByKey        = "managed-by"
+	sandboxIDKey        = "sandbox-id"
+	containerIDKey      = "container-id"
+	containerAttemptKey = "container-attempt"
+	containerNameKey    = "container-name"
+	podNameKey          = "pod-name"
+	podNamespaceKey     = "pod-namespace"
+	podUIDKey           = "pod-uid"
+	volumeIDKey         = "volume-id"
+	logDirKey           = "log-directory"
+	logPathKey          = "container-log-path"
 
 	unknownType   = "unknown"
 	sandboxType   = "sandbox"
@@ -28,6 +34,13 @@ type LabelProvider interface {
 	LogDirectory(dockerLabels map[string]string) string
 	LogPath(dockerLabels map[string]string) string
 	SandboxID(dockerLabels map[string]string) string
+	Attempt(dockerLabels map[string]string) uint32
+	ContainerName(dockerLabels map[string]string) string
+	PodName(dockerLabels map[string]string) string
+	PodNamespace(dockerLabels map[string]string) string
+	PodUID(dockerLabels map[string]string) string
+	PodUIDKey() string
+	ContainerNameKey() string
 	ManagedByFilter() string
 	TypeFilter(t string) string
 	SandboxIDFilter(id string) string
@@ -79,6 +92,42 @@ func (l *LabelProviderImpl) SandboxID(dockerLabels map[string]string) string {
 	return dockerLabels[l.Prefix(sandboxIDKey)]
 }
 
+// Attempt extracts the container attempt count from a Docker labels map.
+func (l *LabelProviderImpl) Attempt(dockerLabels map[string]string) uint32 {
+	v, _ := strconv.ParseUint(dockerLabels[l.Prefix(containerAttemptKey)], 10, 32)
+	return uint32(v)
+}
+
+// ContainerName extracts the container name label.
+func (l *LabelProviderImpl) ContainerName(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(containerNameKey)]
+}
+
+// PodName extracts the pod name label.
+func (l *LabelProviderImpl) PodName(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(podNameKey)]
+}
+
+// PodNamespace extracts the pod namespace label.
+func (l *LabelProviderImpl) PodNamespace(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(podNamespaceKey)]
+}
+
+// PodUID extracts the pod UID label.
+func (l *LabelProviderImpl) PodUID(dockerLabels map[string]string) string {
+	return dockerLabels[l.Prefix(podUIDKey)]
+}
+
+// PodUIDKey returns the prefixed pod UID label key.
+func (l *LabelProviderImpl) PodUIDKey() string {
+	return l.Prefix(podUIDKey)
+}
+
+// ContainerNameKey returns the prefixed container name label key.
+func (l *LabelProviderImpl) ContainerNameKey() string {
+	return l.Prefix(containerNameKey)
+}
+
 // ManagedByFilter returns a Docker label filter string for managed-by.
 func (l *LabelProviderImpl) ManagedByFilter() string {
 	return l.Prefix(managedByKey) + "=" + l.name
@@ -102,7 +151,7 @@ func (l *LabelProviderImpl) IsInternal(key string) bool {
 	}
 	suffix := key[len(prefix):]
 	switch suffix {
-	case typeKey, managedByKey, sandboxIDKey, containerIDKey, logDirKey, logPathKey:
+	case typeKey, managedByKey, sandboxIDKey, containerIDKey, containerAttemptKey, containerNameKey, podNameKey, podNamespaceKey, podUIDKey, logDirKey, logPathKey:
 		return true
 	}
 	return false

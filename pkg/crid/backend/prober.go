@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
-	kubelettypes "k8s.io/kubelet/pkg/types"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
 	"k8s.io/kubernetes/pkg/probe"
 )
@@ -320,8 +319,8 @@ func (p *ProberImpl) resolveContainerID(ctx context.Context, podUID types.UID, c
 	containers, err := p.backend.containers.ListContainers(ctx, &runtimeapi.ContainerFilter{
 		State: &runtimeapi.ContainerStateValue{State: state},
 		LabelSelector: map[string]string{
-			kubelettypes.KubernetesPodUIDLabel:        string(podUID),
-			kubelettypes.KubernetesContainerNameLabel: containerName,
+			p.backend.Labels().PodUIDKey():        string(podUID),
+			p.backend.Labels().ContainerNameKey(): containerName,
 		},
 	})
 	if err != nil {

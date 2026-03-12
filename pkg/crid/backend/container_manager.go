@@ -13,7 +13,6 @@ import (
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
-	kubelettypes "k8s.io/kubelet/pkg/types"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/cm/resourceupdates"
 	"k8s.io/kubernetes/pkg/kubelet/config"
@@ -81,7 +80,7 @@ func (m *ContainerManagerImpl) streamContainerEvents(ctx context.Context) {
 			if ev.Resource != ResourceContainer {
 				continue
 			}
-			uid := ev.Attributes[kubelettypes.KubernetesPodUIDLabel]
+			uid := m.backend.Labels().PodUID(ev.Attributes)
 			if uid == "" {
 				continue
 			}
@@ -326,7 +325,7 @@ func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, s
 	}
 	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
 		LabelSelector: map[string]string{
-			kubelettypes.KubernetesPodUIDLabel: string(pod.UID),
+			p.backend.Labels().PodUIDKey(): string(pod.UID),
 		},
 	})
 	if err != nil {
@@ -350,7 +349,7 @@ func (p *podContainerManager) Exists(pod *v1.Pod) bool {
 	}
 	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
 		LabelSelector: map[string]string{
-			kubelettypes.KubernetesPodUIDLabel: string(pod.UID),
+			p.backend.Labels().PodUIDKey(): string(pod.UID),
 		},
 	})
 	if err != nil {

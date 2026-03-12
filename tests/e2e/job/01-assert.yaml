@@ -1,0 +1,5 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # verify the job's pod logged the expected output
+  - script: kubectl logs --namespace $NAMESPACE job/job-test | grep -q "hello from job"

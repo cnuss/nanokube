@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"sync"
-
-	kubelettypes "k8s.io/kubelet/pkg/types"
 )
 
 var errBuilderSealed = errors.New("LabelBuilder: mutation after BuildLabels")
@@ -66,10 +64,11 @@ func (b *LabelBuilder) WithSandbox(uid string) *LabelBuilder {
 }
 
 // WithContainer marks this as a container and sets the container ID.
-func (b *LabelBuilder) WithContainer(sandboxID, name string) *LabelBuilder {
+func (b *LabelBuilder) WithContainer(sandboxID, name string, attempt uint32) *LabelBuilder {
 	b.set(b.lp.Prefix(typeKey), containerType)
 	b.set(b.lp.Prefix(sandboxIDKey), sandboxID)
-	b.set(kubelettypes.KubernetesContainerNameLabel, name)
+	b.set(b.lp.Prefix(containerAttemptKey), fmt.Sprintf("%d", attempt))
+	b.set(b.lp.Prefix(containerNameKey), name)
 	return b
 }
 
@@ -82,27 +81,27 @@ func (b *LabelBuilder) WithVolume(volumeID string) *LabelBuilder {
 
 // WithPod sets name, namespace, and UID together.
 func (b *LabelBuilder) WithPod(name, namespace, uid string) *LabelBuilder {
-	b.set(kubelettypes.KubernetesPodNameLabel, name)
-	b.set(kubelettypes.KubernetesPodNamespaceLabel, namespace)
-	b.set(kubelettypes.KubernetesPodUIDLabel, uid)
+	b.set(b.lp.Prefix(podNameKey), name)
+	b.set(b.lp.Prefix(podNamespaceKey), namespace)
+	b.set(b.lp.Prefix(podUIDKey), uid)
 	return b
 }
 
 // WithName sets the pod name label.
 func (b *LabelBuilder) WithName(name string) *LabelBuilder {
-	b.set(kubelettypes.KubernetesPodNameLabel, name)
+	b.set(b.lp.Prefix(podNameKey), name)
 	return b
 }
 
 // WithNamespace sets the pod namespace label.
 func (b *LabelBuilder) WithNamespace(namespace string) *LabelBuilder {
-	b.set(kubelettypes.KubernetesPodNamespaceLabel, namespace)
+	b.set(b.lp.Prefix(podNamespaceKey), namespace)
 	return b
 }
 
 // WithUID sets the pod UID label.
 func (b *LabelBuilder) WithUID(uid string) *LabelBuilder {
-	b.set(kubelettypes.KubernetesPodUIDLabel, uid)
+	b.set(b.lp.Prefix(podUIDKey), uid)
 	return b
 }
 
@@ -147,13 +146,15 @@ func (b *LabelBuilder) Build() (string, map[string]string, error) {
 		return "", nil, b.err
 	}
 	b.built = true
-	containerName := b.labels[kubelettypes.KubernetesContainerNameLabel]
-	name := fmt.Sprintf("k8s_%s_%s_%s_%s_%s",
+	containerName := b.labels[b.lp.Prefix(containerNameKey)]
+	attempt := b.labels[b.lp.Prefix(containerAttemptKey)]
+	name := fmt.Sprintf("k8s_%s_%s_%s_%s_%s_%s",
 		b.labels[b.lp.Prefix(typeKey)],
 		containerName,
-		b.labels[kubelettypes.KubernetesPodNameLabel],
-		b.labels[kubelettypes.KubernetesPodNamespaceLabel],
-		b.labels[kubelettypes.KubernetesPodUIDLabel],
+		b.labels[b.lp.Prefix(podNameKey)],
+		b.labels[b.lp.Prefix(podNamespaceKey)],
+		b.labels[b.lp.Prefix(podUIDKey)],
+		attempt,
 	)
 	return name, b.labels, nil
 }

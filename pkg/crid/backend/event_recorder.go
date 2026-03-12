@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	kubelettypes "k8s.io/kubelet/pkg/types"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 )
 
@@ -108,10 +107,11 @@ func (e *EventRecorderImpl) handleEvent(ev Event) {
 		return
 	}
 
-	name := kubelettypes.GetPodName(ev.Attributes)
-	namespace := kubelettypes.GetPodNamespace(ev.Attributes)
-	uid := kubelettypes.GetPodUID(ev.Attributes)
-	containerName := kubelettypes.GetContainerName(ev.Attributes)
+	lp := e.backend.Labels()
+	name := lp.PodName(ev.Attributes)
+	namespace := lp.PodNamespace(ev.Attributes)
+	uid := lp.PodUID(ev.Attributes)
+	containerName := lp.ContainerName(ev.Attributes)
 
 	if name == "" || namespace == "" || uid == "" {
 		return

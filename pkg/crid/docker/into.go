@@ -8,7 +8,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
-	kubelettypes "k8s.io/kubelet/pkg/types"
 )
 
 var _ backend.Into[string, container.Summary] = &DockerInto{}
@@ -56,7 +55,8 @@ func (i *DockerInto) Container(c container.Summary) *runtimeapi.Container {
 		Id:           c.ID,
 		PodSandboxId: i.labels.SandboxID(c.Labels),
 		Metadata: &runtimeapi.ContainerMetadata{
-			Name: c.Labels[kubelettypes.KubernetesContainerNameLabel],
+			Name:    i.labels.ContainerName(c.Labels),
+			Attempt: i.labels.Attempt(c.Labels),
 		},
 		Image:       &runtimeapi.ImageSpec{Image: c.Image},
 		ImageRef:    c.ImageID,
@@ -71,9 +71,9 @@ func (i *DockerInto) PodSandbox(c container.Summary) *runtimeapi.PodSandbox {
 	return &runtimeapi.PodSandbox{
 		Id: c.ID,
 		Metadata: &runtimeapi.PodSandboxMetadata{
-			Name:      c.Labels[kubelettypes.KubernetesPodNameLabel],
-			Namespace: c.Labels[kubelettypes.KubernetesPodNamespaceLabel],
-			Uid:       c.Labels[kubelettypes.KubernetesPodUIDLabel],
+			Name:      i.labels.PodName(c.Labels),
+			Namespace: i.labels.PodNamespace(c.Labels),
+			Uid:       i.labels.PodUID(c.Labels),
 		},
 		State:       i.PodState(c.State),
 		CreatedAt:   time.Unix(c.Created, 0).UnixNano(),
