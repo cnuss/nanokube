@@ -20,8 +20,10 @@ type CRID struct {
 	stop   func() bool
 	log    component.Logger
 
-	backends    map[backend.Runtime]backend.Backend
-	broadcaster record.EventBroadcaster
+	backends        map[backend.Runtime]backend.Backend
+	broadcaster     record.EventBroadcaster
+	pluginsDir      string
+	registrationDir string
 }
 
 var _ component.Component = &CRID{}
@@ -32,6 +34,12 @@ func NewCRID(ctx context.Context, name, dataDir string) *CRID {
 
 	crid := &CRID{ctx: ctx, log: log, backends: detectBackends(ctx, name, dataDir)}
 	return crid
+}
+
+func (c *CRID) WithPluginDirs(pluginsDir, registrationDir string) *CRID {
+	c.pluginsDir = pluginsDir
+	c.registrationDir = registrationDir
+	return c
 }
 
 func (c *CRID) Start(ctx context.Context) (component.Started, error) {
@@ -45,7 +53,7 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 
 	for name, backend := range c.backends {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
-		if err := backend.Start(ctx, c.broadcaster); err != nil {
+		if err := backend.Start(ctx, c.broadcaster, c.pluginsDir, c.registrationDir); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}

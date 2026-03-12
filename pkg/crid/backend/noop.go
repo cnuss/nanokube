@@ -12,7 +12,6 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
-	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
@@ -26,7 +25,7 @@ var _ Backend = &NoopBackend{}
 
 func (n *NoopBackend) Name() Runtime            { return "noop" }
 func (n *NoopBackend) Context() context.Context { return context.Background() }
-func (n *NoopBackend) Start(context.Context, record.EventBroadcaster) error {
+func (n *NoopBackend) Start(context.Context, record.EventBroadcaster, string, string) error {
 	return fmt.Errorf("no backend")
 }
 func (n *NoopBackend) Stop(context.Context) error                { return nil }
@@ -34,7 +33,6 @@ func (n *NoopBackend) Labels() labels.LabelProvider              { return labels
 func (n *NoopBackend) Images() internalapi.ImageManagerService   { return nil }
 func (n *NoopBackend) Containers() internalapi.RuntimeService    { return nil }
 func (n *NoopBackend) ContainerManager() cm.ContainerManager     { return nil }
-func (n *NoopBackend) VolumePlugin() volume.VolumePlugin         { return nil }
 func (n *NoopBackend) Mounter() mount.Interface                  { return nil }
 func (n *NoopBackend) Cadvisor() cadvisor.Interface              { return nil }
 func (n *NoopBackend) OS() container.OSInterface                 { return nil }

@@ -56,9 +56,12 @@ type trackedPod struct {
 }
 
 func NewProber(backend *BackendImpl) prober.Manager {
-	prober := &ProberImpl{backend: backend, log: component.NewLogger("prober")}
-	// TODO: start
-	return prober
+	return &ProberImpl{
+		backend: backend,
+		log:     component.NewLogger("prober"),
+		pods:    make(map[types.UID]*trackedPod),
+		results: make(map[resultKey]*resultState),
+	}
 }
 
 type ProberImpl struct {

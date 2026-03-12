@@ -20,7 +20,7 @@ type OSImpl struct {
 }
 
 func (o *OSImpl) remap(path string) string {
-	if filepath.IsAbs(path) && !strings.HasPrefix(path, o.backend.DataDir()) {
+	if filepath.IsAbs(path) && !strings.HasPrefix(path, o.backend.DataDir()) && !strings.HasPrefix(path, filepath.Dir(o.backend.DataDir())) {
 		return filepath.Join(o.backend.DataDir(), path)
 	}
 	return path
@@ -55,7 +55,11 @@ func (o *OSImpl) Chmod(path string, perm os.FileMode) error {
 }
 
 func (o *OSImpl) Hostname() (string, error) {
-	return os.Hostname()
+	host, err := o.backend.HostInfo()
+	if err != nil {
+		return "", err
+	}
+	return host.Hostname, nil
 }
 
 func (o *OSImpl) Chtimes(path string, atime time.Time, mtime time.Time) error {

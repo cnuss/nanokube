@@ -17,8 +17,9 @@ var logger = component.NewLogger("config")
 type Config struct {
 	Name         string
 	DataDir      string
+	DataDirs     DataDirs
+	Files        Files
 	Verbosity    int
-	Certs        *certs
 	FeatureGates map[string]bool
 	Components   []component.Component
 	CRID         *crid.CRID
@@ -30,12 +31,13 @@ func NewConfig(options *Options) *Config {
 	return &Config{
 		Name:      options.Name,
 		DataDir:   options.DataDir,
+		DataDirs:  NewDataDirs(options.DataDir),
+		Files:     NewFiles(options.DataDir),
 		Verbosity: options.Verbosity,
 		FeatureGates: map[string]bool{
 			"APIServerIdentity":         false,
 			"RuntimeClassInImageCriApi": false,
 		},
-		Certs:      &certs{Name: options.Name, DataDir: options.DataDir},
 		Components: []component.Component{},
 	}
 }
@@ -45,8 +47,7 @@ func (c *Config) SetCRID(crid *crid.CRID) error {
 	if err != nil {
 		return fmt.Errorf("crid host probe: %w", err)
 	}
-	c.CRID = crid
-	c.Certs.Hostname = host.Hostname
+	c.WithHostname(host.Hostname).CRID = crid.WithPluginDirs(c.DataDirs.Plugins, c.DataDirs.PluginsRegistry)
 	return nil
 }
 
@@ -55,13 +56,13 @@ func (c *Config) Kubeconfig() clientcmdapi.Config {
 		Clusters: map[string]*clientcmdapi.Cluster{
 			c.Name: {
 				Server:                   "https://127.0.0.1:6443",
-				CertificateAuthorityData: c.Certs.Cert(),
+				CertificateAuthorityData: c.Certs().Cert(),
 			},
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
 			c.Name: {
-				ClientCertificateData: c.Certs.Cert(),
-				ClientKeyData:         c.Certs.Key(),
+				ClientCertificateData: c.Certs().Cert(),
+				ClientKeyData:         c.Certs().Key(),
 			},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
@@ -76,18 +77,26 @@ func (c *Config) Kubeconfig() clientcmdapi.Config {
 
 func (c *Config) KubeconfigPath() string {
 	config := c.Kubeconfig()
-	path := filepath.Join(c.DataDir, "kubeconfig")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		clientcmd.WriteToFile(config, path)
+	if _, err := os.Stat(c.Files.Kubeconfig); os.IsNotExist(err) {
+		clientcmd.WriteToFile(config, c.Files.Kubeconfig)
 	}
 	c.mergeKubeconfig(config)
-	return path
+	return c.Files.Kubeconfig
+}
+
+func (c *Config) WithHostname(hostname string) *Config {
+	c.Files.Certs.Hostname = hostname
+	return c
+}
+
+func (c *Config) Certs() *certs {
+	return c.Files.Certs
 }
 
 // mergeKubeconfig upserts this cluster's entries into ~/.kube/config
 // so that kubectl can reach the cluster without --kubeconfig.
 func (c *Config) mergeKubeconfig(src clientcmdapi.Config) {
-	dst, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
+	dst, err := clientcmd.LoadFromFile(c.Files.RecommendedHomeFile)
 	if err != nil {
 		dst = clientcmdapi.NewConfig()
 	}
@@ -97,11 +106,7 @@ func (c *Config) mergeKubeconfig(src clientcmdapi.Config) {
 	dst.Contexts[c.Name] = src.Contexts[c.Name]
 	dst.CurrentContext = c.Name
 
-	if err := os.MkdirAll(filepath.Dir(clientcmd.RecommendedHomeFile), 0755); err != nil {
-		logger.Warn().Err(err).Msg("failed to create ~/.kube directory")
-		return
-	}
-	if err := clientcmd.WriteToFile(*dst, clientcmd.RecommendedHomeFile); err != nil {
+	if err := clientcmd.WriteToFile(*dst, c.Files.RecommendedHomeFile); err != nil {
 		logger.Warn().Err(err).Msg("failed to write ~/.kube/config")
 	}
 }
@@ -116,4 +121,57 @@ func (c *Config) KubeArgs() []string {
 	}
 	args = append(args, fmt.Sprintf("--v=%d", c.Verbosity*2))
 	return args
+}
+
+type DataDirs struct {
+	Root               string
+	RecommendedHomeDir string
+	Manifests          string
+	Plugins            string
+	PluginsRegistry    string
+	Volumes            string
+	Logs               string
+	PKI                string
+}
+
+func NewDataDirs(dataDir string) DataDirs {
+	dirs := DataDirs{
+		Root:               dataDir,
+		RecommendedHomeDir: filepath.Dir(clientcmd.RecommendedHomeFile),
+		Manifests:          filepath.Join(dataDir, "manifests"),
+		Plugins:            filepath.Join(dataDir, "plugins"),
+		PluginsRegistry:    filepath.Join(dataDir, "plugins_registry"),
+		Volumes:            filepath.Join(dataDir, "volumes"),
+		Logs:               filepath.Join(dataDir, "logs"),
+		PKI:                filepath.Join(dataDir, "pki"),
+	}
+	for _, d := range []string{dirs.Manifests, dirs.Plugins, dirs.PluginsRegistry, dirs.Volumes, dirs.Logs, dirs.PKI, filepath.Dir(clientcmd.RecommendedHomeFile)} {
+		os.MkdirAll(d, 0o755)
+	}
+	return dirs
+}
+
+type Files struct {
+	RecommendedHomeFile string
+	Kubeconfig          string
+	LogFile             string
+	Certs               *certs
+}
+
+func NewFiles(dataDir string) Files {
+	files := Files{
+		RecommendedHomeFile: clientcmd.RecommendedHomeFile,
+		Kubeconfig:          filepath.Join(dataDir, "kubeconfig"),
+		LogFile:             filepath.Join(dataDir, "log"),
+	}
+	files.Certs = &certs{Name: "nanokube", DataDir: dataDir}
+	return files
+}
+
+func (f *Files) CAFile() string {
+	return f.Certs.CertPath()
+}
+
+func (f *Files) KeyFile() string {
+	return f.Certs.KeyPath()
 }

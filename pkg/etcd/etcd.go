@@ -60,16 +60,16 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 
 	// Client TLS
 	cfg.ClientTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.Certs.CertPath(),
-		KeyFile:       e.config.Certs.KeyPath(),
-		TrustedCAFile: e.config.Certs.CertPath(),
+		CertFile:      e.config.Certs().CertPath(),
+		KeyFile:       e.config.Certs().KeyPath(),
+		TrustedCAFile: e.config.Certs().CertPath(),
 	}
 
 	// Peer TLS
 	cfg.PeerTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.Certs.CertPath(),
-		KeyFile:       e.config.Certs.KeyPath(),
-		TrustedCAFile: e.config.Certs.CertPath(),
+		CertFile:      e.config.Certs().CertPath(),
+		KeyFile:       e.config.Certs().KeyPath(),
+		TrustedCAFile: e.config.Certs().CertPath(),
 	}
 
 	var err error
@@ -87,9 +87,9 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 
 	// Wait for client connectivity
 	tlsInfo := transport.TLSInfo{
-		CertFile:      e.config.Certs.CertPath(),
-		KeyFile:       e.config.Certs.KeyPath(),
-		TrustedCAFile: e.config.Certs.CertPath(),
+		CertFile:      e.config.Certs().CertPath(),
+		KeyFile:       e.config.Certs().KeyPath(),
+		TrustedCAFile: e.config.Certs().CertPath(),
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {

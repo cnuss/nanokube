@@ -67,3 +67,18 @@ index 834213e337f..61a7067246b 100644
  
  	cc, sched, err := Setup(ctx, opts, registryOptions...)
  	if err != nil {
+diff --git a/pkg/volume/csi/csi_plugin.go b/pkg/volume/csi/csi_plugin.go
+index 3d2699a0d3a..8ac914756ff 100644
+--- a/pkg/volume/csi/csi_plugin.go
++++ b/pkg/volume/csi/csi_plugin.go
+@@ -347,7 +347,9 @@ func (p *csiPlugin) Init(host volume.VolumeHost) error {
+ 	}
+ 
+ 	// Initializing the label management channels
+-	nim = nodeinfomanager.NewNodeInfoManager(host.GetNodeName(), host, migratedPlugins)
++	if host.GetNodeName() != "" {
++		nim = nodeinfomanager.NewNodeInfoManager(host.GetNodeName(), host, migratedPlugins)
++	}
+ 	PluginHandler.csiPlugin = p
+ 
+ 	// This function prevents Kubelet from posting Ready status until CSINode

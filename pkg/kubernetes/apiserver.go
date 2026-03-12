@@ -45,9 +45,9 @@ func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 		"--advertise-address=127.0.0.1",
 		"--external-hostname=localhost",
 		"--etcd-servers=https://127.0.0.1:2379",
-		"--etcd-cafile="+a.config.Certs.CertPath(),
-		"--etcd-certfile="+a.config.Certs.CertPath(),
-		"--etcd-keyfile="+a.config.Certs.KeyPath(),
+		"--etcd-cafile="+a.config.Certs().CertPath(),
+		"--etcd-certfile="+a.config.Certs().CertPath(),
+		"--etcd-keyfile="+a.config.Certs().KeyPath(),
 		"--service-account-issuer=https://kubernetes.default.svc.cluster.local",
 		"--allow-privileged=true",
 		"--authorization-mode=Node,RBAC",
@@ -59,15 +59,15 @@ func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 		"--watch-cache=false",
 		"--shutdown-delay-duration=0s",
 		// TLS
-		"--tls-cert-file="+a.config.Certs.CertPath(),
-		"--tls-private-key-file="+a.config.Certs.KeyPath(),
-		"--client-ca-file="+a.config.Certs.CertPath(),
+		"--tls-cert-file="+a.config.Certs().CertPath(),
+		"--tls-private-key-file="+a.config.Certs().KeyPath(),
+		"--client-ca-file="+a.config.Certs().CertPath(),
 		// Service account
-		"--service-account-key-file="+a.config.Certs.CertPath(),
-		"--service-account-signing-key-file="+a.config.Certs.KeyPath(),
+		"--service-account-key-file="+a.config.Certs().CertPath(),
+		"--service-account-signing-key-file="+a.config.Certs().KeyPath(),
 		// Kubelet
-		"--kubelet-client-certificate="+a.config.Certs.CertPath(),
-		"--kubelet-client-key="+a.config.Certs.KeyPath(),
+		"--kubelet-client-certificate="+a.config.Certs().CertPath(),
+		"--kubelet-client-key="+a.config.Certs().KeyPath(),
 	)
 
 	a.cmd.SetArgs(args)

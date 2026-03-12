@@ -43,15 +43,15 @@ func (c *ControllerManager) Start(ctx context.Context) (component.Started, error
 		"--leader-elect=false",
 		"--use-service-account-credentials=false",
 		// TLS
-		"--tls-cert-file="+c.config.Certs.CertPath(),
-		"--tls-private-key-file="+c.config.Certs.KeyPath(),
-		"--client-ca-file="+c.config.Certs.CertPath(),
+		"--tls-cert-file="+c.config.Certs().CertPath(),
+		"--tls-private-key-file="+c.config.Certs().KeyPath(),
+		"--client-ca-file="+c.config.Certs().CertPath(),
 		// Service account
-		"--service-account-private-key-file="+c.config.Certs.KeyPath(),
-		"--root-ca-file="+c.config.Certs.CertPath(),
+		"--service-account-private-key-file="+c.config.Certs().KeyPath(),
+		"--root-ca-file="+c.config.Certs().CertPath(),
 		// Cluster
-		"--cluster-signing-cert-file="+c.config.Certs.CertPath(),
-		"--cluster-signing-key-file="+c.config.Certs.KeyPath(),
+		"--cluster-signing-cert-file="+c.config.Certs().CertPath(),
+		"--cluster-signing-key-file="+c.config.Certs().KeyPath(),
 	)
 
 	c.cmd.SetArgs(args)

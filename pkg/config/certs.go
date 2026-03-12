@@ -28,12 +28,9 @@ type certs struct {
 
 func (c *certs) generate() {
 	c.once.Do(func() {
-		certPath := filepath.Join(c.DataDir, "ca.crt")
-		keyPath := filepath.Join(c.DataDir, "ca.key")
-
 		// Read existing certs if they exist
-		certPEM, certErr := os.ReadFile(certPath)
-		keyPEM, keyErr := os.ReadFile(keyPath)
+		certPEM, certErr := os.ReadFile(filepath.Join(c.DataDir, "ca.crt"))
+		keyPEM, keyErr := os.ReadFile(filepath.Join(c.DataDir, "ca.key"))
 		if certErr == nil && keyErr == nil {
 			c.CertPEM = certPEM
 			c.KeyPEM = keyPEM
@@ -100,18 +97,18 @@ func (c *certs) Key() []byte {
 
 func (c *certs) CertPath() string {
 	c.generate()
-	path := filepath.Join(c.DataDir, "ca.crt")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		os.WriteFile(path, c.CertPEM, 0644)
+	caFile := filepath.Join(c.DataDir, "ca.crt")
+	if _, err := os.Stat(caFile); os.IsNotExist(err) {
+		os.WriteFile(caFile, c.CertPEM, 0o644)
 	}
-	return path
+	return caFile
 }
 
 func (c *certs) KeyPath() string {
 	c.generate()
-	path := filepath.Join(c.DataDir, "ca.key")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		os.WriteFile(path, c.KeyPEM, 0600)
+	keyFile := filepath.Join(c.DataDir, "ca.key")
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		os.WriteFile(keyFile, c.KeyPEM, 0o600)
 	}
-	return path
+	return keyFile
 }

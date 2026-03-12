@@ -68,13 +68,21 @@ func (e *EventRecorderImpl) AnnotatedEventf(object runtime.Object, annotations m
 // Event implements [record.EventRecorder].
 func (e *EventRecorderImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
 	e.log.Info().Str("type", eventtype).Str("reason", reason).Msg(message)
+	e.checkNodeReady(reason)
 	e.inner().Event(object, eventtype, reason, message)
 }
 
 // Eventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
 	e.log.Info().Str("type", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
+	e.checkNodeReady(reason)
 	e.inner().Eventf(object, eventtype, reason, messageFmt, args...)
+}
+
+func (e *EventRecorderImpl) checkNodeReady(reason string) {
+	if reason == "NodeReady" {
+		e.backend.SignalNodeReady()
+	}
 }
 
 func (e *EventRecorderImpl) handleEvent(ev Event) {

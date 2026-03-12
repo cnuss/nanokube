@@ -2,6 +2,7 @@ package backend
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,11 +79,10 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 		}, true, cb)
 	}
 
-	if err := run([]string{"hostname"}, func(out string) error {
-		h.WithHostname(out)
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("failed to probe hostname: %w", err)
+	if hostname, err := os.Hostname(); err == nil {
+		h.WithHostname(hostname)
+	} else {
+		return nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
 
 	if err := run([]string{"cat", "/proc/cpuinfo"}, func(out string) error {

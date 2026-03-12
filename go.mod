@@ -3,10 +3,12 @@ module github.com/cnuss/nanokube
 go 1.25.4
 
 require (
+	github.com/container-storage-interface/spec v1.9.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/dustin/go-humanize v1.0.1
+	github.com/golang/protobuf v1.5.4
 	github.com/google/cadvisor v0.53.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/rs/zerolog v1.34.0
@@ -45,7 +47,6 @@ require (
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/container-storage-interface/spec v1.9.0 // indirect
 	github.com/containerd/containerd/api v1.9.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
@@ -71,7 +72,6 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.26.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect

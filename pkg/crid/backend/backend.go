@@ -23,7 +23,6 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
-	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
@@ -120,7 +119,7 @@ type Backend interface {
 	Name() Runtime
 	Context() context.Context
 
-	Start(ctx context.Context, broadcaster record.EventBroadcaster) error
+	Start(ctx context.Context, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error
 	Stop(ctx context.Context) error
 
 	Streaming() streaming.Server
@@ -128,7 +127,6 @@ type Backend interface {
 	Images() internalapi.ImageManagerService
 	Containers() internalapi.RuntimeService
 	ContainerManager() cm.ContainerManager
-	VolumePlugin() volume.VolumePlugin
 	Mounter() mount.Interface
 	Cadvisor() cadvisor.Interface
 	OS() container.OSInterface
@@ -166,7 +164,6 @@ type BackendImpl struct {
 	images        internalapi.ImageManagerService
 	containers    internalapi.RuntimeService
 	cm            cm.ContainerManager
-	volumePlugin  volume.VolumePlugin
 	mounter       mount.Interface
 	cadvisor      cadvisor.Interface
 	os            container.OSInterface
@@ -176,10 +173,15 @@ type BackendImpl struct {
 	prober        prober.Manager
 	traceProvider tp.TracerProvider
 	hostInfo      *HostInfo
+	csi           *CSI
 
 	// events
 	broadcaster record.EventBroadcaster
 	subscribers []chan Event
+
+	// node lifecycle
+	nodeReady     chan struct{}
+	nodeReadyOnce sync.Once
 
 	// sync
 	mu sync.Mutex
@@ -192,6 +194,7 @@ func NewBackend(name string, d Driver) Backend {
 		log:           component.NewLogger(string(d.Name())),
 		klog:          klog.Background(),
 		traceProvider: tp.NewTracerProvider(),
+		nodeReady:     make(chan struct{}),
 	}
 	return backend
 }
@@ -200,7 +203,7 @@ func (b *BackendImpl) Context() context.Context {
 	return b.ctx
 }
 
-func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadcaster) error {
+func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
 	b.ctx = ctx
 	b.broadcaster = broadcaster
@@ -221,7 +224,7 @@ func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadca
 	go func() {
 		b.log.Info().Msg("backend streaming server starting")
 		if err := b.streaming.Start(true); err != nil {
-			b.log.Error().Err(err).Msg("backend streaming server exited")
+			b.log.Info().Err(err).Msg("backend streaming server exited")
 		}
 	}()
 
@@ -270,8 +273,17 @@ func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadca
 		}
 	}()
 
+	// Start CSI driver — endpoint starts now, registration deferred until node ready
+	if err := b.CSI().Start(ctx, pluginsDir, registrationDir); err != nil {
+		return fmt.Errorf("csi: %w", err)
+	}
+
 	b.log.Info().Msg("backend started")
 	return nil
+}
+
+func (b *BackendImpl) SignalNodeReady() {
+	b.nodeReadyOnce.Do(func() { close(b.nodeReady) })
 }
 
 func (b *BackendImpl) Subscribe() <-chan Event {
@@ -316,7 +328,7 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 	if b.streaming != nil {
 		err := b.streaming.Stop()
 		if err != nil {
-			b.log.Error().Err(err).Msg("backend streaming server exited with error")
+			b.log.Info().Err(err).Msg("backend streaming server exited")
 		}
 	}
 
@@ -367,15 +379,6 @@ func (b *BackendImpl) ContainerManager() cm.ContainerManager {
 		b.cm = NewContainerManager(b)
 	}
 	return b.cm
-}
-
-func (b *BackendImpl) VolumePlugin() volume.VolumePlugin {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.volumePlugin == nil {
-		b.volumePlugin = NewVolumePlugin(b)
-	}
-	return b.volumePlugin
 }
 
 func (b *BackendImpl) Mounter() mount.Interface {
@@ -458,6 +461,15 @@ func (b *BackendImpl) Prober() prober.Manager {
 	return b.prober
 }
 
+func (b *BackendImpl) CSI() *CSI {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.csi == nil {
+		b.csi = NewCSI(b)
+	}
+	return b.csi
+}
+
 func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -465,8 +477,10 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 		var err error
 		b.hostInfo, err = NewHostInfo(b.Driver)
 		if err != nil {
+			b.log.Warn().Err(err).Msg("failed to probe host info")
 			return nil, err
 		}
+		b.log.Trace().Any("hostinfo", b.hostInfo).Msg("host info probed successfully")
 	}
 	return b.hostInfo, nil
 }

@@ -5,8 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -38,64 +36,60 @@ func (k *Kubelet) Stop() component.Stopped {
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	kubeletLog.Info().Msg("starting kubelet")
-
-	// Build KubeletFlags — use a dedicated subdirectory so the kubelet's
-	// internal cleanup doesn't interfere with certs, etcd data, etc.
-	kubeletRoot := filepath.Join(k.config.DataDir, "kubelet")
-	os.MkdirAll(kubeletRoot, 0o755)
-	os.MkdirAll(filepath.Join(k.config.DataDir, "manifests"), 0o755)
-	os.MkdirAll(filepath.Join(k.config.DataDir, "volumes"), 0o755)
-
-	f := options.NewKubeletFlags()
-	f.RootDirectory = kubeletRoot
-	f.CertDirectory = filepath.Join(kubeletRoot, "pki")
-	if host, err := k.config.CRID.DefaultBackend().HostInfo(); err == nil {
-		f.HostnameOverride = host.Hostname
+	hostInfo, err := k.config.CRID.DefaultBackend().HostInfo()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get host info from CRID: %w", err)
 	}
-	f.MinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
-	f.MaxContainerCount = 100
-	f.MaxPerPodContainerCount = 2
+
+	flags := options.NewKubeletFlags()
+	flags.RootDirectory = k.config.DataDirs.Root
+	flags.CertDirectory = k.config.DataDirs.PKI
+	flags.HostnameOverride = hostInfo.Hostname
+	flags.MaxContainerCount = 100
+	flags.MaxPerPodContainerCount = 2
+	flags.NodeLabels = map[string]string{} // TODO: Probe
 
 	// Build KubeletConfiguration with upstream defaults, then apply our overrides
-	c, err := options.NewKubeletConfiguration()
+	config, err := options.NewKubeletConfiguration()
 	if err != nil {
 		return nil, fmt.Errorf("kubelet config: %w", err)
 	}
-	c.StaticPodPath = filepath.Join(k.config.DataDir, "manifests")
-	c.PodLogsDir = filepath.Join(k.config.DataDir, "logs")
-	c.ClusterDomain = "cluster.local"
-	c.ClusterDNS = []string{}
-	c.Authentication = kubeletconfig.KubeletAuthentication{
+	config.ImageMinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
+	config.StaticPodPath = k.config.DataDirs.Manifests
+	config.PodLogsDir = k.config.DataDirs.Logs
+	config.ClusterDomain = "cluster.local" // TODO: Probe
+	config.ClusterDNS = []string{}         // TODO: Probe
+	config.Authentication = kubeletconfig.KubeletAuthentication{
 		Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
 		Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
 	}
-	c.Authorization = kubeletconfig.KubeletAuthorization{
+	config.Authorization = kubeletconfig.KubeletAuthorization{
 		Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
 	}
-	c.TLSCertFile = k.config.Certs.CertPath()
-	c.TLSPrivateKeyFile = k.config.Certs.KeyPath()
-	c.EnableServer = true
-	c.Port = 10250
-	c.ReadOnlyPort = 0
-	c.EnableControllerAttachDetach = false
-	c.HairpinMode = kubeletconfig.HairpinVeth
-	c.CgroupsPerQOS = false
-	c.CgroupDriver = "cgroupfs"
-	c.EnforceNodeAllocatable = []string{}
-	c.EvictionHard = map[string]string{}
-	c.ImageGCHighThresholdPercent = 100
-	c.FailSwapOn = false
-	c.LocalStorageCapacityIsolation = false
-	c.RotateCertificates = false
-	c.ServerTLSBootstrap = false
-	c.RegisterNode = true
-	c.CPUCFSQuota = false
-	// c.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
-	c.ContainerLogMaxFiles = 5
-	c.ContainerLogMaxWorkers = 1
-	// c.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
-	c.ProtectKernelDefaults = false
-	// c.FeatureGates = k.config.FeatureGates
+	config.TLSCertFile = k.config.Certs().CertPath()
+	config.TLSPrivateKeyFile = k.config.Certs().KeyPath()
+	config.EnableServer = true
+	config.Port = 10250
+	config.ReadOnlyPort = 0
+	config.EnableControllerAttachDetach = true
+	config.HairpinMode = kubeletconfig.HairpinVeth
+	config.CgroupsPerQOS = false
+	config.CgroupDriver = "cgroupfs"
+	config.EnforceNodeAllocatable = []string{}
+	config.EvictionHard = map[string]string{}
+	config.ImageGCHighThresholdPercent = 100
+	config.FailSwapOn = false
+	config.LocalStorageCapacityIsolation = false
+	config.RotateCertificates = false
+	config.ServerTLSBootstrap = false
+	config.RegisterNode = true
+	config.CPUCFSQuota = false
+	config.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
+	config.ContainerLogMaxFiles = 5
+	config.ContainerLogMaxWorkers = 1
+	config.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
+	config.ProtectKernelDefaults = false
+	config.FeatureGates = k.config.FeatureGates
 
 	// Create k8s clients from kubeconfig
 	kubeconfigPath := k.config.KubeconfigPath()
@@ -109,8 +103,8 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	}
 
 	heartbeatConfig := *restConfig
-	heartbeatConfig.Timeout = c.NodeStatusUpdateFrequency.Duration
-	leaseTimeout := time.Duration(c.NodeLeaseDurationSeconds) * time.Second
+	heartbeatConfig.Timeout = config.NodeStatusUpdateFrequency.Duration
+	leaseTimeout := time.Duration(config.NodeLeaseDurationSeconds) * time.Second
 	if heartbeatConfig.Timeout > leaseTimeout {
 		heartbeatConfig.Timeout = leaseTimeout
 	}
@@ -121,11 +115,12 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	}
 
 	// Connect the CRID to the kubernetes API server
-	volumePlugin := k.config.CRID.WithClient(client).DefaultBackend().VolumePlugin()
+	k.config.CRID.WithClient(client)
 
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(
-		f, c,
+		flags,
+		config,
 		client,
 		heartbeatClient,
 		k.config.CRID.DefaultBackend().Cadvisor(),
@@ -133,7 +128,6 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		k.config.CRID.DefaultBackend().Containers(),
 		k.config.CRID.DefaultBackend().ContainerManager(),
 	)
-	hk.KubeletDeps.VolumePlugins = append(hk.KubeletDeps.VolumePlugins, volumePlugin)
 	hk.KubeletDeps.OSInterface = k.config.CRID.DefaultBackend().OS()
 	hk.KubeletDeps.Mounter = k.config.CRID.DefaultBackend().Mounter()
 	hk.KubeletDeps.Subpather = k.config.CRID.DefaultBackend().Subpath()
@@ -142,8 +136,8 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.ProbeManager = k.config.CRID.DefaultBackend().Prober()
 	hk.KubeletDeps.TLSOptions = &server.TLSOptions{
 		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
-		CertFile: c.TLSCertFile,
-		KeyFile:  c.TLSPrivateKeyFile,
+		CertFile: config.TLSCertFile,
+		KeyFile:  config.TLSPrivateKeyFile,
 	}
 	exited := make(chan error, 1)
 	go func() {

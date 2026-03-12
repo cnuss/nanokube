@@ -133,7 +133,7 @@ func (m *ContainerManagerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {
 }
 
 func (m *ContainerManagerImpl) GetNodeAllocatableReservation() v1.ResourceList {
-	m.log.Warn().Msg("GetNodeAllocatableReservation not implemented")
+	m.log.Trace().Msg("GetNodeAllocatableReservation not implemented")
 	return nil
 }
 
@@ -146,7 +146,7 @@ func (m *ContainerManagerImpl) GetCapacity(localStorageCapacityIsolation bool) v
 }
 
 func (m *ContainerManagerImpl) GetDevicePluginResourceCapacity() (v1.ResourceList, v1.ResourceList, []string) {
-	m.log.Warn().Msg("GetDevicePluginResourceCapacity not implemented")
+	m.log.Trace().Msg("GetDevicePluginResourceCapacity not implemented")
 	return nil, nil, nil
 }
 

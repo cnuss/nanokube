@@ -41,9 +41,9 @@ func (s *Scheduler) Start(ctx context.Context) (component.Started, error) {
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
 		// TLS
-		"--tls-cert-file="+s.config.Certs.CertPath(),
-		"--tls-private-key-file="+s.config.Certs.KeyPath(),
-		"--client-ca-file="+s.config.Certs.CertPath(),
+		"--tls-cert-file="+s.config.Certs().CertPath(),
+		"--tls-private-key-file="+s.config.Certs().KeyPath(),
+		"--client-ca-file="+s.config.Certs().CertPath(),
 	)
 
 	s.cmd.SetArgs(args)
