@@ -58,7 +58,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	config.StaticPodPath = k.config.DataDirs.Manifests
 	config.PodLogsDir = k.config.DataDirs.Logs
 	config.ClusterDomain = "cluster.local" // TODO: Probe
-	config.ClusterDNS = []string{}         // TODO: Probe
+	config.ClusterDNS = hostInfo.Nameservers
 	config.Authentication = kubeletconfig.KubeletAuthentication{
 		Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
 		Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},

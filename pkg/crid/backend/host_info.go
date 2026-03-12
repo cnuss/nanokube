@@ -17,6 +17,7 @@ type HostInfo struct {
 	BootID        string
 	KernelVersion string
 	OSVersion     string
+	Nameservers   []string
 	CpuInfo       []CpuInfo
 	mu            sync.Mutex
 	driver        Driver
@@ -120,6 +121,18 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("failed to probe kernel version: %w", err)
+	}
+
+	// Probe DNS from a plain container (no host mounts) to see what Docker gives containers
+	if err := driver.Run("busybox", []string{"cat", "/etc/resolv.conf"}, nil, false, func(out string) error {
+		for line := range strings.SplitSeq(out, "\n") {
+			if strings.HasPrefix(line, "nameserver ") {
+				h.Nameservers = append(h.Nameservers, strings.TrimSpace(strings.TrimPrefix(line, "nameserver ")))
+			}
+		}
+		return nil
+	}); err != nil {
+		// Non-fatal — fall back to empty
 	}
 
 	if err := run([]string{"cat", "/etc/os-release"}, func(out string) error {
