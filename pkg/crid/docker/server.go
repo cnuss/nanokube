@@ -484,7 +484,7 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 				f.Add("status", container.StateDead)
 			}
 		}
-		for k, v := range s.backend.labels.TranslateKeys(filter.GetLabelSelector()) {
+		for k, v := range s.translateFilterKeys(filter.GetLabelSelector()) {
 			f.Add("label", k+"="+v)
 		}
 	}
@@ -530,7 +530,7 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 				f.Add("status", container.StateDead)
 			}
 		}
-		for k, v := range s.backend.labels.TranslateKeys(filter.GetLabelSelector()) {
+		for k, v := range s.translateFilterKeys(filter.GetLabelSelector()) {
 			f.Add("label", k+"="+v)
 		}
 	}
@@ -1249,6 +1249,27 @@ func (s *Server) ControllerGetVolume(ctx context.Context, req *csipb.ControllerG
 // No-op — Docker volumes have no mutable properties.
 func (s *Server) ControllerModifyVolume(_ context.Context, _ *csipb.ControllerModifyVolumeRequest) (*csipb.ControllerModifyVolumeResponse, error) {
 	return &csipb.ControllerModifyVolumeResponse{}, nil
+}
+
+// translateFilterKeys maps CRI label selector keys (io.kubernetes.*) to their
+// nanokube-prefixed Docker label equivalents for container filtering.
+var filterKeyMap = map[string]string{
+	"io.kubernetes.pod.name":       "pod-name",
+	"io.kubernetes.pod.namespace":  "pod-namespace",
+	"io.kubernetes.pod.uid":        "pod-uid",
+	"io.kubernetes.container.name": "container-name",
+}
+
+func (s *Server) translateFilterKeys(selector map[string]string) map[string]string {
+	out := make(map[string]string, len(selector))
+	for k, v := range selector {
+		if suffix, ok := filterKeyMap[k]; ok {
+			out[s.backend.labels.Prefix(suffix)] = v
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // wrapErr wraps an error with the calling function's name.

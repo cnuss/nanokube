@@ -2,6 +2,7 @@ package labels
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ var (
 	volumeIDKey         = "volume-id"
 	logDirKey           = "log-directory"
 	logPathKey          = "container-log-path"
+	labelsKey           = "labels"
 
 	unknownType   = "unknown"
 	sandboxType   = "sandbox"
@@ -45,8 +47,6 @@ type LabelProvider interface {
 	ManagedByFilter() string
 	TypeFilter(t string) string
 	SandboxIDFilter(id string) string
-	TranslateKey(key string) (string, bool)
-	TranslateKeys(labels map[string]string) map[string]string
 	IsInternal(key string) bool
 	IsAnnotation(key string) bool
 	ExtractLabels(dockerLabels map[string]string) map[string]string
@@ -161,38 +161,6 @@ func decodeAnnotationKey(k string) string {
 	return string(b)
 }
 
-// kubeToInternal maps io.kubernetes.* label keys to internal key suffixes.
-var kubeToInternal = map[string]string{
-	"io.kubernetes.pod.name":       podNameKey,
-	"io.kubernetes.pod.namespace":  podNamespaceKey,
-	"io.kubernetes.pod.uid":        podUIDKey,
-	"io.kubernetes.container.name": containerNameKey,
-}
-
-// TranslateKey maps an io.kubernetes.* label key to its nanokube-prefixed
-// equivalent. Returns the translated key and true, or "" and false if the
-// key does not need translation.
-func (l *LabelProviderImpl) TranslateKey(key string) (string, bool) {
-	if suffix, ok := kubeToInternal[key]; ok {
-		return l.Prefix(suffix), true
-	}
-	return "", false
-}
-
-// TranslateKeys returns a copy of the map with any io.kubernetes.* keys
-// replaced by their nanokube-prefixed equivalents.
-func (l *LabelProviderImpl) TranslateKeys(labels map[string]string) map[string]string {
-	out := make(map[string]string, len(labels))
-	for k, v := range labels {
-		if translated, ok := l.TranslateKey(k); ok {
-			out[translated] = v
-		} else {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 // IsInternal returns true if the label key is an internal management label.
 func (l *LabelProviderImpl) IsInternal(key string) bool {
 	prefix := l.name + "."
@@ -201,7 +169,7 @@ func (l *LabelProviderImpl) IsInternal(key string) bool {
 	}
 	suffix := key[len(prefix):]
 	switch suffix {
-	case typeKey, managedByKey, sandboxIDKey, containerIDKey, containerAttemptKey, containerNameKey, podNameKey, podNamespaceKey, podUIDKey, logDirKey, logPathKey:
+	case typeKey, managedByKey, sandboxIDKey, containerIDKey, containerAttemptKey, containerNameKey, podNameKey, podNamespaceKey, podUIDKey, logDirKey, logPathKey, labelsKey:
 		return true
 	}
 	return false
@@ -212,33 +180,33 @@ func (l *LabelProviderImpl) IsAnnotation(key string) bool {
 	return strings.HasPrefix(key, l.Prefix("annotation."))
 }
 
-// ExtractLabels extracts CRI labels from Docker labels, excluding internal
-// and annotation-prefixed labels, and reverse-translating nanokube-prefixed
-// identity keys back to io.kubernetes.* for the kubelet.
-func (l *LabelProviderImpl) ExtractLabels(dockerLabels map[string]string) map[string]string {
-	// Build reverse map: nanokube.pod-name → io.kubernetes.pod.name
-	reverse := make(map[string]string, len(kubeToInternal))
-	for kubeKey, suffix := range kubeToInternal {
-		reverse[l.Prefix(suffix)] = kubeKey
-	}
+// encodeLabelsBlob serializes a map to base64-encoded JSON.
+func encodeLabelsBlob(m map[string]string) string {
+	b, _ := json.Marshal(m)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
 
-	out := make(map[string]string)
-	for k, v := range dockerLabels {
-		if l.IsAnnotation(k) {
-			continue
-		}
-		// Reverse-translate identity keys back to io.kubernetes.*
-		if kubeKey, ok := reverse[k]; ok {
-			out[kubeKey] = v
-			continue
-		}
-		// Skip remaining internal management labels
-		if l.IsInternal(k) {
-			continue
-		}
-		out[k] = v
+// decodeLabelsBlob deserializes a base64-encoded JSON string back to a map.
+func decodeLabelsBlob(s string) map[string]string {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil
 	}
-	return out
+	var m map[string]string
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	return m
+}
+
+// ExtractLabels deserializes the packed labels blob back into a map.
+func (l *LabelProviderImpl) ExtractLabels(dockerLabels map[string]string) map[string]string {
+	if blob, ok := dockerLabels[l.Prefix(labelsKey)]; ok {
+		if m := decodeLabelsBlob(blob); m != nil {
+			return m
+		}
+	}
+	return make(map[string]string)
 }
 
 // ExtractAnnotations extracts CRI annotations from Docker labels, expanding

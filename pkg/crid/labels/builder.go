@@ -3,7 +3,6 @@ package labels
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"sync"
 )
 
@@ -26,10 +25,11 @@ func (l *LabelProviderImpl) NewBuilder(userLabels map[string]string) *LabelBuild
 		lp:     l,
 		labels: make(map[string]string, len(userLabels)+8),
 	}
-	maps.Copy(b.labels, userLabels)
 	// Defaults
 	b.labels[l.Prefix(managedByKey)] = l.name
 	b.labels[l.Prefix(typeKey)] = unknownType
+	// Route user labels through WithLabels to pack kubernetes.io keys
+	b.WithLabels(userLabels)
 	return b
 }
 
@@ -105,16 +105,22 @@ func (b *LabelBuilder) WithUID(uid string) *LabelBuilder {
 	return b
 }
 
-// WithLabels merges additional labels into the builder, translating any
-// io.kubernetes.* keys to their nanokube-prefixed equivalents.
+// WithLabels packs all CRI labels into a single base64+JSON blob.
 func (b *LabelBuilder) WithLabels(labels map[string]string) *LabelBuilder {
-	for k, v := range labels {
-		if translated, ok := b.lp.TranslateKey(k); ok {
-			b.set(translated, v)
-		} else {
-			b.set(k, v)
-		}
+	if len(labels) == 0 {
+		return b
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	blobKey := b.lp.Prefix(labelsKey)
+	packed := decodeLabelsBlob(b.labels[blobKey])
+	if packed == nil {
+		packed = make(map[string]string, len(labels))
+	}
+	for k, v := range labels {
+		packed[k] = v
+	}
+	b.labels[blobKey] = encodeLabelsBlob(packed)
 	return b
 }
 
