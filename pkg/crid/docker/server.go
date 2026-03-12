@@ -184,22 +184,28 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
 
-	// Get sandbox status via CRI
-	sandbox, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: sandboxID})
+	// Inspect sandbox directly to get both CRI labels and internal labels (log directory)
+	sandboxInspect, err := s.backend.client.ContainerInspect(ctx, sandboxID)
 	if err != nil {
 		return nil, wrapErr(err)
 	}
-	status := sandbox.Status
+	sandboxLabels := s.backend.labels.ExtractLabels(sandboxInspect.Config.Labels)
+	sandboxAnnotations := s.backend.labels.ExtractAnnotations(sandboxInspect.Config.Labels)
 
 	// Labels: start from sandbox, layer container labels on top
 	name, labels, err := s.backend.labels.NewBuilder(nil).
-		WithLabels(status.GetLabels()).
+		WithLabels(sandboxLabels).
 		WithLabels(config.GetLabels()).
 		WithContainer(sandboxID, meta.GetName(), meta.GetAttempt()).
-		WithAnnotations(status.GetAnnotations()).
+		WithAnnotations(sandboxAnnotations).
 		WithAnnotations(config.GetAnnotations()).
+		WithLogDirectory(s.backend.labels.LogDirectory(sandboxInspect.Config.Labels)).
 		WithLogPath(config.GetLogPath()).
-		WithPod(status.GetMetadata().GetName(), status.GetMetadata().GetNamespace(), status.GetMetadata().GetUid()).
+		WithPod(
+			s.backend.labels.PodName(sandboxInspect.Config.Labels),
+			s.backend.labels.PodNamespace(sandboxInspect.Config.Labels),
+			s.backend.labels.PodUID(sandboxInspect.Config.Labels),
+		).
 		Build()
 	if err != nil {
 		return nil, wrapErr(err)
@@ -683,6 +689,11 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 			return nil, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
+	}
+
+	// Remove the sandbox container itself by ID
+	if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{}); err != nil {
+		s.log.Debug().Err(err).Str("id", id[:min(12, len(id))]).Msg("sandbox container already removed")
 	}
 
 	return &runtimeapi.RemovePodSandboxResponse{}, nil
