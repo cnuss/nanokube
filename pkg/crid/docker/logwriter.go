@@ -37,33 +37,34 @@ func (lw *logWriter) Start(containerID, logPath string) {
 	os.MkdirAll(filepath.Dir(logPath), 0o755)
 	lw.Stop(containerID)
 
+	// Create the file synchronously so callers can rely on it existing after Start returns.
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(lw.ctx)
+	reader, err := lw.client.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: true,
+	})
+	if err != nil {
+		cancel()
+		f.Close()
+		return
+	}
+
+	lw.mu.Lock()
+	lw.cancels[containerID] = func() {
+		cancel()
+		f.Close()
+		reader.Close()
+	}
+	lw.mu.Unlock()
+
 	go func() {
-		ctx, cancel := context.WithCancel(lw.ctx)
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			cancel()
-			return
-		}
-
-		reader, err := lw.client.ContainerLogs(ctx, containerID, container.LogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-			Follow:     true,
-			Timestamps: true,
-		})
-		if err != nil {
-			cancel()
-			f.Close()
-			return
-		}
-
-		lw.mu.Lock()
-		lw.cancels[containerID] = func() {
-			cancel()
-			f.Close()
-			reader.Close()
-		}
-		lw.mu.Unlock()
 		defer lw.Stop(containerID)
 
 		// Docker multiplexes stdout/stderr with an 8-byte header per frame:
