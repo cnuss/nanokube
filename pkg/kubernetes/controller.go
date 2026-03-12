@@ -41,6 +41,7 @@ func (c *ControllerManager) Start(ctx context.Context) (component.Started, error
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
+		"--controller-shutdown-timeout=0",
 		"--use-service-account-credentials=false",
 		// TLS
 		"--tls-cert-file="+c.config.Certs().CertPath(),

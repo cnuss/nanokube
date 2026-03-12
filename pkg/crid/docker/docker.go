@@ -49,6 +49,23 @@ func (b *DockerBackend) DataDir() string {
 	return b.dataDir
 }
 
+// Cleanup force-removes all containers managed by this backend.
+func (b *DockerBackend) Cleanup(ctx context.Context) error {
+	b.log.Info().Msg("cleanup: removing managed containers")
+	f := filters.NewArgs()
+	f.Add("label", b.labels.ManagedByFilter())
+
+	all, err := b.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return err
+	}
+	for _, c := range all {
+		b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+	}
+	b.log.Info().Int("removed", len(all)).Msg("cleanup: done")
+	return nil
+}
+
 func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 	home, _ := os.UserHomeDir()
 	paths := []string{

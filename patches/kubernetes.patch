@@ -28,7 +28,7 @@ index a0ba37e0103..94c570f7376 100644
  	fs := cmd.Flags()
  	namedFlagSets := s.Flags()
 diff --git a/cmd/kube-controller-manager/app/controllermanager.go b/cmd/kube-controller-manager/app/controllermanager.go
-index 873d5e0bbef..16784779aa4 100644
+index 873d5e0bbef..23a8617c934 100644
 --- a/cmd/kube-controller-manager/app/controllermanager.go
 +++ b/cmd/kube-controller-manager/app/controllermanager.go
 @@ -133,7 +133,7 @@ controller, and serviceaccounts controller.`,
@@ -40,8 +40,35 @@ index 873d5e0bbef..16784779aa4 100644
  			c, err := s.Config(ctx, KnownControllers(), ControllersDisabledByDefault(), ControllerAliases())
  			if err != nil {
  				return err
+@@ -266,9 +266,7 @@ func Run(ctx context.Context, c *config.CompletedConfig) error {
+ 
+ 		// Actually start the controllers.
+ 		if len(controllers) > 0 {
+-			if !RunControllers(ctx, controllerContext, controllers, ControllerStartJitter, c.ControllerShutdownTimeout) {
+-				klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+-			}
++			RunControllers(ctx, controllerContext, controllers, ControllerStartJitter, c.ControllerShutdownTimeout)
+ 		} else {
+ 			<-ctx.Done()
+ 		}
+@@ -366,7 +364,6 @@ func Run(ctx context.Context, c *config.CompletedConfig) error {
+ 			},
+ 			OnStoppedLeading: func() {
+ 				logger.Error(nil, "leaderelection lost")
+-				klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+ 			},
+ 		})
+ 
+@@ -393,7 +390,6 @@ func Run(ctx context.Context, c *config.CompletedConfig) error {
+ 				},
+ 				OnStoppedLeading: func() {
+ 					logger.Error(nil, "migration leaderelection lost")
+-					klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+ 				},
+ 			})
+ 	}
 diff --git a/cmd/kube-scheduler/app/server.go b/cmd/kube-scheduler/app/server.go
-index 834213e337f..61a7067246b 100644
+index 834213e337f..89fcd5271ff 100644
 --- a/cmd/kube-scheduler/app/server.go
 +++ b/cmd/kube-scheduler/app/server.go
 @@ -35,7 +35,6 @@ import (
@@ -67,6 +94,21 @@ index 834213e337f..61a7067246b 100644
  
  	cc, sched, err := Setup(ctx, opts, registryOptions...)
  	if err != nil {
+@@ -311,13 +304,11 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
+ 				gracefulShutdownSecureServer()
+ 				select {
+ 				case <-ctx.Done():
+-					// We were asked to terminate. Exit 0.
++					// We were asked to terminate.
+ 					logger.Info("Requested to terminate, exiting")
+-					os.Exit(0)
+ 				default:
+ 					// We lost the lock.
+ 					logger.Error(nil, "Leaderelection lost")
+-					klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+ 				}
+ 			},
+ 		}
 diff --git a/pkg/volume/csi/csi_plugin.go b/pkg/volume/csi/csi_plugin.go
 index 3d2699a0d3a..8ac914756ff 100644
 --- a/pkg/volume/csi/csi_plugin.go

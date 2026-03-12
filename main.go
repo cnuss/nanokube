@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -15,6 +16,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"k8s.io/klog/v2"
 )
 
 var options = config.NewOptions()
@@ -114,7 +116,15 @@ func init() {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// Prevent Kubernetes components from killing the process via klog.Fatal/FlushAndExit.
+	// In an embedded binary, no component should call os.Exit — the shutdown loop handles cleanup.
+	// runtime.Goexit terminates the calling goroutine without affecting others.
+	klog.OsExit = func(code int) {
+		log.Warn().Int("code", code).Msg("klog.OsExit intercepted")
+		runtime.Goexit()
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
 	rootCmd, logger, cleanup := component.Setup(rootCmd)

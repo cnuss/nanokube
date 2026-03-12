@@ -112,6 +112,7 @@ type Driver interface {
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
 	Events(ctx context.Context) (<-chan Event, <-chan error)
+	Cleanup(ctx context.Context) error
 }
 
 // Backend is the full interface consumers use
@@ -301,21 +302,9 @@ func (b *BackendImpl) Subscribe() <-chan Event {
 func (b *BackendImpl) Stop(ctx context.Context) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("stopping")
 
-	// Clean up pod sandboxes before tearing down gRPC
-	if rt := b.Containers(); rt != nil {
-		sandboxes, err := rt.ListPodSandbox(ctx, nil)
-		if err != nil {
-			b.log.Error().Err(err).Msg("failed to list pod sandboxes")
-		}
-		for _, sb := range sandboxes {
-			b.log.Info().Str("id", sb.Id).Str("name", sb.Metadata.Name).Msg("cleaning up pod sandbox")
-			if err := rt.StopPodSandbox(ctx, sb.Id); err != nil {
-				b.log.Error().Err(err).Str("id", sb.Id).Msg("failed to stop pod sandbox")
-			}
-			if err := rt.RemovePodSandbox(ctx, sb.Id); err != nil {
-				b.log.Error().Err(err).Str("id", sb.Id).Msg("failed to remove pod sandbox")
-			}
-		}
+	// Clean up all managed containers directly via the driver (bypasses gRPC)
+	if err := b.Cleanup(ctx); err != nil {
+		b.log.Error().Err(err).Msg("failed to clean up containers")
 	}
 
 	if b.grpc != nil {
