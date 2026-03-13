@@ -4,5 +4,11 @@ commands:
   # node is Ready
   - script: kubectl get nodes -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' | grep -q True
   # node has standard kubernetes labels
-  - script: kubectl get nodes -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/os}' | grep -q linux
-  - script: kubectl get nodes -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/arch}' | grep -q .
+  - script: |
+      expected=$(uname -s | tr '[:upper:]' '[:lower:]')
+      actual=$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/os}')
+      test "$actual" = "$expected"
+  - script: |
+      expected=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+      actual=$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/arch}')
+      test "$actual" = "$expected"
