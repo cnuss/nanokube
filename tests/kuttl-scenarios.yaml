@@ -1,7 +1,8 @@
 apiVersion: kuttl.dev/v1beta1
 kind: TestSuite
+timeout: 60
 parallel: 1
 reportFormat: JSON
 artifactsDir: ./tests/artifacts
 testDirs:
-  - ./tests/e2e/
+  - ./tests/scenarios/

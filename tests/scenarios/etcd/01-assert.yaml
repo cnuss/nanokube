@@ -1,0 +1,28 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # etcd is functional — write and read a key
+  - script: |
+      kubectl exec --namespace $NAMESPACE etcd -c etcd -- \
+        etcdctl --endpoints=http://127.0.0.1:12379 put /test/key "nanokube"
+      val=$(kubectl exec --namespace $NAMESPACE etcd -c etcd -- \
+        etcdctl --endpoints=http://127.0.0.1:12379 get /test/key --print-value-only)
+      test "$val" = "nanokube"
+  # monitor sidecar confirmed etcd health via host network
+  - script: |
+      kubectl exec --namespace $NAMESPACE etcd -c monitor -- cat /tmp/etcd-health | grep -q healthy
+  # crasher has restarted but etcd and monitor are unaffected
+  - script: |
+      set -e
+      crasher=$(kubectl get pod --namespace $NAMESPACE etcd -o jsonpath='{.status.containerStatuses[?(@.name=="crasher")].restartCount}')
+      etcd=$(kubectl get pod --namespace $NAMESPACE etcd -o jsonpath='{.status.containerStatuses[?(@.name=="etcd")].restartCount}')
+      monitor=$(kubectl get pod --namespace $NAMESPACE etcd -o jsonpath='{.status.containerStatuses[?(@.name=="monitor")].restartCount}')
+      echo "restarts: etcd=$etcd monitor=$monitor crasher=$crasher"
+      test "$crasher" -ge 1
+      test "$etcd" -eq 0
+      test "$monitor" -eq 0
+  # pod IP matches node IP (hostNetwork)
+  - script: |
+      pod_ip=$(kubectl get pod --namespace $NAMESPACE etcd -o jsonpath='{.status.podIP}')
+      node_ip=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+      test "$pod_ip" = "$node_ip"
