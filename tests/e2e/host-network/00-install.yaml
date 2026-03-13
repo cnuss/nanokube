@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-net-test
+spec:
+  hostNetwork: true
+  dnsPolicy: Default
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ["sleep", "3600"]

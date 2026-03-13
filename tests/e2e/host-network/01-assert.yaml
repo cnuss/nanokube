@@ -1,0 +1,8 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # with hostNetwork, pod IP should match the node's internal IP
+  - script: |
+      pod_ip=$(kubectl get pod --namespace $NAMESPACE host-net-test -o jsonpath='{.status.podIP}')
+      node_ip=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+      test "$pod_ip" = "$node_ip"

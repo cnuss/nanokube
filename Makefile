@@ -58,9 +58,12 @@ WHAT ?=
 # Usage: $(call run-nanokube,<nanokube-args>,<ready-check>,<test-cmd>)
 define run-nanokube
 	@D=$$(mktemp -d); \
-	trap 'kill $$! 2>/dev/null; wait; rm -rf "$$D"' EXIT; \
+	trap 'kill $$! 2>/dev/null; wait' EXIT; \
 	./nanokube $(1) $(ARGS) --data "$$D" >/dev/null 2>&1 & \
 	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
+	echo "########################################"; \
+	echo "# NANOKUBE LOG: $$D/log"; \
+	echo "########################################"; \
 	$(3)
 endef
 

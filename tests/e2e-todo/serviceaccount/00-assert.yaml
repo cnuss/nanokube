@@ -1,6 +1,0 @@
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: sa-api-test
-status:
-  succeeded: 1

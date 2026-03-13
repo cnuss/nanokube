@@ -1,0 +1,5 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # with hostPID, container sees many host processes (isolated ns would show ~3)
+  - script: test $(kubectl exec --namespace $NAMESPACE host-pid-test -- ps aux | wc -l) -gt 10

@@ -498,7 +498,7 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 // so we return 127.0.0.1 when on bridge with published ports.
 func getIPFromInspect(inspect container.InspectResponse) string {
 	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
-		return "127.0.0.1"
+		return ""
 	}
 	if inspect.NetworkSettings != nil {
 		if _, onBridge := inspect.NetworkSettings.Networks["bridge"]; onBridge {

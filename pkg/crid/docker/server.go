@@ -584,6 +584,24 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 
 	createdAt := s.backend.Into.CreatedAt(inspect.Created)
 
+	// Build namespace options from Docker HostConfig
+	nsOpts := &runtimeapi.NamespaceOption{
+		Network: runtimeapi.NamespaceMode_POD,
+		Pid:     runtimeapi.NamespaceMode_CONTAINER,
+		Ipc:     runtimeapi.NamespaceMode_POD,
+	}
+	if inspect.HostConfig != nil {
+		if inspect.HostConfig.NetworkMode == "host" {
+			nsOpts.Network = runtimeapi.NamespaceMode_NODE
+		}
+		if inspect.HostConfig.PidMode == "host" {
+			nsOpts.Pid = runtimeapi.NamespaceMode_NODE
+		}
+		if inspect.HostConfig.IpcMode == "host" {
+			nsOpts.Ipc = runtimeapi.NamespaceMode_NODE
+		}
+	}
+
 	status := &runtimeapi.PodSandboxStatus{
 		Id: inspect.ID,
 		Metadata: &runtimeapi.PodSandboxMetadata{
@@ -595,6 +613,11 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 		CreatedAt: createdAt,
 		Network: &runtimeapi.PodSandboxNetworkStatus{
 			Ip: getIPFromInspect(inspect),
+		},
+		Linux: &runtimeapi.LinuxPodSandboxStatus{
+			Namespaces: &runtimeapi.Namespace{
+				Options: nsOpts,
+			},
 		},
 		Labels:      s.backend.labels.ExtractLabels(inspect.Config.Labels),
 		Annotations: s.backend.labels.ExtractAnnotations(inspect.Config.Labels),
