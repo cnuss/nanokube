@@ -12,7 +12,6 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid"
-	"github.com/cnuss/nanokube/pkg/etcd"
 	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -40,11 +39,11 @@ var rootCmd = &cobra.Command{
 		}
 
 		cfg.Components = append(cfg.Components, cfg.CRID)
-		cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewManifests(cfg))
+		// cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
+		cfg.Components = append(cfg.Components, kubernetes.NewManifests(cfg))
 
 		if options.Kubelet {
 			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))

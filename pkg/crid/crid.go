@@ -81,12 +81,22 @@ func (c *CRID) Stop() component.Stopped {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Clean up sandboxes
-		if sandboxes, err := c.Backend(backend.Docker).Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
-			for _, sb := range sandboxes {
+		// Remove sandboxes that are not running
+		if stopped, err := c.Backend(backend.Docker).Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
+			for _, sb := range stopped {
 				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
 				if err := c.Backend(backend.Docker).Containers().RemovePodSandbox(ctx, sb.Id); err != nil {
 					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
+				}
+			}
+		}
+
+		// Stop sandboxes that are still running
+		if running, err := c.Backend(backend.Docker).Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}); err == nil {
+			for _, sb := range running {
+				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
+				if err := c.Backend(backend.Docker).Containers().StopPodSandbox(ctx, sb.Id); err != nil {
+					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
 				}
 			}
 		}
