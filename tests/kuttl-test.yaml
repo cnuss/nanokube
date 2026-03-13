@@ -3,6 +3,6 @@ kind: TestSuite
 timeout: 15
 parallel: 1
 reportFormat: JSON
-artifactsDir: /tmp/kuttl-artifacts
+artifactsDir: ./tests/artifacts
 testDirs:
   - ./tests/e2e/
