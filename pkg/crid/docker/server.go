@@ -178,10 +178,6 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 // CreateContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
-	if b, err := json.MarshalIndent(req, "", "  "); err == nil {
-		s.log.Info().Msgf("CreateContainer\n%s", b)
-	}
-
 	config := req.GetConfig()
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
@@ -690,9 +686,6 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	if b, err := json.MarshalIndent(req, "", "  "); err == nil {
-		s.log.Info().Msgf("RunPodSandbox\n%s", b)
-	}
 
 	config := req.GetConfig()
 	meta := config.GetMetadata()
