@@ -141,7 +141,6 @@ func (l *LabelProviderImpl) SandboxIDFilter(id string) string {
 	return l.Prefix(sandboxIDKey) + "=" + id
 }
 
-
 // IsInternal returns true if the label key is an internal management label.
 func (l *LabelProviderImpl) IsInternal(key string) bool {
 	prefix := l.name + "."

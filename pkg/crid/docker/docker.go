@@ -497,6 +497,9 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 // On Docker Desktop (macOS), bridge IPs are not routable from the host,
 // so we return 127.0.0.1 when on bridge with published ports.
 func getIPFromInspect(inspect container.InspectResponse) string {
+	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
+		return "127.0.0.1"
+	}
 	if inspect.NetworkSettings != nil {
 		if _, onBridge := inspect.NetworkSettings.Networks["bridge"]; onBridge {
 			for _, bindings := range inspect.NetworkSettings.Ports {

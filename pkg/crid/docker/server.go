@@ -753,6 +753,12 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, platform, name)
 	if err != nil {
+		if errdefs.IsConflict(err) {
+			s.log.Warn().Str("name", name).Msg("sandbox name conflict, removing old sandbox")
+			s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: name})
+			time.Sleep(time.Second)
+			return s.RunPodSandbox(ctx, req)
+		}
 		return nil, wrapErr(err)
 	}
 

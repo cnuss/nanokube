@@ -1,0 +1,5 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # verify postStart hook ran
+  - script: test "$(kubectl exec --namespace $NAMESPACE lifecycle-test -- cat /tmp/hook-status)" = "post-start"

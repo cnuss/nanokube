@@ -1,0 +1,6 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deploy-test
+status:
+  readyReplicas: 2

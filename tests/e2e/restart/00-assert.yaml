@@ -1,0 +1,7 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # container should have restarted at least once
+  - script: |
+      restarts=$(kubectl get pod --namespace $NAMESPACE restart-test -o jsonpath='{.status.containerStatuses[0].restartCount}')
+      test "$restarts" -ge 1

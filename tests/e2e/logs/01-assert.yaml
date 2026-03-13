@@ -1,0 +1,4 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  - script: kubectl logs --namespace $NAMESPACE logs-test | grep -q nanokube-log-marker

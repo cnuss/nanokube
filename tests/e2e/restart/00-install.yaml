@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: restart-test
+spec:
+  restartPolicy: Always
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ["sh", "-c", "exit 0"]

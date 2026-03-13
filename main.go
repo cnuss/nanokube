@@ -44,6 +44,7 @@ var rootCmd = &cobra.Command{
 		cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
 		cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
 		cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
+		// cfg.Components = append(cfg.Components, kubernetes.NewManifests(cfg))
 
 		if options.Kubelet {
 			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))

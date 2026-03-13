@@ -1,0 +1,127 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-system
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  containers:
+    - name: etcd
+      image: quay.io/coreos/etcd:v3.6.6
+      command:
+        - etcd
+        - --data-dir=/var/lib/etcd
+        - --listen-client-urls=https://0.0.0.0:2379
+        - --advertise-client-urls=https://127.0.0.1:2379
+        - --listen-peer-urls=https://127.0.0.1:2380
+        - --initial-advertise-peer-urls=https://127.0.0.1:2380
+        - --initial-cluster=default=https://127.0.0.1:2380
+        - --auto-compaction-retention=0
+        - --cert-file=/etc/kubernetes/ca.crt
+        - --key-file=/etc/kubernetes/ca.key
+        - --trusted-ca-file=/etc/kubernetes/ca.crt
+        - --peer-cert-file=/etc/kubernetes/ca.crt
+        - --peer-key-file=/etc/kubernetes/ca.key
+        - --peer-trusted-ca-file=/etc/kubernetes/ca.crt
+        - --client-cert-auth=true
+        - --peer-client-cert-auth=true
+      volumeMounts:
+        - name: etc-kubernetes
+          mountPath: /etc/kubernetes
+          readOnly: true
+        - name: etcd-data
+          mountPath: /var/lib/etcd
+    # - name: etcd-healthcheck
+    #   image: alpine/curl:latest
+    #   command:
+    #     - /bin/sh
+    #     - -c
+    #     - |
+    #       while true; do
+    #         curl -sk --cert /etc/kubernetes/ca.crt --key /etc/kubernetes/ca.key https://127.0.0.1:2379/health 2>&1 || true
+    #         sleep 5
+    #       done
+    #   volumeMounts:
+    #     - name: etc-kubernetes
+    #       mountPath: /etc/kubernetes
+    #       readOnly: true
+    - name: api
+      image: registry.k8s.io/kube-apiserver
+      command:
+        - kube-apiserver
+        - --bind-address=0.0.0.0
+        - --advertise-address=127.0.0.1
+        - --external-hostname=localhost
+        - --etcd-servers=https://127.0.0.1:2379
+        - --etcd-cafile=/etc/kubernetes/ca.crt
+        - --etcd-certfile=/etc/kubernetes/ca.crt
+        - --etcd-keyfile=/etc/kubernetes/ca.key
+        - --service-account-issuer=https://kubernetes.default.svc.cluster.local
+        - --allow-privileged=true
+        - --authorization-mode=Node,RBAC
+        - --enable-bootstrap-token-auth
+        - --audit-log-path=-
+        - --audit-log-format=legacy
+        - --disable-http2-serving
+        - --endpoint-reconciler-type=none
+        - --watch-cache=false
+        - --shutdown-delay-duration=0s
+        - --tls-cert-file=/etc/kubernetes/ca.crt
+        - --tls-private-key-file=/etc/kubernetes/ca.key
+        - --client-ca-file=/etc/kubernetes/ca.crt
+        - --service-account-key-file=/etc/kubernetes/ca.crt
+        - --service-account-signing-key-file=/etc/kubernetes/ca.key
+        - --kubelet-client-certificate=/etc/kubernetes/ca.crt
+        - --kubelet-client-key=/etc/kubernetes/ca.key
+      volumeMounts:
+        - name: etc-kubernetes
+          mountPath: /etc/kubernetes
+          readOnly: true
+    - name: controller
+      image: registry.k8s.io/kube-controller-manager
+      command:
+        - kube-controller-manager
+        - --kubeconfig=/etc/kubernetes/kubeconfig
+        - --authentication-kubeconfig=/etc/kubernetes/kubeconfig
+        - --authorization-kubeconfig=/etc/kubernetes/kubeconfig
+        - --authentication-skip-lookup=true
+        - --bind-address=0.0.0.0
+        - --leader-elect=false
+        - --controller-shutdown-timeout=0
+        - --use-service-account-credentials=false
+        - --tls-cert-file=/etc/kubernetes/ca.crt
+        - --tls-private-key-file=/etc/kubernetes/ca.key
+        - --client-ca-file=/etc/kubernetes/ca.crt
+        - --service-account-private-key-file=/etc/kubernetes/ca.key
+        - --root-ca-file=/etc/kubernetes/ca.crt
+        - --cluster-signing-cert-file=/etc/kubernetes/ca.crt
+        - --cluster-signing-key-file=/etc/kubernetes/ca.key
+      volumeMounts:
+        - name: etc-kubernetes
+          mountPath: /etc/kubernetes
+          readOnly: true
+    - name: scheduler
+      image: registry.k8s.io/kube-scheduler
+      command:
+        - kube-scheduler
+        - --kubeconfig=/etc/kubernetes/kubeconfig
+        - --authentication-kubeconfig=/etc/kubernetes/kubeconfig
+        - --authorization-kubeconfig=/etc/kubernetes/kubeconfig
+        - --authentication-skip-lookup=true
+        - --bind-address=0.0.0.0
+        - --leader-elect=false
+        - --tls-cert-file=/etc/kubernetes/ca.crt
+        - --tls-private-key-file=/etc/kubernetes/ca.key
+        - --client-ca-file=/etc/kubernetes/ca.crt
+      volumeMounts:
+        - name: etc-kubernetes
+          mountPath: /etc/kubernetes
+          readOnly: true
+  volumes:
+    - name: etc-kubernetes
+      hostPath:
+        path: /etc/kubernetes
+        type: Directory
+    - name: etcd-data
+      emptyDir: {}

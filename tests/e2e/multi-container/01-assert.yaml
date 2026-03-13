@@ -1,0 +1,5 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # reader container can see data written by writer container via shared volume
+  - script: test "$(kubectl exec --namespace $NAMESPACE multi-test -c reader -- cat /shared/data)" = "shared-data"

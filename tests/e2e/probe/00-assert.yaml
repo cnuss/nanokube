@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-liveness
+status:
+  phase: Running
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-readiness
+status:
+  phase: Running
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-startup
+status:
+  phase: Running

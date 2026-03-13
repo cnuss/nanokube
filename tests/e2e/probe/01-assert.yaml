@@ -1,0 +1,15 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  # liveness probe passing — container should not have restarted
+  - script: |
+      restarts=$(kubectl get pod --namespace $NAMESPACE probe-liveness -o jsonpath='{.status.containerStatuses[0].restartCount}')
+      test "$restarts" -eq 0
+  # readiness probe passing — pod should be Ready
+  - script: |
+      ready=$(kubectl get pod --namespace $NAMESPACE probe-readiness -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+      test "$ready" = "True"
+  # startup probe passing — container should be started
+  - script: |
+      started=$(kubectl get pod --namespace $NAMESPACE probe-startup -o jsonpath='{.status.containerStatuses[0].started}')
+      test "$started" = "true"

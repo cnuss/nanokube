@@ -1,0 +1,6 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+commands:
+  - script: test "$(kubectl exec --namespace $NAMESPACE env-test -- printenv PLAIN_VAR)" = "plain-value"
+  - script: test "$(kubectl exec --namespace $NAMESPACE env-test -- printenv CM_VAR)" = "hello"
+  - script: test "$(kubectl exec --namespace $NAMESPACE env-test -- printenv SECRET_VAR)" = "s3cret"

@@ -132,7 +132,10 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 		}
 		return nil
 	}); err != nil {
-		// Non-fatal — fall back to empty
+		return nil, fmt.Errorf("failed to probe nameservers: %w", err)
+	}
+	if len(h.Nameservers) == 0 {
+		return nil, fmt.Errorf("failed to probe nameservers: no nameserver lines in /etc/resolv.conf")
 	}
 
 	if err := run([]string{"cat", "/etc/os-release"}, func(out string) error {

@@ -58,6 +58,7 @@ func (c *certs) generate() {
 			IsCA:                  true,
 			DNSNames: []string{
 				c.Hostname,
+				"localhost",
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
