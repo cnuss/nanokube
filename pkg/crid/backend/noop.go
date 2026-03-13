@@ -26,7 +26,7 @@ var _ Backend = &NoopBackend{}
 
 func (n *NoopBackend) Name() Runtime            { return "noop" }
 func (n *NoopBackend) Context() context.Context { return context.Background() }
-func (n *NoopBackend) Start(context.Context, record.EventBroadcaster, string, string) error {
+func (n *NoopBackend) Start(context.Context, Hosts, record.EventBroadcaster, string, string) error {
 	return fmt.Errorf("no backend")
 }
 func (n *NoopBackend) Stop(context.Context) error                                { return nil }
@@ -47,8 +47,7 @@ func (n *NoopBackend) Subscribe() <-chan Event                                  
 func (n *NoopBackend) CSI() *CSI                                                 { return nil }
 func (n *NoopBackend) StorageClass() *storagev1ac.StorageClassApplyConfiguration { return nil }
 func (n *NoopBackend) Cleanup(context.Context) error                             { return nil }
-func (n *NoopBackend) ExtraHosts(Network) []string                               { return nil }
-func (n *NoopBackend) SetExtraHosts(func(Network) []string)                      {}
+func (n *NoopBackend) Hosts() Hosts                                              { return nil }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

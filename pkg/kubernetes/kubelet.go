@@ -92,7 +92,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	config.FeatureGates = k.config.FeatureGates
 
 	// Create k8s clients from kubeconfig
-	kubeconfigPath := k.config.KubeconfigPath()
+	kubeconfigPath := k.config.Files().Kubeconfig
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("kubelet kubeconfig: %w", err)

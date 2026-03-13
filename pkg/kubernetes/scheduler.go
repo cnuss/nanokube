@@ -34,9 +34,9 @@ func (s *Scheduler) Start(ctx context.Context) (component.Started, error) {
 	s.cmd.SetContext(ctx)
 
 	args := append(s.config.KubeArgs(),
-		"--kubeconfig="+s.config.KubeconfigPath(),
-		"--authentication-kubeconfig="+s.config.KubeconfigPath(),
-		"--authorization-kubeconfig="+s.config.KubeconfigPath(),
+		"--kubeconfig="+s.config.Files().Kubeconfig,
+		"--authentication-kubeconfig="+s.config.Files().Kubeconfig,
+		"--authorization-kubeconfig="+s.config.Files().Kubeconfig,
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",

@@ -1,4 +1,4 @@
-package hosts
+package crid
 
 import (
 	"context"
@@ -11,22 +11,25 @@ import (
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
-type Hosts struct {
+type hostsImpl struct {
 	ctx      context.Context
 	hostname string
 	backends *map[backend.Runtime]backend.Backend
 	addrs    map[string][]string
 }
 
-func NewHosts(ctx context.Context, backends *map[backend.Runtime]backend.Backend) (Hosts, error) {
+func newHosts(ctx context.Context, backends *map[backend.Runtime]backend.Backend) (backend.Hosts, error) {
+	if backends == nil {
+		return nil, fmt.Errorf("backends must not be nil")
+	}
 	addrs := make(map[string][]string)
 	hostname, err := os.Hostname()
 	if err != nil {
-		return Hosts{}, fmt.Errorf("failed to get hostname: %w", err)
+		return nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return Hosts{}, fmt.Errorf("failed to get network interfaces: %w", err)
+		return nil, fmt.Errorf("failed to get network interfaces: %w", err)
 	}
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagRunning == 0 || iface.Flags&net.FlagLoopback != 0 {
@@ -46,7 +49,7 @@ func NewHosts(ctx context.Context, backends *map[backend.Runtime]backend.Backend
 			}
 		}
 	}
-	return Hosts{
+	return &hostsImpl{
 		ctx:      ctx,
 		hostname: hostname,
 		backends: backends,
@@ -54,7 +57,11 @@ func NewHosts(ctx context.Context, backends *map[backend.Runtime]backend.Backend
 	}, nil
 }
 
-func (h *Hosts) ExtraHosts(network backend.Network) []string {
+func (h *hostsImpl) Hostname() string {
+	return h.hostname
+}
+
+func (h *hostsImpl) ExtraHosts(network backend.Network) []string {
 	var extraHosts []string
 	for _, ips := range h.addrs {
 		for _, ip := range ips {

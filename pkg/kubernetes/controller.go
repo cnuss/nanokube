@@ -35,9 +35,9 @@ func (c *ControllerManager) Start(ctx context.Context) (component.Started, error
 	c.cmd.SetContext(ctx)
 
 	args := append(c.config.KubeArgs(),
-		"--kubeconfig="+c.config.KubeconfigPath(),
-		"--authentication-kubeconfig="+c.config.KubeconfigPath(),
-		"--authorization-kubeconfig="+c.config.KubeconfigPath(),
+		"--kubeconfig="+c.config.Files().Kubeconfig,
+		"--authentication-kubeconfig="+c.config.Files().Kubeconfig,
+		"--authorization-kubeconfig="+c.config.Files().Kubeconfig,
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",

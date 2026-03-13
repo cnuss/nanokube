@@ -34,9 +34,7 @@ var rootCmd = &cobra.Command{
 		log.Debug().Msg("debug logging enabled")
 
 		cfg := config.NewConfig(options)
-		if err := cfg.SetCRID(crid.NewCRID(sigCtx, cfg.Name, cfg.DataDir, options.Clean)); err != nil {
-			return fmt.Errorf("failed to initialize CRID: %w", err)
-		}
+		cfg.SetCRID(crid.NewCRID(sigCtx, cfg.Name, cfg.DataDir, options.Clean))
 
 		cfg.Components = append(cfg.Components, cfg.CRID)
 		// cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))

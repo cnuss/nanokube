@@ -3,12 +3,12 @@ package crid
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/docker"
-	"github.com/cnuss/nanokube/pkg/crid/hosts"
 	"github.com/cnuss/nanokube/pkg/crid/podman"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -23,11 +23,15 @@ type CRID struct {
 	stop   func() bool
 	log    component.Logger
 
-	backends        map[backend.Runtime]backend.Backend
-	hosts           hosts.Hosts
 	broadcaster     record.EventBroadcaster
 	pluginsDir      string
 	registrationDir string
+
+	backends     map[backend.Runtime]backend.Backend
+	backendsOnce sync.Once
+
+	hosts     backend.Hosts
+	hostsOnce sync.Once
 }
 
 func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
@@ -43,13 +47,10 @@ func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 		}
 	}
 
-	h, err := hosts.NewHosts(ctx, &backends)
+	h, err := newHosts(ctx, &backends)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to initialize hosts")
 		return nil
-	}
-	for _, b := range backends {
-		b.SetExtraHosts(h.ExtraHosts)
 	}
 
 	crid := &CRID{ctx: ctx, log: log, backends: backends, hosts: h}
@@ -73,7 +74,7 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 
 	for name, backend := range c.backends {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
-		if err := backend.Start(ctx, c.broadcaster, c.pluginsDir, c.registrationDir); err != nil {
+		if err := backend.Start(ctx, c.hosts, c.broadcaster, c.pluginsDir, c.registrationDir); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}
@@ -176,6 +177,10 @@ func (c *CRID) Backend(runtime backend.Runtime) backend.Backend {
 	}
 	c.log.Warn().Str("runtime", string(runtime)).Msg("requested backend not found, using noop")
 	return &backend.NoopBackend{}
+}
+
+func (c *CRID) Hosts() backend.Hosts {
+	return c.hosts
 }
 
 func (c *CRID) DefaultBackend() backend.Backend {

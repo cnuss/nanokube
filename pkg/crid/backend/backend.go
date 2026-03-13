@@ -44,6 +44,11 @@ const (
 	NetworkBridge Network = "Bridge"
 )
 
+type Hosts interface {
+	Hostname() string
+	ExtraHosts(network Network) []string
+}
+
 // EventResource classifies the source of an event.
 type EventResource string
 
@@ -128,7 +133,7 @@ type Backend interface {
 	Name() Runtime
 	Context() context.Context
 
-	Start(ctx context.Context, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error
+	Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error
 	Stop(ctx context.Context) error
 
 	Streaming() streaming.Server
@@ -152,9 +157,8 @@ type Backend interface {
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)
 
-	// ExtraHosts returns hostname:ip entries to inject into container /etc/hosts.
-	ExtraHosts(network Network) []string
-	SetExtraHosts(fn func(Network) []string)
+	// Hosts returns the host provider for /etc/hosts injection.
+	Hosts() Hosts
 
 	// Subscribe returns a channel that receives all container lifecycle events.
 	// Each subscriber gets its own channel; closing the context unsubscribes.
@@ -196,7 +200,7 @@ type BackendImpl struct {
 	csi           *CSI
 
 	// hosts
-	extraHosts func(Network) []string
+	hosts Hosts
 
 	// events
 	broadcaster record.EventBroadcaster
@@ -226,9 +230,10 @@ func (b *BackendImpl) Context() context.Context {
 	return b.ctx
 }
 
-func (b *BackendImpl) Start(ctx context.Context, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error {
+func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
 	b.ctx = ctx
+	b.hosts = hosts
 	b.broadcaster = broadcaster
 
 	os.MkdirAll(b.DataDir(), 0o755)
@@ -485,7 +490,7 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 	defer b.mu.Unlock()
 	if b.hostInfo == nil {
 		var err error
-		b.hostInfo, err = NewHostInfo(b.Driver)
+		b.hostInfo, err = NewHostInfo(b.Driver, b.hosts)
 		if err != nil {
 			b.log.Warn().Err(err).Msg("failed to probe host info")
 			return nil, err
@@ -495,15 +500,8 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 	return b.hostInfo, nil
 }
 
-func (b *BackendImpl) ExtraHosts(network Network) []string {
-	if b.extraHosts != nil {
-		return b.extraHosts(network)
-	}
-	return nil
-}
-
-func (b *BackendImpl) SetExtraHosts(fn func(Network) []string) {
-	b.extraHosts = fn
+func (b *BackendImpl) Hosts() Hosts {
+	return b.hosts
 }
 
 func (b *BackendImpl) socket() string {

@@ -2,7 +2,6 @@ package backend
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,11 +66,12 @@ type MemoryInfo struct {
 
 // NewHostInfo probes immutable host information (hostname, cpuinfo) in parallel.
 // The returned HostInfo can fetch dynamic data (meminfo) on demand via MemInfo().
-func NewHostInfo(driver Driver) (*HostInfo, error) {
+func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	h := &HostInfo{
-		Domain:  driver.Domain(),
-		CpuInfo: []CpuInfo{},
-		driver:  driver,
+		Domain:   driver.Domain(),
+		Hostname: hosts.Hostname(),
+		CpuInfo:  []CpuInfo{},
+		driver:   driver,
 	}
 
 	run := func(cmd []string, cb func(string) error) error {
@@ -80,12 +80,6 @@ func NewHostInfo(driver Driver) (*HostInfo, error) {
 			"/etc/os-release:/etc/os-release:ro",
 			"/sys:/host/sys:ro",
 		}, true, cb)
-	}
-
-	if hostname, err := os.Hostname(); err == nil {
-		h.WithHostname(hostname)
-	} else {
-		return nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
 
 	if err := run([]string{"cat", "/proc/cpuinfo"}, func(out string) error {
@@ -269,13 +263,6 @@ func (h *HostInfo) CpuUsage() (uint64, error) {
 		return fmt.Errorf("/proc/stat: no cpu line found")
 	})
 	return totalNs, err
-}
-
-func (h *HostInfo) WithHostname(hostname string) *HostInfo {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.Hostname = hostname
-	return h
 }
 
 func (h *HostInfo) WithMachineID(machineID string) *HostInfo {

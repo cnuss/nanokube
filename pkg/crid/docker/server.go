@@ -712,9 +712,14 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 	}
 
+	var extraHosts []string
+	if h := s.backend.parent.Hosts(); h != nil {
+		extraHosts = h.ExtraHosts(networkMode)
+	}
+
 	hostConfig := &container.HostConfig{
 		IpcMode:    container.IpcMode("shareable"),
-		ExtraHosts: s.backend.parent.ExtraHosts(networkMode),
+		ExtraHosts: extraHosts,
 	}
 
 	// DNS

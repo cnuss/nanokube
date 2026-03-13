@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	versionutil "k8s.io/component-base/version"
 	sigyaml "sigs.k8s.io/yaml"
 )
@@ -33,9 +35,59 @@ func NewManifests(config *pkgconfig.Config) *Manifests {
 	}
 }
 
+func (m *Manifests) kubeconfig() clientcmdapi.Config {
+	return clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			m.config.Name: {
+				Server:                   "https://127.0.0.1:6443",
+				CertificateAuthorityData: m.config.Certs().Cert(),
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			m.config.Name: {
+				ClientCertificateData: m.config.Certs().Cert(),
+				ClientKeyData:         m.config.Certs().Key(),
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			m.config.Name: {
+				Cluster:  m.config.Name,
+				AuthInfo: m.config.Name,
+			},
+		},
+		CurrentContext: m.config.Name,
+	}
+}
+
+// writeKubeconfig writes the cluster kubeconfig to the data directory
+// and merges it into ~/.kube/config so kubectl works without --kubeconfig.
+func (m *Manifests) writeKubeconfig() {
+	config := m.kubeconfig()
+	kubeconfigPath := m.config.Files().Kubeconfig
+
+	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
+		clientcmd.WriteToFile(config, kubeconfigPath)
+	}
+
+	// Merge into ~/.kube/config
+	dst, err := clientcmd.LoadFromFile(m.config.Files().RecommendedHomeFile)
+	if err != nil {
+		dst = clientcmdapi.NewConfig()
+	}
+	dst.Clusters[m.config.Name] = config.Clusters[m.config.Name]
+	dst.AuthInfos[m.config.Name] = config.AuthInfos[m.config.Name]
+	dst.Contexts[m.config.Name] = config.Contexts[m.config.Name]
+	dst.CurrentContext = m.config.Name
+	if err := clientcmd.WriteToFile(*dst, m.config.Files().RecommendedHomeFile); err != nil {
+		manifestsLog.Warn().Err(err).Msg("failed to write ~/.kube/config")
+	}
+}
+
 func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	version := strings.SplitN(versionutil.Get().GitVersion, "-", 2)[0]
 	manifestsLog.Info().Str("version", version).Msg("starting manifests")
+
+	m.writeKubeconfig()
 
 	pod := &v1.Pod{}
 	if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(kubeSystemManifest), 4096).Decode(pod); err != nil {
