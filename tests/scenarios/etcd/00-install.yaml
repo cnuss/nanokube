@@ -23,6 +23,8 @@ spec:
     - --listen-client-urls=http://0.0.0.0:12379
     - --advertise-client-urls=http://127.0.0.1:12379
     - --listen-peer-urls=http://0.0.0.0:12380
+    - --initial-advertise-peer-urls=http://127.0.0.1:12380
+    - --initial-cluster=default=http://127.0.0.1:12380
     volumeMounts:
     - name: data
       mountPath: /var/lib/etcd
