@@ -47,6 +47,8 @@ func (n *NoopBackend) Subscribe() <-chan Event                                  
 func (n *NoopBackend) CSI() *CSI                                                 { return nil }
 func (n *NoopBackend) StorageClass() *storagev1ac.StorageClassApplyConfiguration { return nil }
 func (n *NoopBackend) Cleanup(context.Context) error                             { return nil }
+func (n *NoopBackend) ExtraHosts(Network) []string                               { return nil }
+func (n *NoopBackend) SetExtraHosts(func(Network) []string)                      {}
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

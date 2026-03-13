@@ -37,12 +37,14 @@ type DockerBackend struct {
 	dataDir    string
 	client     *dockerclient.Client
 	server     *Server
+	domain     *string
 	labels     labels.LabelProvider
 	logs       *logWriter
 	Into       DockerInto
 	Mounts     backend.MountLookup
 	parent     backend.Backend
 	serverOnce sync.Once
+	domainOnce sync.Once
 }
 
 var _ backend.Driver = &DockerBackend{}
@@ -148,6 +150,19 @@ func (b *DockerBackend) init() {
 
 func (b *DockerBackend) Labels() labels.LabelProvider {
 	return b.labels
+}
+
+func (b *DockerBackend) Domain() string {
+	b.domainOnce.Do(func() {
+		domain := "docker.internal"
+		if info, err := b.client.Info(b.ctx); err == nil && info.NoProxy != "" {
+			if parts := strings.SplitN(info.NoProxy, ".", 2); len(parts) == 2 {
+				domain = parts[1]
+			}
+		}
+		b.domain = &domain
+	})
+	return *b.domain
 }
 
 // StartLogs inspects the container for a CRI log path label and starts

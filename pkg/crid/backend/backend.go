@@ -37,6 +37,13 @@ const (
 	Podman Runtime = "podman"
 )
 
+type Network string
+
+const (
+	NetworkHost   Network = "Host"
+	NetworkBridge Network = "Bridge"
+)
+
 // EventResource classifies the source of an event.
 type EventResource string
 
@@ -105,6 +112,7 @@ type Driver interface {
 	Name() Runtime
 	DataDir() string
 	Labels() labels.LabelProvider
+	Domain() string
 
 	ImageServer() runtimeapi.ImageServiceServer
 	ContainerServer() runtimeapi.RuntimeServiceServer
@@ -144,6 +152,10 @@ type Backend interface {
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)
 
+	// ExtraHosts returns hostname:ip entries to inject into container /etc/hosts.
+	ExtraHosts(network Network) []string
+	SetExtraHosts(fn func(Network) []string)
+
 	// Subscribe returns a channel that receives all container lifecycle events.
 	// Each subscriber gets its own channel; closing the context unsubscribes.
 	Subscribe() <-chan Event
@@ -182,6 +194,9 @@ type BackendImpl struct {
 	traceProvider tp.TracerProvider
 	hostInfo      *HostInfo
 	csi           *CSI
+
+	// hosts
+	extraHosts func(Network) []string
 
 	// events
 	broadcaster record.EventBroadcaster
@@ -478,6 +493,17 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 		b.log.Trace().Any("hostinfo", b.hostInfo).Msg("host info probed successfully")
 	}
 	return b.hostInfo, nil
+}
+
+func (b *BackendImpl) ExtraHosts(network Network) []string {
+	if b.extraHosts != nil {
+		return b.extraHosts(network)
+	}
+	return nil
+}
+
+func (b *BackendImpl) SetExtraHosts(fn func(Network) []string) {
+	b.extraHosts = fn
 }
 
 func (b *BackendImpl) socket() string {

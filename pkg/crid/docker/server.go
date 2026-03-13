@@ -686,7 +686,6 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-
 	config := req.GetConfig()
 	meta := config.GetMetadata()
 
@@ -706,8 +705,16 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		Labels:   labels,
 	}
 
+	networkMode := backend.NetworkBridge
+	if linux := config.GetLinux(); linux != nil {
+		if ns := linux.GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
+			networkMode = backend.NetworkHost
+		}
+	}
+
 	hostConfig := &container.HostConfig{
-		IpcMode: container.IpcMode("shareable"),
+		IpcMode:    container.IpcMode("shareable"),
+		ExtraHosts: s.backend.parent.ExtraHosts(networkMode),
 	}
 
 	// DNS

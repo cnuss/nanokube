@@ -11,6 +11,7 @@ import (
 )
 
 type HostInfo struct {
+	Domain        string
 	Hostname      string
 	MachineID     string
 	SystemUUID    string
@@ -68,6 +69,7 @@ type MemoryInfo struct {
 // The returned HostInfo can fetch dynamic data (meminfo) on demand via MemInfo().
 func NewHostInfo(driver Driver) (*HostInfo, error) {
 	h := &HostInfo{
+		Domain:  driver.Domain(),
 		CpuInfo: []CpuInfo{},
 		driver:  driver,
 	}

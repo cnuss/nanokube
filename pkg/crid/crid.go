@@ -8,6 +8,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/docker"
+	"github.com/cnuss/nanokube/pkg/crid/hosts"
 	"github.com/cnuss/nanokube/pkg/crid/podman"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -23,12 +24,11 @@ type CRID struct {
 	log    component.Logger
 
 	backends        map[backend.Runtime]backend.Backend
+	hosts           hosts.Hosts
 	broadcaster     record.EventBroadcaster
 	pluginsDir      string
 	registrationDir string
 }
-
-var _ component.Component = &CRID{}
 
 func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 	log := component.NewLogger("crid")
@@ -43,7 +43,16 @@ func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 		}
 	}
 
-	crid := &CRID{ctx: ctx, log: log, backends: backends}
+	h, err := hosts.NewHosts(ctx, &backends)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to initialize hosts")
+		return nil
+	}
+	for _, b := range backends {
+		b.SetExtraHosts(h.ExtraHosts)
+	}
+
+	crid := &CRID{ctx: ctx, log: log, backends: backends, hosts: h}
 	return crid
 }
 
@@ -190,3 +199,5 @@ func detectBackends(ctx context.Context, name, dataDir string) map[backend.Runti
 
 	return backends
 }
+
+var _ component.Component = &CRID{}
