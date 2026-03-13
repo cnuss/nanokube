@@ -4,7 +4,6 @@ metadata:
   name: host-net-test
 spec:
   hostNetwork: true
-  dnsPolicy: Default
   containers:
   - name: busybox
     image: busybox:latest
