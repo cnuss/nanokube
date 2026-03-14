@@ -80,22 +80,24 @@ func (c *CRID) Stop() component.Stopped {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Remove sandboxes that are not running
-		if stopped, err := c.Backend(backend.Docker).Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
-			for _, sb := range stopped {
-				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
-				if err := c.Backend(backend.Docker).Containers().RemovePodSandbox(ctx, sb.Id); err != nil {
-					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
+		containers := c.Backend(backend.Docker).Containers()
+
+		// Stop running sandboxes via CRI
+		if running, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}); err == nil {
+			for _, sb := range running {
+				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
+				if err := containers.StopPodSandbox(ctx, sb.Id); err != nil {
+					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
 				}
 			}
 		}
 
-		// Stop sandboxes that are still running
-		if running, err := c.Backend(backend.Docker).Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}); err == nil {
-			for _, sb := range running {
-				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
-				if err := c.Backend(backend.Docker).Containers().StopPodSandbox(ctx, sb.Id); err != nil {
-					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
+		// Remove stopped sandboxes via CRI
+		if stopped, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
+			for _, sb := range stopped {
+				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
+				if err := containers.RemovePodSandbox(ctx, sb.Id); err != nil {
+					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
 				}
 			}
 		}
@@ -104,6 +106,8 @@ func (c *CRID) Stop() component.Stopped {
 			c.broadcaster.Shutdown()
 		}
 
+		// Stop backends — shuts down gRPC/CRI, preventing the kubelet
+		// from creating new containers during final cleanup.
 		for name, backend := range c.Backends() {
 			c.log.Info().Str("backend", string(name)).Msg("stopping backend")
 			if err := backend.Stop(ctx); err != nil {
@@ -111,6 +115,14 @@ func (c *CRID) Stop() component.Stopped {
 				continue
 			}
 			c.log.Info().Str("backend", string(name)).Msg("backend stopped")
+		}
+
+		// Final cleanup via Docker API — catches containers created
+		// by the kubelet during the CRI shutdown above.
+		for name, b := range c.Backends() {
+			if err := b.Cleanup(ctx); err != nil {
+				c.log.Error().Str("backend", string(name)).Err(err).Msg("cleanup failed")
+			}
 		}
 
 		if c.stop != nil {
