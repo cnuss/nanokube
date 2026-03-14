@@ -16,7 +16,7 @@ spec:
         - name: etc-kubernetes
           mountPath: /etc/kubernetes
           readOnly: true
-        - name: etcd-data
+        - name: var-lib-etcd
           mountPath: /var/lib/etcd
     - name: etcd
       image: quay.io/coreos/etcd:v3.6.6
@@ -41,7 +41,7 @@ spec:
         - name: etc-kubernetes
           mountPath: /etc/kubernetes
           readOnly: true
-        - name: etcd-data
+        - name: var-lib-etcd
           mountPath: /var/lib/etcd
     - name: api
       image: registry.k8s.io/kube-apiserver
@@ -122,5 +122,7 @@ spec:
       hostPath:
         path: /etc/kubernetes
         type: Directory
-    - name: etcd-data
-      emptyDir: {}
+    - name: var-lib-etcd
+      hostPath:
+        path: /var/lib/etcd
+        type: DirectoryOrCreate

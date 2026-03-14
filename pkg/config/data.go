@@ -10,6 +10,7 @@ import (
 type DataDirs struct {
 	Root               string
 	RecommendedHomeDir string
+	Etcd               string
 	Manifests          string
 	Plugins            string
 	PluginsRegistry    string
@@ -22,6 +23,7 @@ func NewDataDirs(dataDir string) DataDirs {
 	dirs := DataDirs{
 		Root:               dataDir,
 		RecommendedHomeDir: filepath.Dir(clientcmd.RecommendedHomeFile),
+		Etcd:               filepath.Join(dataDir, "etcd"),
 		Manifests:          filepath.Join(dataDir, "manifests"),
 		Plugins:            filepath.Join(dataDir, "plugins"),
 		PluginsRegistry:    filepath.Join(dataDir, "plugins_registry"),

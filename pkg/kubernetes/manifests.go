@@ -102,8 +102,14 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	}
 
 	for i, vol := range pod.Spec.Volumes {
-		if vol.Name == "etc-kubernetes" && vol.HostPath != nil {
+		if vol.HostPath == nil {
+			continue
+		}
+		switch vol.Name {
+		case "etc-kubernetes":
 			pod.Spec.Volumes[i].HostPath.Path = m.crid.DataDir()
+		case "var-lib-etcd":
+			pod.Spec.Volumes[i].HostPath.Path = m.crid.DataDirs().Etcd
 		}
 	}
 
