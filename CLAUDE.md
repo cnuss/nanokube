@@ -23,7 +23,6 @@ make critest                     # CRI conformance tests (45/45 passing)
 make critest WHAT="port mapping" # single critest by focus
 make e2e                         # kuttl e2e suite (25 tests, all passing)
 make e2e WHAT=exec               # single e2e test by name
-make scenarios                   # composite kuttl tests (multiple functionalities)
 ```
 
 E2E test dirs: `tests/e2e/` (25 dirs: pod, exec, dns, deployment, cronjob, job, pvc, configmap, secret, emptydir, hostpath, downwardapi, projected, env, probe, lifecycle, logs, init-container, multi-container, resource-limits, restart, node, host-network, host-pid, host-ipc)
@@ -64,7 +63,6 @@ All tests are idempotent — `make critest` and `make e2e` can each be run multi
 | `make test` | Run Go unit tests |
 | `make e2e` | Build + run kuttl e2e tests |
 | `make critest` | CRI conformance tests |
-| `make scenarios` | Kuttl scenario tests |
 | `make fmt` | Format Go code |
 | `make run` | Format, build, and run |
 

@@ -1,4 +1,4 @@
-.PHONY: build clean test submodules run fmt patch-save critest init e2e scenarios
+.PHONY: build clean test submodules run fmt patch-save critest init e2e
 
 CRITEST_VERSION := v1.35.0
 
@@ -73,11 +73,6 @@ e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
 		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
-
-scenarios: build
-	$(call run-nanokube,,\
-		kubectl get nodes >/dev/null 2>&1,\
-		kubectl kuttl test --config tests/kuttl-scenarios.yaml $(if $(WHAT),--test $(WHAT)))
 
 # TODO unhardcode docker
 critest: build
