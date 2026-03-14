@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/cnuss/nanokube/pkg/crid/labels"
+	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -27,13 +28,15 @@ var _ Backend = &NoopBackend{}
 
 func (n *NoopBackend) Name() Runtime            { return "noop" }
 func (n *NoopBackend) Context() context.Context { return context.Background() }
-func (n *NoopBackend) Start(context.Context, Hosts, record.EventBroadcaster, string, string) error {
+func (n *NoopBackend) Start(context.Context, Hosts, record.EventBroadcaster, string, string, bool) error {
 	return fmt.Errorf("no backend")
 }
 func (n *NoopBackend) Stop(context.Context) error                                  { return nil }
+func (n *NoopBackend) clean() error                                                { return nil }
 func (n *NoopBackend) Labels() labels.LabelProvider                                { return labels.NewLabels("noop") }
 func (n *NoopBackend) Images() internalapi.ImageManagerService                     { return nil }
 func (n *NoopBackend) Containers() internalapi.RuntimeService                      { return nil }
+func (n *NoopBackend) Volumes() csipb.ControllerServer                             { return nil }
 func (n *NoopBackend) ContainerManager() cm.ContainerManager                       { return nil }
 func (n *NoopBackend) Mounter() mount.Interface                                    { return nil }
 func (n *NoopBackend) Cadvisor() cadvisor.Interface                                { return nil }
@@ -45,7 +48,7 @@ func (n *NoopBackend) EventRecorder() record.EventRecorder                      
 func (n *NoopBackend) Prober() prober.Manager                                      { return nil }
 func (n *NoopBackend) Streaming() streaming.Server                                 { return nil }
 func (n *NoopBackend) Subscribe() <-chan Event                                     { return make(chan Event) }
-func (n *NoopBackend) CSI() *CSI                                                   { return nil }
+func (n *NoopBackend) CSI() CSI                                                    { return nil }
 func (n *NoopBackend) StorageClass() *storagev1ac.StorageClassApplyConfiguration   { return nil }
 func (n *NoopBackend) StartProvisioner(context.Context, clientset.Interface, bool) {}
 func (n *NoopBackend) Cleanup(context.Context) error                               { return nil }

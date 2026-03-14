@@ -9,8 +9,8 @@ NanoKube is a single-binary Kubernetes distribution written in Go. It runs etcd,
 ```bash
 make submodules        # init git submodules (required before first build)
 make build             # apply patches + build binary
-make run               # fmt, build, run with --clean
-./nanokube --clean     # run directly
+make run               # fmt, build, run
+./nanokube             # run directly (--clean removes data dir first)
 ```
 
 Build uses `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
@@ -21,12 +21,12 @@ Build uses `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
 make test                        # go test ./... (placeholder, no unit tests yet)
 make critest                     # CRI conformance tests (45/45 passing)
 make critest WHAT="port mapping" # single critest by focus
-make e2e                         # kuttl e2e suite (24 tests, all passing)
+make e2e                         # kuttl e2e suite (25 tests, all passing)
 make e2e WHAT=exec               # single e2e test by name
 make scenarios                   # composite kuttl tests (multiple functionalities)
 ```
 
-E2E test dirs: `tests/e2e/` (24 dirs: pod, exec, dns, deployment, cronjob, job, pvc, configmap, secret, emptydir, hostpath, downwardapi, projected, env, probe, lifecycle, logs, init-container, multi-container, resource-limits, restart, node, host-network, host-pid, host-ipc)
+E2E test dirs: `tests/e2e/` (25 dirs: pod, exec, dns, deployment, cronjob, job, pvc, configmap, secret, emptydir, hostpath, downwardapi, projected, env, probe, lifecycle, logs, init-container, multi-container, resource-limits, restart, node, host-network, host-pid, host-ipc)
 
 ### Development test flow
 
@@ -37,17 +37,19 @@ Run `make critest` first, then `make e2e`. Localize specific failures, fix, repe
 **After `make critest`:**
 - `docker ps -a`: empty (no containers)
 - `docker info`: Containers 0
-- `docker volume ls`: volumes may remain (expected)
 
 **After `make e2e`:**
-- `docker ps -a`: 6 containers (all exited) — 1 sandbox + 5 containers from `pkg/kubernetes/kube-system.yaml`
-- `docker info`: Containers 6, Stopped 6
+- `docker ps -a`: empty (sandbox removal cascades to all containers, freeing ports for restart)
+- `docker info`: Containers 0
+- `docker volume ls`: volumes may remain (expected)
+
+All tests are idempotent — `make critest` and `make e2e` can each be run multiple times in a row without `--clean`.
 
 ### Test environment
 
 - All tests run against Docker only (other runtimes not yet implemented)
 - stdout/stderr is blackholed during test runs; inspect nanokube logs in the temp data directory
-- `--clean` is a convenience flag, not a test requirement — all tests should pass with or without it
+- `--clean` removes the data directory on startup; not needed for test repeatability
 - Increase verbosity (`-v`, `-vv`) or add logging to diagnose failures
 
 ## Key Commands

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -31,8 +32,11 @@ func NewDataDirs(dataDir string) DataDirs {
 		Logs:               filepath.Join(dataDir, "logs"),
 		PKI:                filepath.Join(dataDir, "pki"),
 	}
-	for _, d := range []string{dirs.Manifests, dirs.Plugins, dirs.PluginsRegistry, dirs.Volumes, dirs.Logs, dirs.PKI, filepath.Dir(clientcmd.RecommendedHomeFile)} {
-		os.MkdirAll(d, 0o755)
+	v := reflect.ValueOf(dirs)
+	for i := 0; i < v.NumField(); i++ {
+		if d := v.Field(i).String(); d != "" {
+			os.MkdirAll(d, 0o755)
+		}
 	}
 	return dirs
 }

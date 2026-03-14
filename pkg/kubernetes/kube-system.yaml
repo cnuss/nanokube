@@ -125,4 +125,4 @@ spec:
     - name: var-lib-etcd
       hostPath:
         path: /var/lib/etcd
-        type: DirectoryOrCreate
+        type: Directory
