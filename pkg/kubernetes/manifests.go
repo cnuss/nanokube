@@ -95,6 +95,8 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 		return nil, fmt.Errorf("parse kube-system manifest: %w", err)
 	}
 
+	pod.ObjectMeta.Namespace = m.crid.Name()
+
 	for i, c := range pod.Spec.Containers {
 		if pod.Spec.Containers[i].Name == "api" || pod.Spec.Containers[i].Name == "controller" || pod.Spec.Containers[i].Name == "scheduler" {
 			pod.Spec.Containers[i].Image = c.Image + ":" + version

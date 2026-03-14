@@ -310,25 +310,27 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 
 func (b *BackendImpl) clean() error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("clean")
-
+	containerServer := b.ContainerServer()
+	volumeServer := b.VolumeServer()
 	var errs []error
-	// Remove sandboxes (and thus all containers) via CRI
+
+	// Remove sandboxes (and thus all containers) via CRI Server
 	b.log.Info().Msg("removing sandboxes")
-	if sandboxes, err := b.ContainerServer().ListPodSandbox(b.ctx, nil); err == nil {
+	if sandboxes, err := containerServer.ListPodSandbox(b.ctx, nil); err == nil {
 		for _, sb := range sandboxes.GetItems() {
 			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
-			if err := b.Containers().RemovePodSandbox(b.ctx, sb.Id); err != nil {
+			if _, err := containerServer.RemovePodSandbox(b.ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: sb.Id}); err != nil {
 				errs = append(errs, fmt.Errorf("remove sandbox %s: %w", sb.Id, err))
 			}
 		}
 	}
 
-	// Remove volumes via CSI
+	// Remove volumes via CSI Server
 	b.log.Info().Msg("removing volumes")
-	if volumes, err := b.VolumeServer().ListVolumes(b.ctx, &csipb.ListVolumesRequest{}); err == nil {
+	if volumes, err := volumeServer.ListVolumes(b.ctx, &csipb.ListVolumesRequest{}); err == nil {
 		for _, vol := range volumes.GetEntries() {
 			b.log.Info().Str("id", vol.GetVolume().GetVolumeId()[:min(12, len(vol.GetVolume().GetVolumeId()))]).Msg("removing volume")
-			if _, err := b.VolumeServer().DeleteVolume(b.ctx, &csipb.DeleteVolumeRequest{VolumeId: vol.GetVolume().GetVolumeId()}); err != nil {
+			if _, err := volumeServer.DeleteVolume(b.ctx, &csipb.DeleteVolumeRequest{VolumeId: vol.GetVolume().GetVolumeId()}); err != nil {
 				errs = append(errs, fmt.Errorf("delete volume %s: %w", vol.GetVolume().GetVolumeId(), err))
 			}
 		}
@@ -352,26 +354,26 @@ func (b *BackendImpl) Subscribe() <-chan Event {
 func (b *BackendImpl) Stop(ctx context.Context) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("stopping")
 
-	containers := b.Containers()
+	containers := b.ContainerServer()
 	if containers == nil {
 		return nil
 	}
 
 	// Stop running sandboxes via CRI
-	if running, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}); err == nil {
-		for _, sb := range running {
+	if running, err := containers.ListPodSandbox(ctx, &runtimeapi.ListPodSandboxRequest{Filter: &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}}); err == nil {
+		for _, sb := range running.GetItems() {
 			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
-			if err := containers.StopPodSandbox(ctx, sb.Id); err != nil {
+			if _, err := containers.StopPodSandbox(ctx, &runtimeapi.StopPodSandboxRequest{PodSandboxId: sb.Id}); err != nil {
 				b.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
 			}
 		}
 	}
 
 	// Remove stopped sandboxes via CRI
-	if stopped, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
-		for _, sb := range stopped {
+	if stopped, err := containers.ListPodSandbox(ctx, &runtimeapi.ListPodSandboxRequest{Filter: &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}}); err == nil {
+		for _, sb := range stopped.GetItems() {
 			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
-			if err := containers.RemovePodSandbox(ctx, sb.Id); err != nil {
+			if _, err := containers.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: sb.Id}); err != nil {
 				b.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
 			}
 		}
