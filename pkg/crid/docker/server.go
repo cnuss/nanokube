@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +55,7 @@ func (s *Server) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*ru
 // CheckpointContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CheckpointContainer(ctx context.Context, req *runtimeapi.CheckpointContainerRequest) (*runtimeapi.CheckpointContainerResponse, error) {
 	s.log.Warn().Str("method", "CheckpointContainer").Str("id", req.ContainerId).Msg("not implemented")
-	return nil, wrapErr(fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
 
 // ContainerStats implements [v1.RuntimeServiceServer].
@@ -66,19 +65,19 @@ func (s *Server) ContainerStats(ctx context.Context, req *runtimeapi.ContainerSt
 
 	statusResp, err := s.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{ContainerId: id})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	cs := statusResp.Status
 
 	resp, err := s.backend.client.ContainerStatsOneShot(ctx, id)
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	defer resp.Body.Close()
 
 	var stats container.StatsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
-		return nil, wrapErr(fmt.Errorf("decode docker stats: %w", err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("decode docker stats: %w", err))
 	}
 
 	ts := time.Now().UnixNano()
@@ -112,7 +111,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetContainerId())
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	createdAt := s.backend.Into.CreatedAt(inspect.Created)
@@ -185,7 +184,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	// Inspect sandbox directly to get both CRI labels and internal labels (log directory)
 	sandboxInspect, err := s.backend.client.ContainerInspect(ctx, sandboxID)
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	sandboxLabels := s.backend.labels.ExtractLabels(sandboxInspect.Config.Labels)
 	sandboxAnnotations := s.backend.labels.ExtractAnnotations(sandboxInspect.Config.Labels)
@@ -206,7 +205,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		).
 		Build()
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	// Build Docker config from CRI container config
@@ -271,7 +270,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 
 	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	s.log.Debug().Str("id", resp.ID).Msg("container created")
@@ -294,12 +293,12 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 		AttachStderr: true,
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	resp, err := s.backend.client.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	defer resp.Close()
 
@@ -322,7 +321,7 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 		timedOut = true
 	case err := <-done:
 		if err != nil {
-			return nil, wrapErr(err)
+			return nil, component.WrapErr(s.log, err)
 		}
 	}
 
@@ -445,7 +444,7 @@ func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListCon
 		},
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	var stats []*runtimeapi.ContainerStats
@@ -492,7 +491,7 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 
 	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	selector := req.GetFilter().GetLabelSelector()
@@ -510,7 +509,7 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 // ListMetricDescriptors implements [v1.RuntimeServiceServer].
 func (s *Server) ListMetricDescriptors(context.Context, *runtimeapi.ListMetricDescriptorsRequest) (*runtimeapi.ListMetricDescriptorsResponse, error) {
 	s.log.Warn().Str("method", "ListMetricDescriptors").Msg("not implemented")
-	return nil, wrapErr(fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
@@ -542,7 +541,7 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 
 	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	selector := req.GetFilter().GetLabelSelector()
@@ -559,19 +558,19 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 // ListPodSandboxMetrics implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandboxMetrics(context.Context, *runtimeapi.ListPodSandboxMetricsRequest) (*runtimeapi.ListPodSandboxMetricsResponse, error) {
 	s.log.Warn().Str("method", "ListPodSandboxMetrics").Msg("not implemented")
-	return nil, wrapErr(fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
 
 // ListPodSandboxStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandboxStats(context.Context, *runtimeapi.ListPodSandboxStatsRequest) (*runtimeapi.ListPodSandboxStatsResponse, error) {
 	s.log.Warn().Str("method", "ListPodSandboxStats").Msg("not implemented")
-	return nil, wrapErr(fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
 
 // PodSandboxStats implements [v1.RuntimeServiceServer].
 func (s *Server) PodSandboxStats(context.Context, *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
 	s.log.Warn().Str("method", "PodSandboxStats").Msg("not implemented")
-	return nil, wrapErr(fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
 
 // PodSandboxStatus implements [v1.RuntimeServiceServer].
@@ -580,7 +579,7 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetPodSandboxId())
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	createdAt := s.backend.Into.CreatedAt(inspect.Created)
@@ -646,7 +645,7 @@ func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveCont
 
 	if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
 		if !errdefs.IsNotFound(err) {
-			return nil, wrapErr(err)
+			return nil, component.WrapErr(s.log, err)
 		}
 	}
 
@@ -662,17 +661,17 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	for _, c := range resp.Containers {
 		if _, err := s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: c.Id}); err != nil {
-			return nil, wrapErr(err)
+			return nil, component.WrapErr(s.log, err)
 		}
 	}
 
 	// Remove the sandbox container itself
 	if _, err := s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: id}); err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	return &runtimeapi.RemovePodSandboxResponse{}, nil
@@ -699,7 +698,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		WithLogDirectory(config.GetLogDirectory()).
 		Build()
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	dockerConfig := &container.Config{
@@ -775,7 +774,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	status, _ := s.ImageStatus(ctx, imgReq)
 	if status.Image == nil {
 		if _, err := s.PullImage(ctx, &runtimeapi.PullImageRequest{Image: imgSpec}); err != nil {
-			return nil, wrapErr(err)
+			return nil, component.WrapErr(s.log, err)
 		}
 		status, _ = s.ImageStatus(ctx, imgReq)
 	}
@@ -794,7 +793,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 			time.Sleep(time.Second)
 			return s.RunPodSandbox(ctx, req)
 		}
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	if err := s.backend.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
@@ -802,7 +801,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		if _, err := s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: resp.ID}); err != nil {
 			s.log.Warn().Err(err).Str("id", resp.ID).Msg("failed to remove sandbox container after failed start")
 		}
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	s.log.Debug().Str("id", resp.ID).Msg("sandbox started")
@@ -821,7 +820,7 @@ func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContai
 	id := req.GetContainerId()
 
 	if err := s.backend.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	s.backend.StartLogs(id)
@@ -861,7 +860,7 @@ func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContaine
 	t := int(req.GetTimeout())
 	if err := s.backend.client.ContainerStop(ctx, id, container.StopOptions{Timeout: &t}); err != nil {
 		if !errdefs.IsNotFound(err) {
-			return nil, wrapErr(err)
+			return nil, component.WrapErr(s.log, err)
 		}
 	}
 
@@ -877,17 +876,17 @@ func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSand
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	for _, c := range resp.Containers {
 		if _, err := s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: c.Id, Timeout: 0}); err != nil {
-			return nil, wrapErr(err)
+			return nil, component.WrapErr(s.log, err)
 		}
 	}
 
 	// Stop the sandbox container itself
 	if _, err := s.StopContainer(ctx, &runtimeapi.StopContainerRequest{ContainerId: id, Timeout: 0}); err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	return &runtimeapi.StopPodSandboxResponse{}, nil
@@ -912,7 +911,7 @@ func (s *Server) UpdateContainerResources(ctx context.Context, req *runtimeapi.U
 		},
 	})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	return &runtimeapi.UpdateContainerResourcesResponse{}, nil
 }
@@ -920,7 +919,7 @@ func (s *Server) UpdateContainerResources(ctx context.Context, req *runtimeapi.U
 // UpdatePodSandboxResources implements [v1.RuntimeServiceServer].
 func (s *Server) UpdatePodSandboxResources(context.Context, *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
 	s.log.Warn().Str("method", "UpdatePodSandboxResources").Msg("not implemented")
-	return nil, wrapErr(fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
 
 // UpdateRuntimeConfig implements [v1.RuntimeServiceServer].
@@ -933,7 +932,7 @@ func (s *Server) UpdateRuntimeConfig(ctx context.Context, req *runtimeapi.Update
 func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
 	v, err := s.backend.client.ServerVersion(ctx)
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	return &runtimeapi.VersionResponse{
 		Version:           req.GetVersion(),
@@ -947,11 +946,11 @@ func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*
 func (s *Server) ImageFsInfo(ctx context.Context, req *runtimeapi.ImageFsInfoRequest) (*runtimeapi.ImageFsInfoResponse, error) {
 	info, err := s.backend.client.Info(ctx)
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	resp, err := s.ListImages(ctx, &runtimeapi.ListImagesRequest{})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	var totalSize uint64
 	for _, img := range resp.Images {
@@ -979,7 +978,7 @@ func (s *Server) ImageStatus(ctx context.Context, req *runtimeapi.ImageStatusReq
 		if errdefs.IsNotFound(err) {
 			return &runtimeapi.ImageStatusResponse{}, nil
 		}
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 
 	var repoTags []string
@@ -1019,7 +1018,7 @@ func (s *Server) ImageStatus(ctx context.Context, req *runtimeapi.ImageStatusReq
 func (s *Server) ListImages(ctx context.Context, req *runtimeapi.ListImagesRequest) (*runtimeapi.ListImagesResponse, error) {
 	images, err := s.backend.client.ImageList(ctx, image.ListOptions{})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	result := make([]*runtimeapi.Image, len(images))
 	for i, img := range images {
@@ -1039,17 +1038,17 @@ func (s *Server) PullImage(ctx context.Context, req *runtimeapi.PullImageRequest
 
 	reader, err := s.backend.client.ImagePull(ctx, ref, image.PullOptions{})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	defer reader.Close()
 	io.Copy(io.Discard, reader)
 
 	status, err := s.ImageStatus(ctx, &runtimeapi.ImageStatusRequest{Image: req.GetImage()})
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	if status.Image == nil {
-		return nil, wrapErr(fmt.Errorf("image %s not found after pull", ref))
+		return nil, component.WrapErr(s.log, fmt.Errorf("image %s not found after pull", ref))
 	}
 	return &runtimeapi.PullImageResponse{ImageRef: status.Image.Id}, nil
 }
@@ -1062,7 +1061,7 @@ func (s *Server) RemoveImage(ctx context.Context, req *runtimeapi.RemoveImageReq
 		return &runtimeapi.RemoveImageResponse{}, nil
 	}
 	if err != nil {
-		return nil, wrapErr(err)
+		return nil, component.WrapErr(s.log, err)
 	}
 	return &runtimeapi.RemoveImageResponse{}, nil
 }
@@ -1076,14 +1075,14 @@ func (s *Server) CreateVolume(ctx context.Context, req *csipb.CreateVolumeReques
 
 	volName, volLabels, err := s.backend.labels.NewBuilder(nil).WithVolume(name).Build()
 	if err != nil {
-		return nil, wrapErr(fmt.Errorf("build volume labels: %w", err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("build volume labels: %w", err))
 	}
 	resp, err := s.backend.client.VolumeCreate(ctx, dockervolume.CreateOptions{
 		Name:   volName,
 		Labels: volLabels,
 	})
 	if err != nil {
-		return nil, wrapErr(fmt.Errorf("create volume %q: %w", name, err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("create volume %q: %w", name, err))
 	}
 
 	return &csipb.CreateVolumeResponse{
@@ -1101,10 +1100,10 @@ func (s *Server) DeleteVolume(ctx context.Context, req *csipb.DeleteVolumeReques
 
 	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
 	if err != nil {
-		return nil, wrapErr(fmt.Errorf("build volume name: %w", err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("build volume name: %w", err))
 	}
 	if err := s.backend.client.VolumeRemove(ctx, volName, true); err != nil {
-		return nil, wrapErr(fmt.Errorf("delete volume %q: %w", volumeID, err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("delete volume %q: %w", volumeID, err))
 	}
 
 	return &csipb.DeleteVolumeResponse{}, nil
@@ -1146,7 +1145,7 @@ func (s *Server) ValidateVolumeCapabilities(ctx context.Context, req *csipb.Vali
 	volumeID := req.GetVolumeId()
 	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
 	if err != nil {
-		return nil, wrapErr(fmt.Errorf("build volume name: %w", err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("build volume name: %w", err))
 	}
 	if _, err := s.backend.client.VolumeInspect(ctx, volName); err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume %q not found: %v", volumeID, err)
@@ -1167,7 +1166,7 @@ func (s *Server) ListVolumes(ctx context.Context, _ *csipb.ListVolumesRequest) (
 		),
 	})
 	if err != nil {
-		return nil, wrapErr(fmt.Errorf("list volumes: %w", err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("list volumes: %w", err))
 	}
 	volumeIDKey := s.backend.labels.Prefix("volume-id")
 	entries := make([]*csipb.ListVolumesResponse_Entry, 0, len(resp.Volumes))
@@ -1216,7 +1215,7 @@ func (s *Server) ControllerGetVolume(ctx context.Context, req *csipb.ControllerG
 	volumeID := req.GetVolumeId()
 	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
 	if err != nil {
-		return nil, wrapErr(fmt.Errorf("build volume name: %w", err))
+		return nil, component.WrapErr(s.log, fmt.Errorf("build volume name: %w", err))
 	}
 	v, err := s.backend.client.VolumeInspect(ctx, volName)
 	if err != nil {
@@ -1251,16 +1250,6 @@ func (s *Server) matchLabels(dockerLabels map[string]string, selector map[string
 		return false
 	}
 	return true
-}
-
-// wrapErr wraps an error with the calling function's name.
-func wrapErr(err error) error {
-	pc, _, _, _ := runtime.Caller(1)
-	name := runtime.FuncForPC(pc).Name()
-	if idx := strings.LastIndex(name, "."); idx >= 0 {
-		name = name[idx+1:]
-	}
-	return fmt.Errorf("%s: %w", name, err)
 }
 
 var (

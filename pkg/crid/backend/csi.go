@@ -9,7 +9,6 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/golang/protobuf/ptypes/wrappers"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -70,7 +69,7 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 
 	csiLis, err := net.Listen("unix", c.csiEndpoint)
 	if err != nil {
-		return fmt.Errorf("csi endpoint listen: %w", err)
+		return component.WrapErr(c.log, err)
 	}
 	c.csiSrv = grpc.NewServer()
 	csipb.RegisterIdentityServer(c.csiSrv, c)
@@ -206,7 +205,7 @@ func (c *CSIImpl) GetPluginCapabilities(_ context.Context, _ *csipb.GetPluginCap
 }
 
 func (c *CSIImpl) Probe(_ context.Context, _ *csipb.ProbeRequest) (*csipb.ProbeResponse, error) {
-	return &csipb.ProbeResponse{Ready: &wrappers.BoolValue{Value: true}}, nil
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
 }
 
 // --- csipb.NodeServer ---
@@ -214,7 +213,7 @@ func (c *CSIImpl) Probe(_ context.Context, _ *csipb.ProbeRequest) (*csipb.ProbeR
 func (c *CSIImpl) NodeGetInfo(_ context.Context, _ *csipb.NodeGetInfoRequest) (*csipb.NodeGetInfoResponse, error) {
 	hostInfo, err := c.backend.HostInfo()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get host info: %w", err)
+		return nil, component.WrapErr(c.log, err)
 	}
 	return &csipb.NodeGetInfoResponse{
 		NodeId: hostInfo.Hostname,
@@ -236,7 +235,7 @@ func (c *CSIImpl) NodePublishVolume(_ context.Context, req *csipb.NodePublishVol
 	os.MkdirAll(filepath.Dir(targetPath), 0o755)
 	os.Remove(targetPath)
 	if err := os.Symlink(mountpoint, targetPath); err != nil {
-		return nil, fmt.Errorf("symlink %s -> %s: %w", targetPath, mountpoint, err)
+		return nil, component.WrapErr(c.log, fmt.Errorf("symlink %s -> %s: %w", targetPath, mountpoint, err))
 	}
 
 	return &csipb.NodePublishVolumeResponse{}, nil
@@ -279,22 +278,22 @@ func (c *CSIImpl) StorageClass() storagev1ac.StorageClassApplyConfiguration {
 
 // NodeExpandVolume implements [csi.NodeServer].
 func (c *CSIImpl) NodeExpandVolume(context.Context, *csipb.NodeExpandVolumeRequest) (*csipb.NodeExpandVolumeResponse, error) {
-	panic("unimplemented")
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
 }
 
 // NodeGetVolumeStats implements [csi.NodeServer].
 func (c *CSIImpl) NodeGetVolumeStats(context.Context, *csipb.NodeGetVolumeStatsRequest) (*csipb.NodeGetVolumeStatsResponse, error) {
-	panic("unimplemented")
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
 }
 
 // NodeStageVolume implements [csi.NodeServer].
 func (c *CSIImpl) NodeStageVolume(context.Context, *csipb.NodeStageVolumeRequest) (*csipb.NodeStageVolumeResponse, error) {
-	panic("unimplemented")
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
 }
 
 // NodeUnstageVolume implements [csi.NodeServer].
 func (c *CSIImpl) NodeUnstageVolume(context.Context, *csipb.NodeUnstageVolumeRequest) (*csipb.NodeUnstageVolumeResponse, error) {
-	panic("unimplemented")
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
 }
 
 // --- provisioner.Provisioner ---
@@ -316,7 +315,7 @@ func (c *CSIImpl) Provision(ctx context.Context, opts provisioner.ProvisionOptio
 		},
 	})
 	if err != nil {
-		return nil, provisioner.ProvisioningFinished, fmt.Errorf("CreateVolume: %w", err)
+		return nil, provisioner.ProvisioningFinished, component.WrapErr(c.log, err)
 	}
 
 	vol := resp.GetVolume()
@@ -348,7 +347,7 @@ func (c *CSIImpl) Provision(ctx context.Context, opts provisioner.ProvisionOptio
 func (c *CSIImpl) Delete(ctx context.Context, pv *corev1.PersistentVolume) error {
 	csiSource := pv.Spec.CSI
 	if csiSource == nil {
-		return fmt.Errorf("PV %s has no CSI source", pv.Name)
+		return component.WrapErr(c.log, fmt.Errorf("PV %s has no CSI source", pv.Name))
 	}
 
 	c.log.Info().Str("pv", pv.Name).Str("volume", csiSource.VolumeHandle).Msg("deleting volume")

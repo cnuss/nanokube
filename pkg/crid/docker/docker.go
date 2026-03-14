@@ -318,7 +318,7 @@ func (b *DockerBackend) PortForward(ctx context.Context, podSandboxID string, po
 func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error {
 	reader, err := b.client.ImagePull(b.ctx, img, image.PullOptions{})
 	if err != nil {
-		return wrapErr(err)
+		return component.WrapErr(b.log, err)
 	}
 	io.Copy(io.Discard, reader)
 	reader.Close()
@@ -337,17 +337,17 @@ func (b *DockerBackend) Run(img string, cmd []string, binds []string, host bool,
 		AttachStderr: true,
 	}, hostConfig, nil, nil, "")
 	if err != nil {
-		return wrapErr(err)
+		return component.WrapErr(b.log, err)
 	}
 
 	attach, err := b.client.ContainerAttach(b.ctx, resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
-		return wrapErr(err)
+		return component.WrapErr(b.log, err)
 	}
 	defer attach.Close()
 
 	if err := b.client.ContainerStart(b.ctx, resp.ID, container.StartOptions{}); err != nil {
-		return wrapErr(err)
+		return component.WrapErr(b.log, err)
 	}
 
 	var stdout, stderr bytes.Buffer

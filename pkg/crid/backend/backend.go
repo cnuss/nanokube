@@ -238,14 +238,14 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 	os.Remove(b.socket())
 	lis, err := net.Listen("unix", b.socket())
 	if err != nil {
-		return fmt.Errorf("failed to listen on socket %s: %w", b.socket(), err)
+		return component.WrapErr(b.log, fmt.Errorf("listen on socket %s: %w", b.socket(), err))
 	}
 
 	streamCfg := streaming.DefaultConfig
 	streamCfg.Addr = "127.0.0.1:0"
 	b.streaming, err = streaming.NewServer(streamCfg, b.Driver)
 	if err != nil {
-		return fmt.Errorf("failed to start streaming server: %w", err)
+		return component.WrapErr(b.log, err)
 	}
 	go func() {
 		b.log.Info().Msg("backend streaming server starting")
@@ -301,7 +301,7 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 
 	// Start CSI driver — endpoint starts now, registration deferred until node ready
 	if err := b.CSI().Start(ctx, pluginsDir, registrationDir); err != nil {
-		return fmt.Errorf("csi: %w", err)
+		return component.WrapErr(b.log, err)
 	}
 
 	b.log.Info().Msg("backend started")
