@@ -14,7 +14,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
@@ -153,11 +152,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.HostUtil = k.crid.DefaultBackend().HostUtils()
 	hk.KubeletDeps.Recorder = k.crid.DefaultBackend().EventRecorder()
 	hk.KubeletDeps.ProbeManager = k.crid.DefaultBackend().Prober()
-	hk.KubeletDeps.TLSOptions = &server.TLSOptions{
-		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
-		CertFile: config.TLSCertFile,
-		KeyFile:  config.TLSPrivateKeyFile,
-	}
+	hk.KubeletDeps.TLSOptions = k.crid.DefaultBackend().TLSOptions()
 	exited := make(chan error, 1)
 	go func() {
 		kubeletLog.Info().Msg("hollow kubelet goroutine starting")

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -23,6 +24,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubelet/pkg/cri/streaming"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
+	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
@@ -152,6 +154,7 @@ type Backend interface {
 	EventBroadcaster() record.EventBroadcaster
 	EventRecorder() record.EventRecorder
 	Prober() prober.Manager
+	TLSOptions() *server.TLSOptions
 
 	// Storage
 	CSI() CSI
@@ -533,6 +536,16 @@ func (b *BackendImpl) Prober() prober.Manager {
 		b.prober = NewProber(b)
 	}
 	return b.prober
+}
+
+func (b *BackendImpl) TLSOptions() *server.TLSOptions {
+	certFile := filepath.Join(b.DataDir(), "ca.crt")
+	keyFile := filepath.Join(b.DataDir(), "ca.key")
+	return &server.TLSOptions{
+		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
+		CertFile: certFile,
+		KeyFile:  keyFile,
+	}
 }
 
 func (b *BackendImpl) CSI() CSI {
