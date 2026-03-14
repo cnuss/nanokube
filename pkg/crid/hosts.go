@@ -14,14 +14,11 @@ import (
 type hostsImpl struct {
 	ctx      context.Context
 	hostname string
-	backends *map[backend.Runtime]backend.Backend
+	backends map[backend.Runtime]backend.Backend
 	addrs    map[string][]string
 }
 
-func newHosts(ctx context.Context, backends *map[backend.Runtime]backend.Backend) (backend.Hosts, error) {
-	if backends == nil {
-		return nil, fmt.Errorf("backends must not be nil")
-	}
+func newHosts(ctx context.Context, backends map[backend.Runtime]backend.Backend) (backend.Hosts, error) {
 	addrs := make(map[string][]string)
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -72,7 +69,7 @@ func (h *hostsImpl) ExtraHosts(network backend.Network) []string {
 		}
 	}
 
-	for _, b := range *h.backends {
+	for _, b := range h.backends {
 		info, err := b.HostInfo()
 		if err != nil {
 			continue

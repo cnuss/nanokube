@@ -40,7 +40,7 @@ func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 	a.cmd.SilenceErrors = true
 	a.cmd.SetContext(ctx)
 
-	args := append(a.config.KubeArgs(),
+	args := append(kubeArgs(a.config),
 		"--bind-address=0.0.0.0",
 		"--advertise-address=127.0.0.1",
 		"--external-hostname=localhost",

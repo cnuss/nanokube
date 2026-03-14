@@ -1,10 +1,8 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -45,7 +43,7 @@ func NewConfig(options *Options) *Config {
 }
 
 func (c *Config) SetCRID(crid *crid.CRID) {
-	c.CRID = crid.WithPluginDirs(c.DataDirs.Plugins, c.DataDirs.PluginsRegistry)
+	c.CRID = crid
 }
 
 func (c *Config) Files() *Files {
@@ -61,18 +59,6 @@ func (c *Config) Files() *Files {
 
 func (c *Config) Certs() *certs {
 	return c.Files().Certs()
-}
-
-func (c *Config) KubeArgs() []string {
-	gates := make([]string, 0, len(c.FeatureGates))
-	for k, v := range c.FeatureGates {
-		gates = append(gates, fmt.Sprintf("%s=%t", k, v))
-	}
-	args := []string{
-		"--feature-gates=" + strings.Join(gates, ","),
-	}
-	args = append(args, fmt.Sprintf("--v=%d", c.Verbosity*2))
-	return args
 }
 
 type DataDirs struct {

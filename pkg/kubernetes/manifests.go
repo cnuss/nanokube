@@ -122,3 +122,15 @@ func (m *Manifests) Stop() component.Stopped {
 	return component.NotReady(func() {})
 	// return component.Closed("tcp", "127.0.0.1:10259", nil)
 }
+
+func kubeArgs(config *pkgconfig.Config) []string {
+	gates := make([]string, 0, len(config.FeatureGates))
+	for k, v := range config.FeatureGates {
+		gates = append(gates, fmt.Sprintf("%s=%t", k, v))
+	}
+	args := []string{
+		"--feature-gates=" + strings.Join(gates, ","),
+	}
+	args = append(args, fmt.Sprintf("--v=%d", config.Verbosity*2))
+	return args
+}

@@ -3,6 +3,7 @@ package crid
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -23,9 +24,11 @@ type CRID struct {
 	stop   func() bool
 	log    component.Logger
 
-	broadcaster     record.EventBroadcaster
-	pluginsDir      string
-	registrationDir string
+	name    string
+	dataDir string
+	clean   bool
+
+	broadcaster record.EventBroadcaster
 
 	backends     map[backend.Runtime]backend.Backend
 	backendsOnce sync.Once
@@ -37,31 +40,11 @@ type CRID struct {
 func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 	log := component.NewLogger("crid")
 	log.Info().Msg("initializing")
-
-	backends := detectBackends(ctx, name, dataDir)
-	if clean {
-		for _, b := range backends {
-			if err := b.Cleanup(ctx); err != nil {
-				log.Error().Err(err).Msg("cleanup failed")
-			}
-		}
-	}
-
-	h, err := newHosts(ctx, &backends)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to initialize hosts")
-		return nil
-	}
-
-	crid := &CRID{ctx: ctx, log: log, backends: backends, hosts: h}
-	return crid
+	return &CRID{ctx: ctx, log: log, name: name, dataDir: dataDir, clean: clean}
 }
 
-func (c *CRID) WithPluginDirs(pluginsDir, registrationDir string) *CRID {
-	c.pluginsDir = pluginsDir
-	c.registrationDir = registrationDir
-	return c
-}
+func (c *CRID) PluginsDir() string      { return filepath.Join(c.dataDir, "plugins") }
+func (c *CRID) RegistrationDir() string { return filepath.Join(c.dataDir, "plugins_registry") }
 
 func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 	c.log.Info().Msg("starting")
@@ -72,9 +55,9 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 
 	c.broadcaster = record.NewBroadcaster(record.WithContext(ctx))
 
-	for name, backend := range c.backends {
+	for name, backend := range c.Backends() {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
-		if err := backend.Start(ctx, c.hosts, c.broadcaster, c.pluginsDir, c.registrationDir); err != nil {
+		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, c.PluginsDir(), c.RegistrationDir()); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}
@@ -115,7 +98,7 @@ func (c *CRID) Stop() component.Stopped {
 			c.broadcaster.Shutdown()
 		}
 
-		for name, backend := range c.backends {
+		for name, backend := range c.Backends() {
 			c.log.Info().Str("backend", string(name)).Msg("stopping backend")
 			if err := backend.Stop(ctx); err != nil {
 				c.log.Error().Str("backend", string(name)).Err(err).Msg("error stopping backend")
@@ -138,7 +121,7 @@ func (c *CRID) WithClient(client clientset.Interface) *CRID {
 		c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
 		c.log.Info().Msg("event sink connected")
 	}
-	for _, b := range c.backends {
+	for _, b := range c.Backends() {
 		csi := b.CSI()
 		if csi == nil {
 			continue
@@ -168,11 +151,21 @@ func (c *CRID) WithClient(client clientset.Interface) *CRID {
 }
 
 func (c *CRID) Backends() map[backend.Runtime]backend.Backend {
+	c.backendsOnce.Do(func() {
+		c.backends = detectBackends(c.ctx, c.name, c.dataDir)
+		if c.clean {
+			for _, b := range c.backends {
+				if err := b.Cleanup(c.ctx); err != nil {
+					c.log.Error().Err(err).Msg("cleanup failed")
+				}
+			}
+		}
+	})
 	return c.backends
 }
 
 func (c *CRID) Backend(runtime backend.Runtime) backend.Backend {
-	if b, ok := c.backends[runtime]; ok {
+	if b, ok := c.Backends()[runtime]; ok {
 		return b
 	}
 	c.log.Warn().Str("runtime", string(runtime)).Msg("requested backend not found, using noop")
@@ -180,11 +173,19 @@ func (c *CRID) Backend(runtime backend.Runtime) backend.Backend {
 }
 
 func (c *CRID) Hosts() backend.Hosts {
+	c.hostsOnce.Do(func() {
+		h, err := newHosts(c.ctx, c.Backends())
+		if err != nil {
+			c.log.Error().Err(err).Msg("failed to initialize hosts")
+			return
+		}
+		c.hosts = h
+	})
 	return c.hosts
 }
 
 func (c *CRID) DefaultBackend() backend.Backend {
-	for _, b := range c.backends {
+	for _, b := range c.Backends() {
 		return b
 	}
 	c.log.Warn().Msg("no backends found, using noop")

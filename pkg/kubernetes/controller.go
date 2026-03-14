@@ -34,7 +34,7 @@ func (c *ControllerManager) Start(ctx context.Context) (component.Started, error
 	c.cmd.SilenceErrors = true
 	c.cmd.SetContext(ctx)
 
-	args := append(c.config.KubeArgs(),
+	args := append(kubeArgs(c.config),
 		"--kubeconfig="+c.config.Files().Kubeconfig,
 		"--authentication-kubeconfig="+c.config.Files().Kubeconfig,
 		"--authorization-kubeconfig="+c.config.Files().Kubeconfig,

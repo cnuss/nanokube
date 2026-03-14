@@ -33,7 +33,7 @@ func (s *Scheduler) Start(ctx context.Context) (component.Started, error) {
 	s.cmd.SilenceErrors = true
 	s.cmd.SetContext(ctx)
 
-	args := append(s.config.KubeArgs(),
+	args := append(kubeArgs(s.config),
 		"--kubeconfig="+s.config.Files().Kubeconfig,
 		"--authentication-kubeconfig="+s.config.Files().Kubeconfig,
 		"--authorization-kubeconfig="+s.config.Files().Kubeconfig,
