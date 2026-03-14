@@ -15,7 +15,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
-	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 type CRID struct {
@@ -63,7 +62,7 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 
 	for name, backend := range c.Backends() {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
-		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, filepath.Join(c.dataDir, "plugins"), filepath.Join(c.dataDir, "plugins_registry")); err != nil {
+		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, filepath.Join(c.dataDir, "plugins"), filepath.Join(c.dataDir, "plugins_registry"), c.clean); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}
@@ -80,32 +79,6 @@ func (c *CRID) Stop() component.Stopped {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		containers := c.Backend(backend.Docker).Containers()
-
-		// Stop running sandboxes via CRI
-		if running, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}); err == nil {
-			for _, sb := range running {
-				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
-				if err := containers.StopPodSandbox(ctx, sb.Id); err != nil {
-					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
-				}
-			}
-		}
-
-		// Remove stopped sandboxes via CRI
-		if stopped, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
-			for _, sb := range stopped {
-				c.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
-				if err := containers.RemovePodSandbox(ctx, sb.Id); err != nil {
-					c.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
-				}
-			}
-		}
-
-		if c.broadcaster != nil {
-			c.broadcaster.Shutdown()
-		}
-
 		// Stop backends — shuts down gRPC/CRI, preventing the kubelet
 		// from creating new containers during final cleanup.
 		for name, backend := range c.Backends() {
@@ -117,14 +90,9 @@ func (c *CRID) Stop() component.Stopped {
 			c.log.Info().Str("backend", string(name)).Msg("backend stopped")
 		}
 
-		// Final cleanup via Docker API — catches containers created
-		// by the kubelet during the CRI shutdown above.
-		for name, b := range c.Backends() {
-			if err := b.Cleanup(ctx); err != nil {
-				c.log.Error().Str("backend", string(name)).Err(err).Msg("cleanup failed")
-			}
+		if c.broadcaster != nil {
+			c.broadcaster.Shutdown()
 		}
-
 		if c.stop != nil {
 			c.stop()
 		}
@@ -140,7 +108,7 @@ func (c *CRID) WithClient(client clientset.Interface) *CRID {
 		c.log.Info().Msg("event sink connected")
 	}
 	for _, b := range c.Backends() {
-		go b.StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
+		go b.CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
 	}
 	return c
 }
@@ -171,13 +139,6 @@ func (c *CRID) Certs() *config.Certs {
 func (c *CRID) Backends() map[backend.Runtime]backend.Backend {
 	c.backendsOnce.Do(func() {
 		c.backends = detectBackends(c.ctx, c.name, c.dataDir)
-		if c.clean {
-			for _, b := range c.backends {
-				if err := b.Cleanup(c.ctx); err != nil {
-					c.log.Error().Err(err).Msg("cleanup failed")
-				}
-			}
-		}
 	})
 	return c.backends
 }

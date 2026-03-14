@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,8 +16,6 @@ import (
 	tp "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
-	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
-	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -128,7 +127,6 @@ type Driver interface {
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
 	Events(ctx context.Context) (<-chan Event, <-chan error)
-	Cleanup(ctx context.Context) error
 }
 
 // Backend is the full interface consumers use
@@ -136,13 +134,15 @@ type Backend interface {
 	Name() Runtime
 	Context() context.Context
 
-	Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error
+	Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string, clean bool) error
 	Stop(ctx context.Context) error
+	clean() error
 
 	Streaming() streaming.Server
 	Labels() labels.LabelProvider
 	Images() internalapi.ImageManagerService
 	Containers() internalapi.RuntimeService
+	Volumes() csipb.ControllerServer
 	ContainerManager() cm.ContainerManager
 	Mounter() mount.Interface
 	Cadvisor() cadvisor.Interface
@@ -154,9 +154,7 @@ type Backend interface {
 	Prober() prober.Manager
 
 	// Storage
-	CSI() *CSI
-	StorageClass() *storagev1ac.StorageClassApplyConfiguration
-	StartProvisioner(ctx context.Context, client clientset.Interface, isDefault bool)
+	CSI() CSI
 
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)
@@ -167,12 +165,7 @@ type Backend interface {
 	// Subscribe returns a channel that receives all container lifecycle events.
 	// Each subscriber gets its own channel; closing the context unsubscribes.
 	Subscribe() <-chan Event
-
-	// Cleanup force-removes all containers managed by this backend.
-	Cleanup(ctx context.Context) error
 }
-
-var _ Backend = &BackendImpl{}
 
 // BackendImpl adds shared behavior on top of a Driver
 type BackendImpl struct {
@@ -191,6 +184,7 @@ type BackendImpl struct {
 	klog          klog.Logger
 	images        internalapi.ImageManagerService
 	containers    internalapi.RuntimeService
+	volumes       csipb.ControllerServer
 	cm            cm.ContainerManager
 	mounter       mount.Interface
 	cadvisor      cadvisor.Interface
@@ -201,7 +195,7 @@ type BackendImpl struct {
 	prober        prober.Manager
 	traceProvider tp.TracerProvider
 	hostInfo      *HostInfo
-	csi           *CSI
+	csi           CSI
 
 	// hosts
 	hosts Hosts
@@ -234,7 +228,7 @@ func (b *BackendImpl) Context() context.Context {
 	return b.ctx
 }
 
-func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string) error {
+func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string, clean bool) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
 	b.ctx = ctx
 	b.hosts = hosts
@@ -314,6 +308,35 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 	return nil
 }
 
+func (b *BackendImpl) clean() error {
+	b.log.Info().Str("backend", string(b.Name())).Msg("clean")
+
+	var errs []error
+	// Remove sandboxes (and thus all containers) via CRI
+	b.log.Info().Msg("removing sandboxes")
+	if sandboxes, err := b.ContainerServer().ListPodSandbox(b.ctx, nil); err == nil {
+		for _, sb := range sandboxes.GetItems() {
+			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
+			if err := b.Containers().RemovePodSandbox(b.ctx, sb.Id); err != nil {
+				errs = append(errs, fmt.Errorf("remove sandbox %s: %w", sb.Id, err))
+			}
+		}
+	}
+
+	// Remove volumes via CSI
+	b.log.Info().Msg("removing volumes")
+	if volumes, err := b.VolumeServer().ListVolumes(b.ctx, &csipb.ListVolumesRequest{}); err == nil {
+		for _, vol := range volumes.GetEntries() {
+			b.log.Info().Str("id", vol.GetVolume().GetVolumeId()[:min(12, len(vol.GetVolume().GetVolumeId()))]).Msg("removing volume")
+			if _, err := b.VolumeServer().DeleteVolume(b.ctx, &csipb.DeleteVolumeRequest{VolumeId: vol.GetVolume().GetVolumeId()}); err != nil {
+				errs = append(errs, fmt.Errorf("delete volume %s: %w", vol.GetVolume().GetVolumeId(), err))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 func (b *BackendImpl) SignalNodeReady() {
 	b.nodeReadyOnce.Do(func() { close(b.nodeReady) })
 }
@@ -328,6 +351,31 @@ func (b *BackendImpl) Subscribe() <-chan Event {
 
 func (b *BackendImpl) Stop(ctx context.Context) error {
 	b.log.Info().Str("backend", string(b.Name())).Msg("stopping")
+
+	containers := b.Containers()
+	if containers == nil {
+		return nil
+	}
+
+	// Stop running sandboxes via CRI
+	if running, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}); err == nil {
+		for _, sb := range running {
+			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
+			if err := containers.StopPodSandbox(ctx, sb.Id); err != nil {
+				b.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
+			}
+		}
+	}
+
+	// Remove stopped sandboxes via CRI
+	if stopped, err := containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}); err == nil {
+		for _, sb := range stopped {
+			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
+			if err := containers.RemovePodSandbox(ctx, sb.Id); err != nil {
+				b.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
+			}
+		}
+	}
 
 	if b.grpc != nil {
 		done := make(chan struct{})
@@ -385,6 +433,15 @@ func (b *BackendImpl) Containers() internalapi.RuntimeService {
 		b.containers = runtimeService
 	}
 	return b.containers
+}
+
+func (b *BackendImpl) Volumes() csipb.ControllerServer {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.volumes == nil {
+		b.volumes = b.VolumeServer()
+	}
+	return b.volumes
 }
 
 func (b *BackendImpl) ContainerManager() cm.ContainerManager {
@@ -476,17 +533,13 @@ func (b *BackendImpl) Prober() prober.Manager {
 	return b.prober
 }
 
-func (b *BackendImpl) CSI() *CSI {
+func (b *BackendImpl) CSI() CSI {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.csi == nil {
 		b.csi = NewCSI(b)
 	}
 	return b.csi
-}
-
-func (b *BackendImpl) StorageClass() *storagev1ac.StorageClassApplyConfiguration {
-	return b.CSI().StorageClass()
 }
 
 func (b *BackendImpl) HostInfo() (*HostInfo, error) {
@@ -511,3 +564,5 @@ func (b *BackendImpl) Hosts() Hosts {
 func (b *BackendImpl) socket() string {
 	return filepath.Join(b.DataDir(), "cri.sock")
 }
+
+var _ Backend = &BackendImpl{}

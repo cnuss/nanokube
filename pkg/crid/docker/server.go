@@ -516,6 +516,9 @@ func (s *Server) ListMetricDescriptors(context.Context, *runtimeapi.ListMetricDe
 // ListPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
 	s.log.Trace().Msg("ListPodSandbox")
+	if req == nil {
+		req = &runtimeapi.ListPodSandboxRequest{}
+	}
 
 	f := s.backend.Into.Filters(s.backend.labels.NewBuilder(nil).WithType("sandbox"))
 
