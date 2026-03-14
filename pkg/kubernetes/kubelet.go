@@ -152,7 +152,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.HostUtil = k.crid.DefaultBackend().HostUtils()
 	hk.KubeletDeps.Recorder = k.crid.DefaultBackend().EventRecorder()
 	hk.KubeletDeps.ProbeManager = k.crid.DefaultBackend().Prober()
-	hk.KubeletDeps.TLSOptions = k.crid.DefaultBackend().TLSOptions()
+	hk.KubeletDeps.TLSOptions = k.crid.TLSOptions()
 	exited := make(chan error, 1)
 	go func() {
 		kubeletLog.Info().Msg("hollow kubelet goroutine starting")

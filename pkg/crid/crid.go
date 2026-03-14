@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"crypto/tls"
+
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
@@ -15,6 +17,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/kubernetes/pkg/kubelet/server"
 )
 
 type CRID struct {
@@ -134,6 +137,14 @@ func (c *CRID) Certs() *config.Certs {
 		c.certs = config.NewCerts(c.name, c.dataDir, c.Hosts().Hostname())
 	})
 	return c.certs
+}
+
+func (c *CRID) TLSOptions() *server.TLSOptions {
+	return &server.TLSOptions{
+		Config:   &tls.Config{MinVersion: tls.VersionTLS12},
+		CertFile: c.Certs().CertPath(),
+		KeyFile:  c.Certs().KeyPath(),
+	}
 }
 
 func (c *CRID) Backends() map[backend.Runtime]backend.Backend {

@@ -15,7 +15,6 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
-	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
@@ -47,7 +46,6 @@ func (n *NoopBackend) HostUtils() hostutil.HostUtils                            
 func (n *NoopBackend) EventBroadcaster() record.EventBroadcaster                   { return nil }
 func (n *NoopBackend) EventRecorder() record.EventRecorder                         { return nil }
 func (n *NoopBackend) Prober() prober.Manager                                      { return nil }
-func (n *NoopBackend) TLSOptions() *server.TLSOptions                              { return nil }
 func (n *NoopBackend) Streaming() streaming.Server                                 { return nil }
 func (n *NoopBackend) Subscribe() <-chan Event                                     { return make(chan Event) }
 func (n *NoopBackend) CSI() CSI                                                    { return nil }
