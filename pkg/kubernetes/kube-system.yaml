@@ -9,6 +9,9 @@ spec:
     - name: debug
       image: alpine/k8s:1.35.0
       command: ["sleep", "infinity"]
+      env:
+        - name: KUBECONFIG
+          value: /etc/kubernetes/kubeconfig
       volumeMounts:
         - name: etc-kubernetes
           mountPath: /etc/kubernetes

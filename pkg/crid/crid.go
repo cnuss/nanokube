@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/docker"
 	"github.com/cnuss/nanokube/pkg/crid/podman"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
@@ -35,6 +35,15 @@ type CRID struct {
 
 	hosts     backend.Hosts
 	hostsOnce sync.Once
+
+	files     *config.Files
+	filesOnce sync.Once
+
+	certs     *config.Certs
+	certsOnce sync.Once
+
+	dataDirs     config.DataDirs
+	dataDirsOnce sync.Once
 }
 
 func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
@@ -42,9 +51,6 @@ func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 	log.Info().Msg("initializing")
 	return &CRID{ctx: ctx, log: log, name: name, dataDir: dataDir, clean: clean}
 }
-
-func (c *CRID) PluginsDir() string      { return filepath.Join(c.dataDir, "plugins") }
-func (c *CRID) RegistrationDir() string { return filepath.Join(c.dataDir, "plugins_registry") }
 
 func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 	c.log.Info().Msg("starting")
@@ -57,7 +63,7 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 
 	for name, backend := range c.Backends() {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
-		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, c.PluginsDir(), c.RegistrationDir()); err != nil {
+		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, filepath.Join(c.dataDir, "plugins"), filepath.Join(c.dataDir, "plugins_registry")); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}
@@ -122,32 +128,32 @@ func (c *CRID) WithClient(client clientset.Interface) *CRID {
 		c.log.Info().Msg("event sink connected")
 	}
 	for _, b := range c.Backends() {
-		csi := b.CSI()
-		if csi == nil {
-			continue
-		}
-		fm := metav1.ApplyOptions{FieldManager: string(b.Name()), Force: true}
-
-		if drv := csi.CSIDriver(); drv != nil {
-			c.log.Info().Str("backend", string(b.Name())).Str("driver", *drv.GetName()).Msg("reconciling CSIDriver")
-			if _, err := client.StorageV1().CSIDrivers().Apply(c.ctx, drv, fm); err != nil {
-				c.log.Warn().Err(err).Str("driver", *drv.GetName()).Msg("failed to apply CSIDriver")
-			}
-		}
-
-		if sc := b.StorageClass(); sc != nil {
-			c.log.Info().Str("backend", string(b.Name())).Str("storageclass", *sc.GetName()).Msg("reconciling storage class")
-			sc.WithAnnotations(map[string]string{
-				"storageclass.kubernetes.io/is-default-class": fmt.Sprintf("%t", b.Name() == c.DefaultBackend().Name()),
-			})
-			if _, err := client.StorageV1().StorageClasses().Apply(c.ctx, sc, fm); err != nil {
-				c.log.Warn().Err(err).Str("storageclass", *sc.GetName()).Msg("failed to apply StorageClass")
-			}
-		}
-
-		go backend.StartProvisioner(c.ctx, client, b)
+		go b.StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
 	}
 	return c
+}
+
+func (c *CRID) Name() string    { return c.name }
+func (c *CRID) DataDir() string { return c.dataDir }
+func (c *CRID) DataDirs() config.DataDirs {
+	c.dataDirsOnce.Do(func() {
+		c.dataDirs = config.NewDataDirs(c.dataDir)
+	})
+	return c.dataDirs
+}
+
+func (c *CRID) Files() *config.Files {
+	c.filesOnce.Do(func() {
+		c.files = config.NewFiles(c.dataDir)
+	})
+	return c.files
+}
+
+func (c *CRID) Certs() *config.Certs {
+	c.certsOnce.Do(func() {
+		c.certs = config.NewCerts(c.name, c.dataDir, c.Hosts().Hostname())
+	})
+	return c.certs
 }
 
 func (c *CRID) Backends() map[backend.Runtime]backend.Backend {

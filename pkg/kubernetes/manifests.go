@@ -9,7 +9,8 @@ import (
 	"strings"
 
 	"github.com/cnuss/nanokube/pkg/component"
-	pkgconfig "github.com/cnuss/nanokube/pkg/config"
+	"github.com/cnuss/nanokube/pkg/crid"
+	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -25,37 +26,37 @@ var kubeSystemManifest string
 var manifestsLog = newLogger("manifests")
 
 type Manifests struct {
-	config *pkgconfig.Config
-	cmd    *cobra.Command
+	crid *crid.CRID
+	cmd  *cobra.Command
 }
 
-func NewManifests(config *pkgconfig.Config) *Manifests {
+func NewManifests(crid *crid.CRID) *Manifests {
 	return &Manifests{
-		config: config,
+		crid: crid,
 	}
 }
 
 func (m *Manifests) kubeconfig() clientcmdapi.Config {
 	return clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
-			m.config.Name: {
+			m.crid.Name(): {
 				Server:                   "https://127.0.0.1:6443",
-				CertificateAuthorityData: m.config.Certs().Cert(),
+				CertificateAuthorityData: m.crid.Certs().Cert(),
 			},
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			m.config.Name: {
-				ClientCertificateData: m.config.Certs().Cert(),
-				ClientKeyData:         m.config.Certs().Key(),
+			m.crid.Name(): {
+				ClientCertificateData: m.crid.Certs().Cert(),
+				ClientKeyData:         m.crid.Certs().Key(),
 			},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
-			m.config.Name: {
-				Cluster:  m.config.Name,
-				AuthInfo: m.config.Name,
+			m.crid.Name(): {
+				Cluster:  m.crid.Name(),
+				AuthInfo: m.crid.Name(),
 			},
 		},
-		CurrentContext: m.config.Name,
+		CurrentContext: m.crid.Name(),
 	}
 }
 
@@ -63,22 +64,22 @@ func (m *Manifests) kubeconfig() clientcmdapi.Config {
 // and merges it into ~/.kube/config so kubectl works without --kubeconfig.
 func (m *Manifests) writeKubeconfig() {
 	config := m.kubeconfig()
-	kubeconfigPath := m.config.Files().Kubeconfig
+	kubeconfigPath := m.crid.Files().Kubeconfig
 
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
 		clientcmd.WriteToFile(config, kubeconfigPath)
 	}
 
 	// Merge into ~/.kube/config
-	dst, err := clientcmd.LoadFromFile(m.config.Files().RecommendedHomeFile)
+	dst, err := clientcmd.LoadFromFile(m.crid.Files().RecommendedHomeFile)
 	if err != nil {
 		dst = clientcmdapi.NewConfig()
 	}
-	dst.Clusters[m.config.Name] = config.Clusters[m.config.Name]
-	dst.AuthInfos[m.config.Name] = config.AuthInfos[m.config.Name]
-	dst.Contexts[m.config.Name] = config.Contexts[m.config.Name]
-	dst.CurrentContext = m.config.Name
-	if err := clientcmd.WriteToFile(*dst, m.config.Files().RecommendedHomeFile); err != nil {
+	dst.Clusters[m.crid.Name()] = config.Clusters[m.crid.Name()]
+	dst.AuthInfos[m.crid.Name()] = config.AuthInfos[m.crid.Name()]
+	dst.Contexts[m.crid.Name()] = config.Contexts[m.crid.Name()]
+	dst.CurrentContext = m.crid.Name()
+	if err := clientcmd.WriteToFile(*dst, m.crid.Files().RecommendedHomeFile); err != nil {
 		manifestsLog.Warn().Err(err).Msg("failed to write ~/.kube/config")
 	}
 }
@@ -102,8 +103,13 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 
 	for i, vol := range pod.Spec.Volumes {
 		if vol.Name == "etc-kubernetes" && vol.HostPath != nil {
-			pod.Spec.Volumes[i].HostPath.Path = m.config.DataDir
+			pod.Spec.Volumes[i].HostPath.Path = m.crid.DataDir()
 		}
+	}
+
+	// Inject host aliases so the kubelet includes them in its managed /etc/hosts
+	if h := m.crid.Hosts(); h != nil {
+		pod.Spec.HostAliases = h.HostAliases(backend.NetworkHost)
 	}
 
 	out, err := sigyaml.Marshal(pod)
@@ -111,7 +117,7 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 		return nil, fmt.Errorf("marshal kube-system manifest: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(m.config.DataDirs.Manifests, "kube-system.yaml"), out, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(m.crid.DataDirs().Manifests, "kube-system.yaml"), out, 0o644); err != nil {
 		return nil, fmt.Errorf("write kube-system manifest: %w", err)
 	}
 
@@ -123,14 +129,14 @@ func (m *Manifests) Stop() component.Stopped {
 	// return component.Closed("tcp", "127.0.0.1:10259", nil)
 }
 
-func kubeArgs(config *pkgconfig.Config) []string {
-	gates := make([]string, 0, len(config.FeatureGates))
-	for k, v := range config.FeatureGates {
+func kubeArgs(featureGates map[string]bool, verbosity int) []string {
+	gates := make([]string, 0, len(featureGates))
+	for k, v := range featureGates {
 		gates = append(gates, fmt.Sprintf("%s=%t", k, v))
 	}
 	args := []string{
 		"--feature-gates=" + strings.Join(gates, ","),
 	}
-	args = append(args, fmt.Sprintf("--v=%d", config.Verbosity*2))
+	args = append(args, fmt.Sprintf("--v=%d", verbosity*2))
 	return args
 }

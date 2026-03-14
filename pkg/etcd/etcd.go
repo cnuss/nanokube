@@ -19,23 +19,27 @@ import (
 var logger = component.NewLogger("etcd")
 
 type Etcd struct {
-	config *config.Config
-	server *embed.Etcd
+	certs     *config.Certs
+	dataDir   string
+	verbosity int
+	server    *embed.Etcd
 }
 
-func NewEtcd(config *config.Config) *Etcd {
+func NewEtcd(certs *config.Certs, dataDir string, verbosity int) *Etcd {
 	return &Etcd{
-		config: config,
+		certs:     certs,
+		dataDir:   dataDir,
+		verbosity: verbosity,
 	}
 }
 
 func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
-	logger.Info().Str("dataDir", e.config.DataDir).Msg("starting etcd")
+	logger.Info().Str("dataDir", e.dataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
-	cfg.Dir = filepath.Join(e.config.DataDir, "etcd")
+	cfg.Dir = filepath.Join(e.dataDir, "etcd")
 
-	if e.config.Verbosity > 0 {
+	if e.verbosity > 0 {
 		cfg.LogLevel = "info"
 	} else {
 		cfg.LogLevel = "error"
@@ -60,16 +64,16 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 
 	// Client TLS
 	cfg.ClientTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.Certs().CertPath(),
-		KeyFile:       e.config.Certs().KeyPath(),
-		TrustedCAFile: e.config.Certs().CertPath(),
+		CertFile:      e.certs.CertPath(),
+		KeyFile:       e.certs.KeyPath(),
+		TrustedCAFile: e.certs.CertPath(),
 	}
 
 	// Peer TLS
 	cfg.PeerTLSInfo = transport.TLSInfo{
-		CertFile:      e.config.Certs().CertPath(),
-		KeyFile:       e.config.Certs().KeyPath(),
-		TrustedCAFile: e.config.Certs().CertPath(),
+		CertFile:      e.certs.CertPath(),
+		KeyFile:       e.certs.KeyPath(),
+		TrustedCAFile: e.certs.CertPath(),
 	}
 
 	var err error
@@ -87,9 +91,9 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 
 	// Wait for client connectivity
 	tlsInfo := transport.TLSInfo{
-		CertFile:      e.config.Certs().CertPath(),
-		KeyFile:       e.config.Certs().KeyPath(),
-		TrustedCAFile: e.config.Certs().CertPath(),
+		CertFile:      e.certs.CertPath(),
+		KeyFile:       e.certs.KeyPath(),
+		TrustedCAFile: e.certs.CertPath(),
 	}
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {

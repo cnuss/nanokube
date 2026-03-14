@@ -12,13 +12,17 @@ import (
 var apiserverLog = newLogger("apiserver")
 
 type APIServer struct {
-	config *config.Config
-	cmd    *cobra.Command
+	certs        *config.Certs
+	featureGates map[string]bool
+	verbosity    int
+	cmd          *cobra.Command
 }
 
-func NewAPIServer(config *config.Config) *APIServer {
+func NewAPIServer(certs *config.Certs, featureGates map[string]bool, verbosity int) *APIServer {
 	return &APIServer{
-		config: config,
+		certs:        certs,
+		featureGates: featureGates,
+		verbosity:    verbosity,
 	}
 }
 
@@ -40,14 +44,14 @@ func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 	a.cmd.SilenceErrors = true
 	a.cmd.SetContext(ctx)
 
-	args := append(kubeArgs(a.config),
+	args := append(kubeArgs(a.featureGates, a.verbosity),
 		"--bind-address=0.0.0.0",
 		"--advertise-address=127.0.0.1",
 		"--external-hostname=localhost",
 		"--etcd-servers=https://127.0.0.1:2379",
-		"--etcd-cafile="+a.config.Certs().CertPath(),
-		"--etcd-certfile="+a.config.Certs().CertPath(),
-		"--etcd-keyfile="+a.config.Certs().KeyPath(),
+		"--etcd-cafile="+a.certs.CertPath(),
+		"--etcd-certfile="+a.certs.CertPath(),
+		"--etcd-keyfile="+a.certs.KeyPath(),
 		"--service-account-issuer=https://kubernetes.default.svc.cluster.local",
 		"--allow-privileged=true",
 		"--authorization-mode=Node,RBAC",
@@ -59,15 +63,15 @@ func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 		"--watch-cache=false",
 		"--shutdown-delay-duration=0s",
 		// TLS
-		"--tls-cert-file="+a.config.Certs().CertPath(),
-		"--tls-private-key-file="+a.config.Certs().KeyPath(),
-		"--client-ca-file="+a.config.Certs().CertPath(),
+		"--tls-cert-file="+a.certs.CertPath(),
+		"--tls-private-key-file="+a.certs.KeyPath(),
+		"--client-ca-file="+a.certs.CertPath(),
 		// Service account
-		"--service-account-key-file="+a.config.Certs().CertPath(),
-		"--service-account-signing-key-file="+a.config.Certs().KeyPath(),
+		"--service-account-key-file="+a.certs.CertPath(),
+		"--service-account-signing-key-file="+a.certs.KeyPath(),
 		// Kubelet
-		"--kubelet-client-certificate="+a.config.Certs().CertPath(),
-		"--kubelet-client-key="+a.config.Certs().KeyPath(),
+		"--kubelet-client-certificate="+a.certs.CertPath(),
+		"--kubelet-client-key="+a.certs.KeyPath(),
 	)
 
 	a.cmd.SetArgs(args)

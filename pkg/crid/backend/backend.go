@@ -14,7 +14,9 @@ import (
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	tp "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
+	v1 "k8s.io/api/core/v1"
 	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -47,6 +49,7 @@ const (
 type Hosts interface {
 	Hostname() string
 	ExtraHosts(network Network) []string
+	HostAliases(network Network) []v1.HostAlias
 }
 
 // EventResource classifies the source of an event.
@@ -153,6 +156,7 @@ type Backend interface {
 	// Storage
 	CSI() *CSI
 	StorageClass() *storagev1ac.StorageClassApplyConfiguration
+	StartProvisioner(ctx context.Context, client clientset.Interface, isDefault bool)
 
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)

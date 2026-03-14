@@ -80,18 +80,40 @@ func (p *csiProvisioner) Delete(ctx context.Context, pv *corev1.PersistentVolume
 	return err
 }
 
-// StartProvisioner creates and runs a ProvisionController for the given backend.
+// StartProvisioner reconciles the CSIDriver and StorageClass objects, then
+// creates and runs a ProvisionController for this backend.
 // It blocks until ctx is cancelled.
-func StartProvisioner(ctx context.Context, client clientset.Interface, b Backend) {
+func (b *BackendImpl) StartProvisioner(ctx context.Context, client clientset.Interface, isDefault bool) {
 	csi := b.CSI()
 	if csi == nil {
 		return
 	}
 
+	log := component.NewLogger("provisioner")
+
+	fm := metav1.ApplyOptions{FieldManager: string(b.Name()), Force: true}
+
+	if drv := csi.CSIDriver(); drv != nil {
+		log.Info().Str("driver", *drv.GetName()).Msg("reconciling CSIDriver")
+		if _, err := client.StorageV1().CSIDrivers().Apply(ctx, drv, fm); err != nil {
+			log.Warn().Err(err).Str("driver", *drv.GetName()).Msg("failed to apply CSIDriver")
+		}
+	}
+
+	if sc := b.StorageClass(); sc != nil {
+		log.Info().Str("storageclass", *sc.GetName()).Msg("reconciling StorageClass")
+		sc.WithAnnotations(map[string]string{
+			"storageclass.kubernetes.io/is-default-class": fmt.Sprintf("%t", isDefault),
+		})
+		if _, err := client.StorageV1().StorageClasses().Apply(ctx, sc, fm); err != nil {
+			log.Warn().Err(err).Str("storageclass", *sc.GetName()).Msg("failed to apply StorageClass")
+		}
+	}
+
 	p := &csiProvisioner{
-		log:        component.NewLogger("provisioner"),
+		log:        log,
 		driverName: csi.DriverName(),
-		controller: b.CSI().backend.Driver.VolumeServer(),
+		controller: b.Driver.VolumeServer(),
 	}
 
 	ctrl := provisioner.NewProvisionController(
@@ -101,6 +123,6 @@ func StartProvisioner(ctx context.Context, client clientset.Interface, b Backend
 		p,
 	)
 
-	p.log.Info().Str("driver", csi.DriverName()).Msg("provisioner started")
+	log.Info().Str("driver", csi.DriverName()).Msg("provisioner started")
 	ctrl.Run(ctx)
 }

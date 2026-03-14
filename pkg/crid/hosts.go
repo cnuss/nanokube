@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cnuss/nanokube/pkg/crid/backend"
+	v1 "k8s.io/api/core/v1"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -20,6 +21,7 @@ type hostsImpl struct {
 
 func newHosts(ctx context.Context, backends map[backend.Runtime]backend.Backend) (backend.Hosts, error) {
 	addrs := make(map[string][]string)
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hostname: %w", err)
@@ -96,4 +98,19 @@ func (h *hostsImpl) ExtraHosts(network backend.Network) []string {
 	}
 
 	return extraHosts
+}
+
+func (h *hostsImpl) HostAliases(network backend.Network) []v1.HostAlias {
+	aliases := make(map[string][]string)
+	for _, entry := range h.ExtraHosts(network) {
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) == 2 {
+			aliases[parts[1]] = append(aliases[parts[1]], strings.ToLower(parts[0]))
+		}
+	}
+	result := make([]v1.HostAlias, 0, len(aliases))
+	for ip, hostnames := range aliases {
+		result = append(result, v1.HostAlias{IP: ip, Hostnames: hostnames})
+	}
+	return result
 }

@@ -11,93 +11,96 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/rs/zerolog/log"
 )
 
-type certs struct {
+var logger = component.NewLogger("config")
+
+type Certs struct {
 	Name     string
 	DataDir  string
 	Hostname string
 	CertPEM  []byte
 	KeyPEM   []byte
-	once     sync.Once
 }
 
-func (c *certs) generate() {
-	c.once.Do(func() {
-		// Read existing certs if they exist
-		certPEM, certErr := os.ReadFile(filepath.Join(c.DataDir, "ca.crt"))
-		keyPEM, keyErr := os.ReadFile(filepath.Join(c.DataDir, "ca.key"))
-		if certErr == nil && keyErr == nil {
-			c.CertPEM = certPEM
-			c.KeyPEM = keyPEM
-			logger.Info().Msg("certificates loaded from disk")
-			return
-		}
+func NewCerts(name, dataDir, hostname string) *Certs {
+	c := &Certs{
+		Name:     name,
+		DataDir:  dataDir,
+		Hostname: hostname,
+	}
 
-		// Generate new certs
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to generate key")
-		}
+	// Read existing certs if they exist
+	certPEM, certErr := os.ReadFile(filepath.Join(dataDir, "ca.crt"))
+	keyPEM, keyErr := os.ReadFile(filepath.Join(dataDir, "ca.key"))
+	if certErr == nil && keyErr == nil {
+		c.CertPEM = certPEM
+		c.KeyPEM = keyPEM
+		logger.Info().Msg("certificates loaded from disk")
+		return c
+	}
 
-		template := &x509.Certificate{
-			SerialNumber: big.NewInt(1),
-			Subject: pkix.Name{
-				Organization: []string{"system:masters"},
-				CommonName:   c.Name,
-			},
-			NotBefore:             time.Now(),
-			NotAfter:              time.Now().AddDate(10, 0, 0),
-			KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-			BasicConstraintsValid: true,
-			IsCA:                  true,
-			DNSNames: []string{
-				c.Hostname,
-				"localhost",
-				"kubernetes",
-				"kubernetes.default",
-				"kubernetes.default.svc",
-				"kubernetes.default.svc." + c.Hostname,
-			},
-			IPAddresses: []net.IP{
-				net.ParseIP("127.0.0.1"),
-				net.ParseIP("::1"),
-			},
-		}
+	// Generate new certs
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to generate key")
+	}
 
-		certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to create cert")
-		}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"system:masters"},
+			CommonName:   name,
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		DNSNames: []string{
+			hostname,
+			"localhost",
+			"kubernetes",
+			"kubernetes.default",
+			"kubernetes.default.svc",
+			"kubernetes.default.svc." + hostname,
+		},
+		IPAddresses: []net.IP{
+			net.ParseIP("127.0.0.1"),
+			net.ParseIP("::1"),
+		},
+	}
 
-		c.CertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-		keyDER, err := x509.MarshalECPrivateKey(key)
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to marshal key")
-		}
-		c.KeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create cert")
+	}
 
-		logger.Info().Msg("certificates generated")
-	})
+	c.CertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to marshal key")
+	}
+	c.KeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	logger.Info().Msg("certificates generated")
+	return c
 }
 
-func (c *certs) Cert() []byte {
-	c.generate()
+func (c *Certs) Cert() []byte {
 	return c.CertPEM
 }
 
-func (c *certs) Key() []byte {
-	c.generate()
+func (c *Certs) Key() []byte {
 	return c.KeyPEM
 }
 
-func (c *certs) CertPath() string {
-	c.generate()
+func (c *Certs) CertPath() string {
 	caFile := filepath.Join(c.DataDir, "ca.crt")
 	if _, err := os.Stat(caFile); os.IsNotExist(err) {
 		os.WriteFile(caFile, c.CertPEM, 0o644)
@@ -105,8 +108,7 @@ func (c *certs) CertPath() string {
 	return caFile
 }
 
-func (c *certs) KeyPath() string {
-	c.generate()
+func (c *Certs) KeyPath() string {
 	keyFile := filepath.Join(c.DataDir, "ca.key")
 	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
 		os.WriteFile(keyFile, c.KeyPEM, 0o600)

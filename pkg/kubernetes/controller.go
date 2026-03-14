@@ -13,13 +13,19 @@ import (
 var controllerLog = newLogger("controller")
 
 type ControllerManager struct {
-	config *config.Config
-	cmd    *cobra.Command
+	certs        *config.Certs
+	kubeconfig   string
+	featureGates map[string]bool
+	verbosity    int
+	cmd          *cobra.Command
 }
 
-func NewControllerManager(config *config.Config) *ControllerManager {
+func NewControllerManager(certs *config.Certs, kubeconfig string, featureGates map[string]bool, verbosity int) *ControllerManager {
 	return &ControllerManager{
-		config: config,
+		certs:        certs,
+		kubeconfig:   kubeconfig,
+		featureGates: featureGates,
+		verbosity:    verbosity,
 	}
 }
 
@@ -34,25 +40,25 @@ func (c *ControllerManager) Start(ctx context.Context) (component.Started, error
 	c.cmd.SilenceErrors = true
 	c.cmd.SetContext(ctx)
 
-	args := append(kubeArgs(c.config),
-		"--kubeconfig="+c.config.Files().Kubeconfig,
-		"--authentication-kubeconfig="+c.config.Files().Kubeconfig,
-		"--authorization-kubeconfig="+c.config.Files().Kubeconfig,
+	args := append(kubeArgs(c.featureGates, c.verbosity),
+		"--kubeconfig="+c.kubeconfig,
+		"--authentication-kubeconfig="+c.kubeconfig,
+		"--authorization-kubeconfig="+c.kubeconfig,
 		"--authentication-skip-lookup=true",
 		"--bind-address=127.0.0.1",
 		"--leader-elect=false",
 		"--controller-shutdown-timeout=0",
 		"--use-service-account-credentials=false",
 		// TLS
-		"--tls-cert-file="+c.config.Certs().CertPath(),
-		"--tls-private-key-file="+c.config.Certs().KeyPath(),
-		"--client-ca-file="+c.config.Certs().CertPath(),
+		"--tls-cert-file="+c.certs.CertPath(),
+		"--tls-private-key-file="+c.certs.KeyPath(),
+		"--client-ca-file="+c.certs.CertPath(),
 		// Service account
-		"--service-account-private-key-file="+c.config.Certs().KeyPath(),
-		"--root-ca-file="+c.config.Certs().CertPath(),
+		"--service-account-private-key-file="+c.certs.KeyPath(),
+		"--root-ca-file="+c.certs.CertPath(),
 		// Cluster
-		"--cluster-signing-cert-file="+c.config.Certs().CertPath(),
-		"--cluster-signing-key-file="+c.config.Certs().KeyPath(),
+		"--cluster-signing-cert-file="+c.certs.CertPath(),
+		"--cluster-signing-key-file="+c.certs.KeyPath(),
 	)
 
 	c.cmd.SetArgs(args)

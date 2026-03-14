@@ -20,6 +20,11 @@ import (
 
 var options = config.NewOptions()
 
+var featureGates = map[string]bool{
+	"APIServerIdentity":         false,
+	"RuntimeClassInImageCriApi": false,
+}
+
 var rootCmd = &cobra.Command{
 	Use:           "nanokube [flags]",
 	Short:         "A minimal Kubernetes distribution",
@@ -33,25 +38,26 @@ var rootCmd = &cobra.Command{
 		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
 		log.Debug().Msg("debug logging enabled")
 
-		cfg := config.NewConfig(options)
-		cfg.SetCRID(crid.NewCRID(sigCtx, cfg.Name, cfg.DataDir, options.Clean))
+		cr := crid.NewCRID(sigCtx, options.Name, options.DataDir, options.Clean)
 
-		cfg.Components = append(cfg.Components, cfg.CRID)
-		// cfg.Components = append(cfg.Components, etcd.NewEtcd(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewAPIServer(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewControllerManager(cfg))
-		// cfg.Components = append(cfg.Components, kubernetes.NewScheduler(cfg))
-		cfg.Components = append(cfg.Components, kubernetes.NewManifests(cfg))
+		components := []component.Component{
+			cr,
+			// etcd.NewEtcd(cr.Certs(), cr.DataDir(), options.Verbosity),
+			// kubernetes.NewAPIServer(cr.Certs(), featureGates, options.Verbosity),
+			// kubernetes.NewControllerManager(cr.Certs(), cr.Files().Kubeconfig, featureGates, options.Verbosity),
+			// kubernetes.NewScheduler(cr.Certs(), cr.Files().Kubeconfig, featureGates, options.Verbosity),
+			kubernetes.NewManifests(cr),
+		}
 
 		if options.Kubelet {
-			cfg.Components = append(cfg.Components, kubernetes.NewKubelet(cfg))
+			components = append(components, kubernetes.NewKubelet(cr, featureGates))
 		}
 
 		// Each component gets its own context so we can cancel them
 		// in reverse order during shutdown, keeping dependencies alive.
-		cancels := make([]context.CancelFunc, len(cfg.Components))
+		cancels := make([]context.CancelFunc, len(components))
 		started := 0
-		for i, c := range cfg.Components {
+		for i, c := range components {
 			compCtx, cancel := context.WithCancel(context.Background())
 			cancels[i] = cancel
 
@@ -85,14 +91,14 @@ var rootCmd = &cobra.Command{
 	shutdown:
 		log.Info().Msg("shutting down")
 
-		names := make([]string, len(cfg.Components))
-		for i, c := range cfg.Components {
+		names := make([]string, len(components))
+		for i, c := range components {
 			names[i] = fmt.Sprintf("%T", c)
 		}
 		for i := started - 1; i >= 0; i-- {
 			log.Info().Str("component", names[i]).Msg("stopping")
 			cancels[i]()
-			<-cfg.Components[i].Stop()
+			<-components[i].Stop()
 			log.Info().Str("component", names[i]).Msg("stopped")
 		}
 		return nil
