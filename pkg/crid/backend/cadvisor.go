@@ -130,8 +130,8 @@ func (c *CadvisorImpl) ContainerFsInfo(ctx context.Context) (v2.FsInfo, error) {
 func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (map[string]v2.ContainerInfo, error) {
 	c.log.Trace().Str("name", name).Bool("recursive", options.Recursive).Msg("ContainerInfoV2")
 
-	rt := c.backend.Containers()
-	if rt == nil {
+	cs := c.backend.ContainerServer()
+	if cs == nil {
 		return map[string]v2.ContainerInfo{}, nil
 	}
 
@@ -148,12 +148,12 @@ func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (
 		if options.Recursive {
 			ctx, cancel := context.WithTimeout(c.backend.Context(), 30*time.Second)
 			defer cancel()
-			containers, err := rt.ListContainers(ctx, nil)
+			containers, err := cs.ListContainers(ctx, nil)
 			if err != nil {
 				c.log.Warn().Err(err).Msg("ListContainers failed")
 				return result, nil
 			}
-			for _, ctr := range containers {
+			for _, ctr := range containers.GetContainers() {
 				if info, err := c.ContainerInfoV2(ctr.Id, v2.RequestOptions{}); err == nil {
 					maps.Copy(result, info)
 				}
@@ -166,7 +166,7 @@ func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (
 	// Non-root: look up a specific container
 	ctx, cancel := context.WithTimeout(c.backend.Context(), 10*time.Second)
 	defer cancel()
-	stats, err := rt.ContainerStats(ctx, name)
+	stats, err := cs.ContainerStats(ctx, &runtimeapi.ContainerStatsRequest{ContainerId: name})
 	if err != nil {
 		c.log.Debug().Err(err).Str("name", name).Msg("ContainerStats failed")
 		root, err := c.ContainerInfoV2("/", v2.RequestOptions{})
@@ -175,13 +175,13 @@ func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (
 		}
 		return map[string]v2.ContainerInfo{name: root["/"]}, nil
 	}
-	ctr, err := rt.ContainerStatus(ctx, name, false)
+	ctr, err := cs.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{ContainerId: name, Verbose: false})
 	if err != nil {
 		c.log.Debug().Err(err).Str("name", name).Msg("ContainerStatus failed")
 	}
 
 	return map[string]v2.ContainerInfo{
-		name: newContainerInfo().WithContainerStats(stats).WithContainerStatus(ctr).Build(),
+		name: newContainerInfo().WithContainerStats(stats.GetStats()).WithContainerStatus(ctr).Build(),
 	}, nil
 }
 

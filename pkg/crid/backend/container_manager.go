@@ -323,19 +323,21 @@ func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, s
 	if p.backend == nil {
 		return nil, ""
 	}
-	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
-		LabelSelector: map[string]string{
-			p.backend.Labels().PodUIDKey(): string(pod.UID),
+	sandboxes, err := p.backend.ContainerServer().ListPodSandbox(p.ctx, &runtimeapi.ListPodSandboxRequest{
+		Filter: &runtimeapi.PodSandboxFilter{
+			LabelSelector: map[string]string{
+				p.backend.Labels().PodUIDKey(): string(pod.UID),
+			},
 		},
 	})
 	if err != nil {
 		p.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list sandboxes")
 		return nil, ""
 	}
-	if len(sandboxes) == 0 {
+	if len(sandboxes.GetItems()) == 0 {
 		return nil, ""
 	}
-	return nil, sandboxes[0].Id
+	return nil, sandboxes.GetItems()[0].Id
 }
 
 func (p *podContainerManager) EnsureExists(logger klog.Logger, pod *v1.Pod) error {
@@ -347,16 +349,18 @@ func (p *podContainerManager) Exists(pod *v1.Pod) bool {
 	if p.backend == nil {
 		return true
 	}
-	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
-		LabelSelector: map[string]string{
-			p.backend.Labels().PodUIDKey(): string(pod.UID),
+	sandboxes, err := p.backend.ContainerServer().ListPodSandbox(p.ctx, &runtimeapi.ListPodSandboxRequest{
+		Filter: &runtimeapi.PodSandboxFilter{
+			LabelSelector: map[string]string{
+				p.backend.Labels().PodUIDKey(): string(pod.UID),
+			},
 		},
 	})
 	if err != nil {
 		p.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list sandboxes")
 		return true
 	}
-	return len(sandboxes) > 0
+	return len(sandboxes.GetItems()) > 0
 }
 
 func (p *podContainerManager) Destroy(logger klog.Logger, name cm.CgroupName) error {
