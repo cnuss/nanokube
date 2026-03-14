@@ -49,9 +49,10 @@ func (c *CSI) Start(ctx context.Context, pluginsDir, registrationDir string) err
 	csiPluginDir := filepath.Join(pluginsDir, c.driverName)
 	os.MkdirAll(csiPluginDir, 0o755)
 
-	// CSI endpoint — serves Identity + Node gRPC
+	// Remove stale sockets from previous runs
 	c.endpoint = filepath.Join(csiPluginDir, "csi.sock")
 	os.Remove(c.endpoint)
+	os.Remove(filepath.Join(registrationDir, c.driverName+"-reg.sock"))
 	csiLis, err := net.Listen("unix", c.endpoint)
 	if err != nil {
 		return fmt.Errorf("csi endpoint listen: %w", err)
