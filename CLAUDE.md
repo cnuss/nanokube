@@ -2,23 +2,15 @@
 
 ## Project Overview
 
-NanoKube is a single-binary, minimalist Kubernetes distribution written in Go. It runs all Kubernetes control plane components (etcd, kube-apiserver, kube-controller-manager, kube-scheduler, kubelet) in a single process.
+NanoKube is a single-binary Kubernetes distribution written in Go. It runs etcd, kube-apiserver, kube-controller-manager, kube-scheduler, and kubelet in a single process. It includes its own CRI daemon (CRID) that bridges Kubernetes to container runtimes directly.
 
 ## Build & Run
 
 ```bash
-# Initialize git submodules (required before first build)
-make submodules
-
-# Build the binary (applies patches, outputs ./nanokube)
-make build
-
-# Format, build, and run with --clean flag
-make run
-
-# Run the binary directly
-./nanokube --clean        # wipe data directory on startup
-./nanokube --name mycluster --data ~/.nanokube -v
+make submodules        # init git submodules (required before first build)
+make build             # apply patches + build binary
+make run               # fmt, build, run with --clean
+./nanokube --clean     # run directly
 ```
 
 Build uses `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
@@ -26,22 +18,37 @@ Build uses `CGO_ENABLED=0` and strips debug symbols (`-ldflags="-s -w"`).
 ## Testing
 
 ```bash
-make test          # runs go test ./...
-make e2e           # build, start nanokube, run kuttl e2e suite (10 tests)
-make e2e WHAT=exec # run a single e2e test by name
-make critest       # CRI conformance tests (45/45 passing)
-make critest WHAT="port mapping"  # run a single critest by focus pattern
+make test                        # go test ./... (placeholder, no unit tests yet)
+make critest                     # CRI conformance tests (45/45 passing)
+make critest WHAT="port mapping" # single critest by focus
+make e2e                         # kuttl e2e suite (24 tests, all passing)
+make e2e WHAT=exec               # single e2e test by name
+make scenarios                   # composite kuttl tests (multiple functionalities)
 ```
 
-E2E test dirs: `tests/e2e/{pod,emptydir,configmap,secret,downwardapi,projected,pvc,hostpath,exec,dns}`
+E2E test dirs: `tests/e2e/` (24 dirs: pod, exec, dns, deployment, cronjob, job, pvc, configmap, secret, emptydir, hostpath, downwardapi, projected, env, probe, lifecycle, logs, init-container, multi-container, resource-limits, restart, node, host-network, host-pid, host-ipc)
 
-## Formatting
+### Development test flow
 
-```bash
-make fmt        # runs gofmt -w .
-```
+Run `make critest` first, then `make e2e`. Localize specific failures, fix, repeat. Commit after each fix or all-green run.
 
-No linter is configured.
+### Expected state after tests
+
+**After `make critest`:**
+- `docker ps -a`: empty (no containers)
+- `docker info`: Containers 0
+- `docker volume ls`: volumes may remain (expected)
+
+**After `make e2e`:**
+- `docker ps -a`: 6 containers (all exited) — 1 sandbox + 5 containers from `pkg/kubernetes/kube-system.yaml`
+- `docker info`: Containers 6, Stopped 6
+
+### Test environment
+
+- All tests run against Docker only (other runtimes not yet implemented)
+- stdout/stderr is blackholed during test runs; inspect nanokube logs in the temp data directory
+- `--clean` is a convenience flag, not a test requirement — all tests should pass with or without it
+- Increase verbosity (`-v`, `-vv`) or add logging to diagnose failures
 
 ## Key Commands
 
@@ -53,46 +60,34 @@ No linter is configured.
 | `make build` | Patch + build the binary |
 | `make clean` | Remove the binary |
 | `make test` | Run Go unit tests |
-| `make e2e` | Build + run kuttl e2e tests (10 tests) |
+| `make e2e` | Build + run kuttl e2e tests |
 | `make critest` | CRI conformance tests |
+| `make scenarios` | Kuttl scenario tests |
 | `make fmt` | Format Go code |
 | `make run` | Format, build, and run |
 
 ## Architecture
 
-- **`main.go`** — Entry point. Uses Cobra CLI. Initializes config and starts components sequentially.
-- **`internal/`** — Component wrappers. Each Kubernetes component implements a `Component` interface with a `Start()` method. Components start in order: etcd → apiserver → controller-manager → scheduler → kubelet.
-- **`pkg/config/`** — Central configuration: data directory, TLS cert generation (EC P-256, self-signed), kubeconfig, kubelet config, container runtime auto-detection.
-- **`pkg/kubelet/`** — HollowKubelet wrapper using Kubernetes's kubemark.
-- **`pkg/cri/`** — CRI (Container Runtime Interface) implementation. `backend.go` defines the Backend interface; `docker/` implements it using the Docker Engine API; `podman/` is a stub for future Podman support.
-- **`pkg/kubernetes/kubelet/`** — Kubelet dependencies: `ScopedOS`, `ScopedHostUtil`, `ScopedSubpath`, `ProbeManager`.
-- **`patches/`** — Minimal patches to Kubernetes source (currently only kube-scheduler context handling).
+- **`main.go`** — Entry point (Cobra CLI). Starts components sequentially: CRID -> Manifests -> Kubelet. Graceful shutdown in reverse order.
+- **`pkg/component/`** — Component interface (Start/Stop lifecycle), structured logging setup, readiness polling helpers.
+- **`pkg/config/`** — CLI options, data directory layout, TLS cert generation (ECDSA P-256, self-signed), kubeconfig generation.
+- **`pkg/crid/`** — Custom CRI daemon. Detects container runtimes, starts gRPC CRI servers, manages container lifecycle events.
+  - **`backend/`** — Runtime abstraction: Backend interface, gRPC server, streaming, CSI driver, cadvisor, volume provisioning, probes, event recording.
+  - **`docker/`** — Docker backend: implements `RuntimeServiceServer` + `ImageServiceServer` via Docker Engine API.
+  - **`podman/`** — Podman backend (stub, not yet implemented).
+  - **`labels/`** — Container label builder for identifying managed containers.
+- **`pkg/kubernetes/`** — Manifests component (embeds kube-system pod spec for apiserver/controller-manager/scheduler), kubelet component, kubeconfig writing.
+- **`pkg/etcd/`** — Symlink to etcd submodule.
+- **`patches/`** — Minimal patches to Kubernetes source.
 
 ## Dependencies
 
-Go 1.25.4 with Kubernetes v1.35.1 and etcd v3.6. The `etcd/` and `kubernetes/` directories are git submodules pointing to upstream release branches.
+Go 1.25.4 with Kubernetes v1.35.1 and etcd v3.6. The `etcd/` and `kubernetes/` directories are git submodules pointing to upstream release branches. The go.mod uses `replace` directives to reference local submodules.
 
 ## Code Conventions
 
-- Standard Go project layout (`internal/`, `pkg/`)
+- Standard Go layout (`pkg/`)
 - Structured logging via `zerolog`
-- Error handling with standard Go error returns; fatal errors use `log.Fatal()`
-- Components run in background goroutines with health-check polling loops
-- Configuration uses lazy evaluation (files created on first access)
-
-## CRI Docker Backend Notes
-
-- Pods use Docker's default bridge network (no custom bridge)
-- `Nameservers()` probes DNS via `RunProbe` (busybox cat /etc/resolv.conf) to match what containers see
-- The kubelet reads container identity from CRI **Labels** (not Metadata): `io.kubernetes.container.name`, `io.kubernetes.pod.name`, `io.kubernetes.pod.namespace`, `io.kubernetes.pod.uid`
-- The kubelet reads hash/restart count from CRI **Annotations**: `io.kubernetes.container.hash`, `io.kubernetes.container.restartCount`
-- `extractLabels()` must NOT strip labels the kubelet needs — only internal ones (`docker.type`, `managed-by`, `sandbox.id`, `container.attempt`, `container.logPath`)
-- Exec streaming: `proxyStreams` must close stdin and `resp.Conn` after output copy finishes, or interactive shells hang on exit
-- WebSocket "use of closed network connection" at `conn.go:339` is cosmetic upstream noise — not fixable without patching kubernetes source
-- ExecSync timeout: kills exec process via privileged `--pid=host` probe container with SIGKILL (`container.go`)
-- Port mapping: sandbox config needs both `ExposedPorts` and `PortBindings`; `HostPort` defaults to `ContainerPort` when 0 (`convert.go`)
-- Docker Desktop macOS: bridge IPs (172.17.x.x) are NOT routable from host. `getIPFromInspect` returns `127.0.0.1` when on bridge with published ports (HostIP empty/0.0.0.0) to route through Docker's port-forwarding proxy (`sandbox.go`)
-- `RunProbe` has public wrapper (interface) and private `runProbe` accepting `*container.HostConfig` for privileged probes (`docker.go`)
-- `Backend.Hostname()` returns `os.Hostname()` (full FQDN); kubelet uses it as `HostnameOverride`
-- `component.HostnameProvider` interface used by `ScopedOS` to delegate hostname to CRI backend
-- TracerProvider: uses `noop.NewTracerProvider()` — custom wrapper with warn logging was removed (was P0 noise: 379 lines/run)
+- Components run in background goroutines with health-check polling
+- Lazy initialization throughout (certs, backends, hosts)
+- No linter configured; `make fmt` runs `gofmt`

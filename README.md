@@ -1,13 +1,17 @@
 # nanokube
 
-A single binary that runs all Kubernetes control plane components in one process: etcd, kube-apiserver, kube-controller-manager, kube-scheduler, and kubelet.
+A single-binary Kubernetes distribution that runs etcd, kube-apiserver, kube-controller-manager, kube-scheduler, and kubelet in one process.
 
 ## Quick Start
 
 ```bash
-go install github.com/cnuss/nanokube@latest
-nanokube
+git clone --recurse-submodules https://github.com/cnuss/nanokube.git
+cd nanokube
+make build
+./nanokube --clean
 ```
+
+Requires Go 1.25+ and a container runtime (Docker recommended).
 
 ## Usage
 
@@ -20,37 +24,39 @@ nanokube [flags]
 | `--name` | `nanokube` | Cluster name |
 | `--data` | `~/.nanokube` | Data directory |
 | `--clean` | `false` | Clean data directory before starting |
-| `-v, --verbose` | `false` | Enable debug logging |
+| `--kubelet` | `true` | Start the kubelet component |
+| `-v, --verbose` | `false` | Enable debug logging (`-v` debug, `-vv` trace) |
 
 ## Container Runtimes
 
-nanokube auto-detects the container runtime by probing for sockets:
+nanokube includes its own CRI (Container Runtime Interface) daemon that bridges Kubernetes to container runtimes directly — no external CRI shim required.
 
-| Runtime | Detection |
-|---------|-----------|
-| Docker | `/var/run/docker.sock` (requires cri-dockerd) |
-| Podman | `/var/run/podman/podman.sock` |
-| containerd | `/var/run/containerd/containerd.sock` |
-| CRI-O | `/var/run/crio/crio.sock` |
+| Runtime | Status |
+|---------|--------|
+| Docker | Supported |
+| Podman | Planned |
 
-If no runtime is found, nanokube starts with stub implementations (useful for development/testing).
+Docker is auto-detected by probing common socket paths (`/var/run/docker.sock`, `~/.colima/default/docker.sock`, `~/.rd/docker.sock`, etc.). If no runtime is found, nanokube starts with a no-op backend.
 
-## Install
+## Build
 
 ```bash
-go install github.com/cnuss/nanokube@latest
+make submodules   # init git submodules (etcd, kubernetes)
+make build        # apply patches + build binary
+make run          # fmt, build, and run with --clean
 ```
 
-Or build from source:
+## Testing
 
 ```bash
-git clone --recurse-submodules https://github.com/cnuss/nanokube.git
-cd nanokube
-make build
+make test                        # unit tests
+make e2e                         # kuttl e2e suite (24 tests)
+make e2e WHAT=exec               # single e2e test by name
+make critest                     # CRI conformance tests
+make critest WHAT="port mapping" # single critest by focus
+make scenarios                   # kuttl scenario tests
 ```
-
-Requires Go 1.25+.
 
 ## License
 
-See [LICENSE](LICENSE).
+[Apache 2.0](LICENSE)
