@@ -568,7 +568,7 @@ func (s *Server) ListPodSandboxStats(context.Context, *runtimeapi.ListPodSandbox
 }
 
 // PodSandboxStats implements [v1.RuntimeServiceServer].
-func (s *Server) PodSandboxStats(context.Context, *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
+func (s *Server) PodSandboxStats(ctx context.Context, req *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
 	s.log.Warn().Str("method", "PodSandboxStats").Msg("not implemented")
 	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
 }
