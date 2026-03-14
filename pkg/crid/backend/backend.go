@@ -387,7 +387,6 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 		case <-ctx.Done():
 			b.grpc.Stop()
 		}
-		os.Remove(b.socket())
 	}
 
 	if b.streaming != nil {
@@ -397,6 +396,7 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 		}
 	}
 
+	os.Remove(b.socket())
 	b.log.Info().Str("backend", string(b.Name())).Msg("backend stopped")
 	return nil
 }

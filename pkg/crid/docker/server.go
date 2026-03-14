@@ -54,8 +54,7 @@ func (s *Server) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*ru
 
 // CheckpointContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CheckpointContainer(ctx context.Context, req *runtimeapi.CheckpointContainerRequest) (*runtimeapi.CheckpointContainerResponse, error) {
-	s.log.Warn().Str("method", "CheckpointContainer").Str("id", req.ContainerId).Msg("not implemented")
-	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"), req)
 }
 
 // ContainerStats implements [v1.RuntimeServiceServer].
@@ -507,9 +506,8 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 }
 
 // ListMetricDescriptors implements [v1.RuntimeServiceServer].
-func (s *Server) ListMetricDescriptors(context.Context, *runtimeapi.ListMetricDescriptorsRequest) (*runtimeapi.ListMetricDescriptorsResponse, error) {
-	s.log.Warn().Str("method", "ListMetricDescriptors").Msg("not implemented")
-	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
+func (s *Server) ListMetricDescriptors(_ context.Context, req *runtimeapi.ListMetricDescriptorsRequest) (*runtimeapi.ListMetricDescriptorsResponse, error) {
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"), req)
 }
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
@@ -556,21 +554,18 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 }
 
 // ListPodSandboxMetrics implements [v1.RuntimeServiceServer].
-func (s *Server) ListPodSandboxMetrics(context.Context, *runtimeapi.ListPodSandboxMetricsRequest) (*runtimeapi.ListPodSandboxMetricsResponse, error) {
-	s.log.Warn().Str("method", "ListPodSandboxMetrics").Msg("not implemented")
-	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
+func (s *Server) ListPodSandboxMetrics(_ context.Context, req *runtimeapi.ListPodSandboxMetricsRequest) (*runtimeapi.ListPodSandboxMetricsResponse, error) {
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"), req)
 }
 
 // ListPodSandboxStats implements [v1.RuntimeServiceServer].
-func (s *Server) ListPodSandboxStats(context.Context, *runtimeapi.ListPodSandboxStatsRequest) (*runtimeapi.ListPodSandboxStatsResponse, error) {
-	s.log.Warn().Str("method", "ListPodSandboxStats").Msg("not implemented")
-	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
+func (s *Server) ListPodSandboxStats(_ context.Context, req *runtimeapi.ListPodSandboxStatsRequest) (*runtimeapi.ListPodSandboxStatsResponse, error) {
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"), req)
 }
 
 // PodSandboxStats implements [v1.RuntimeServiceServer].
-func (s *Server) PodSandboxStats(ctx context.Context, req *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
-	s.log.Warn().Str("method", "PodSandboxStats").Msg("not implemented")
-	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
+func (s *Server) PodSandboxStats(_ context.Context, req *runtimeapi.PodSandboxStatsRequest) (*runtimeapi.PodSandboxStatsResponse, error) {
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"), req)
 }
 
 // PodSandboxStatus implements [v1.RuntimeServiceServer].
@@ -917,9 +912,8 @@ func (s *Server) UpdateContainerResources(ctx context.Context, req *runtimeapi.U
 }
 
 // UpdatePodSandboxResources implements [v1.RuntimeServiceServer].
-func (s *Server) UpdatePodSandboxResources(context.Context, *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
-	s.log.Warn().Str("method", "UpdatePodSandboxResources").Msg("not implemented")
-	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"))
+func (s *Server) UpdatePodSandboxResources(_ context.Context, req *runtimeapi.UpdatePodSandboxResourcesRequest) (*runtimeapi.UpdatePodSandboxResourcesResponse, error) {
+	return nil, component.WrapErr(s.log, fmt.Errorf("not implemented"), req)
 }
 
 // UpdateRuntimeConfig implements [v1.RuntimeServiceServer].

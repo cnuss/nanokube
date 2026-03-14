@@ -213,8 +213,7 @@ func (c *CSIImpl) GetPluginCapabilities(_ context.Context, req *csipb.GetPluginC
 }
 
 func (c *CSIImpl) Probe(_ context.Context, req *csipb.ProbeRequest) (*csipb.ProbeResponse, error) {
-	c.log.Warn().Any("req", req).Msg("Probe")
-	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"), req)
 }
 
 // --- csipb.NodeServer ---
@@ -288,26 +287,22 @@ func (c *CSIImpl) StorageClass() storagev1ac.StorageClassApplyConfiguration {
 
 // NodeExpandVolume implements [csi.NodeServer].
 func (c *CSIImpl) NodeExpandVolume(_ context.Context, req *csipb.NodeExpandVolumeRequest) (*csipb.NodeExpandVolumeResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeExpandVolume")
-	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"), req)
 }
 
 // NodeGetVolumeStats implements [csi.NodeServer].
 func (c *CSIImpl) NodeGetVolumeStats(_ context.Context, req *csipb.NodeGetVolumeStatsRequest) (*csipb.NodeGetVolumeStatsResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeGetVolumeStats")
-	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"), req)
 }
 
 // NodeStageVolume implements [csi.NodeServer].
 func (c *CSIImpl) NodeStageVolume(_ context.Context, req *csipb.NodeStageVolumeRequest) (*csipb.NodeStageVolumeResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeStageVolume")
-	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"), req)
 }
 
 // NodeUnstageVolume implements [csi.NodeServer].
 func (c *CSIImpl) NodeUnstageVolume(_ context.Context, req *csipb.NodeUnstageVolumeRequest) (*csipb.NodeUnstageVolumeResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeUnstageVolume")
-	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"))
+	return nil, component.WrapErr(c.log, fmt.Errorf("not implemented"), req)
 }
 
 // --- provisioner.Provisioner ---

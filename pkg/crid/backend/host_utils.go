@@ -9,8 +9,6 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 )
 
-var errHostUtilNotImplemented = fmt.Errorf("scoped host util not yet implemented")
-
 func NewHostUtils(backend *BackendImpl) hostutil.HostUtils {
 	hostUtils := &HostUtilsImpl{backend: backend, log: component.NewLogger("host-utils")}
 	// TODO: start
@@ -23,17 +21,17 @@ type HostUtilsImpl struct {
 }
 
 func (h *HostUtilsImpl) DeviceOpened(pathname string) (bool, error) {
-	h.log.Warn().Str("path", pathname).Msg("DeviceOpened not implemented")
+	h.log.Trace().Str("path", pathname).Msg("DeviceOpened not implemented")
 	return false, nil
 }
 
 func (h *HostUtilsImpl) PathIsDevice(pathname string) (bool, error) {
-	h.log.Warn().Str("path", pathname).Msg("PathIsDevice not implemented")
+	h.log.Trace().Str("path", pathname).Msg("PathIsDevice not implemented")
 	return false, nil
 }
 
 func (h *HostUtilsImpl) MakeRShared(path string) error {
-	h.log.Warn().Str("path", path).Msg("MakeRShared not implemented")
+	h.log.Trace().Str("path", path).Msg("MakeRShared not implemented")
 	return nil
 }
 
@@ -77,22 +75,20 @@ func (h *HostUtilsImpl) EvalHostSymlinks(pathname string) (string, error) {
 }
 
 func (h *HostUtilsImpl) GetOwner(pathname string) (int64, int64, error) {
-	h.log.Warn().Str("path", pathname).Msg("GetOwner not implemented")
-	return 0, 0, errHostUtilNotImplemented
+	return 0, 0, component.WrapErr(h.log, fmt.Errorf("not implemented"), pathname)
 }
 
 func (h *HostUtilsImpl) GetSELinuxSupport(pathname string) (bool, error) {
-	h.log.Warn().Str("path", pathname).Msg("GetSELinuxSupport not implemented")
+	h.log.Trace().Str("path", pathname).Msg("GetSELinuxSupport not implemented")
 	return false, nil
 }
 
 func (h *HostUtilsImpl) GetMode(pathname string) (os.FileMode, error) {
-	h.log.Warn().Str("path", pathname).Msg("GetMode not implemented")
-	return 0, errHostUtilNotImplemented
+	return 0, component.WrapErr(h.log, fmt.Errorf("not implemented"), pathname)
 }
 
 func (h *HostUtilsImpl) GetSELinuxMountContext(pathname string) (string, error) {
-	h.log.Warn().Str("path", pathname).Msg("GetSELinuxMountContext not implemented")
+	h.log.Trace().Str("path", pathname).Msg("GetSELinuxMountContext not implemented")
 	return "", nil
 }
 
