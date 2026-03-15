@@ -23,6 +23,7 @@ var options = config.NewOptions()
 var featureGates = map[string]bool{
 	"APIServerIdentity":         false,
 	"RuntimeClassInImageCriApi": false,
+	"KubeletInUserNamespace":    true,
 }
 
 var rootCmd = &cobra.Command{
