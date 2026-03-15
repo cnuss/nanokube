@@ -617,7 +617,8 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 		State:     s.backend.Into.PodState(inspect.State.Status),
 		CreatedAt: createdAt,
 		Network: &runtimeapi.PodSandboxNetworkStatus{
-			Ip: getIPFromInspect(inspect),
+			Ip:            getIPFromInspect(inspect),
+			AdditionalIps: getAdditionalIPs(inspect),
 		},
 		Linux: &runtimeapi.LinuxPodSandboxStatus{
 			Namespaces: &runtimeapi.Namespace{
@@ -709,6 +710,7 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
+	s.log.Info().Any("req", req).Msg("RunPodSandbox")
 	config := req.GetConfig()
 	meta := config.GetMetadata()
 
@@ -735,14 +737,9 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 	}
 
-	var extraHosts []string
-	if h := s.backend.parent.Hosts(); h != nil {
-		extraHosts = h.ExtraHosts(ctx, networkMode)
-	}
-
+	// TODO: set DNSNames on the per-sandbox network for Docker DNS discovery
 	hostConfig := &container.HostConfig{
-		IpcMode:    container.IpcMode("shareable"),
-		ExtraHosts: extraHosts,
+		IpcMode: container.IpcMode("shareable"),
 	}
 
 	// Port mappings — only publish when both containerPort and hostPort are set
@@ -819,7 +816,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				name: {},
+				name: {Aliases: []string{meta.GetName()}},
 			},
 		}
 	}

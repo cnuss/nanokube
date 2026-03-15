@@ -192,7 +192,8 @@ func (m *ContainerManagerImpl) ShouldResetExtendedResourceCapacity() bool {
 
 func (m *ContainerManagerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHandler {
 	return &podAdmitHandler{
-		log: component.NewLogger("pod-admit-handler"),
+		backend: m.backend,
+		log:     component.NewLogger("pod-admit-handler"),
 	}
 }
 
@@ -298,12 +299,10 @@ type containerLifecycle struct {
 }
 
 func (i *containerLifecycle) PreCreateContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerConfig *runtimeapi.ContainerConfig) error {
-	i.log.Warn().Msg("PreCreateContainer not implemented")
 	return nil
 }
 
 func (i *containerLifecycle) PreStartContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerID string) error {
-	i.log.Warn().Msg("PreStartContainer not implemented")
 	return nil
 }
 
@@ -398,13 +397,21 @@ func (p *podContainerManager) SetPodCgroupConfig(logger klog.Logger, pod *v1.Pod
 	return nil
 }
 
-// noopPodAdmitHandler implements lifecycle.PodAdmitHandler.
+// podAdmitHandler implements lifecycle.PodAdmitHandler.
+// Injects host aliases into pod specs before kubelet generates /etc/hosts.
 type podAdmitHandler struct {
-	log component.Logger
+	backend *BackendImpl
+	log     component.Logger
 }
 
 func (n *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
-	n.log.Warn().Msg("Admit not implemented")
+	if h := n.backend.Hosts(); h != nil {
+		network := NetworkBridge
+		if attrs.Pod.Spec.HostNetwork {
+			network = NetworkHost
+		}
+		attrs.Pod.Spec.HostAliases = append(attrs.Pod.Spec.HostAliases, h.HostAliases(n.backend.ctx, network)...)
+	}
 	return lifecycle.PodAdmitResult{Admit: true}
 }
 

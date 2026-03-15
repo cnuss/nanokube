@@ -551,3 +551,20 @@ func getIPFromInspect(inspect container.InspectResponse) string {
 	}
 	return ""
 }
+
+// getAdditionalIPs returns the actual bridge network IPs from Docker inspect.
+// These are the real container IPs used for pod-to-pod communication,
+// separate from the primary IP which may be 127.0.0.1 for Docker Desktop.
+func getAdditionalIPs(inspect container.InspectResponse) []*runtimeapi.PodIP {
+	if inspect.NetworkSettings == nil {
+		return nil
+	}
+	var ips []*runtimeapi.PodIP
+	for name, n := range inspect.NetworkSettings.Networks {
+		if name == "host" || name == "none" || n.IPAddress == "" {
+			continue
+		}
+		ips = append(ips, &runtimeapi.PodIP{Ip: n.IPAddress})
+	}
+	return ips
+}

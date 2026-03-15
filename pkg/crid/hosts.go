@@ -71,6 +71,20 @@ func init() {
 		panic(fmt.Sprintf("failed to resolve hostname '%s' to IP addresses: %v", hostname, err))
 	}
 
+	ifSet := make(map[string]bool, len(ifIps))
+	for _, ip := range ifIps {
+		ifSet[ip] = true
+	}
+	for _, nsIP := range nsIps {
+		parsed := net.ParseIP(strings.SplitN(nsIP, "%", 2)[0])
+		if parsed == nil || parsed.IsLoopback() || parsed.IsLinkLocalUnicast() {
+			continue
+		}
+		if !ifSet[nsIP] {
+			panic(fmt.Sprintf("hostname '%s' resolves to %s which is not bound to any local interface — check /etc/hosts or DNS", hostname, nsIP))
+		}
+	}
+
 	// net.DefaultResolver = DefaultHosts.Resolver()
 }
 
@@ -151,29 +165,54 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.Network) map[st
 	for _, b := range h.backends {
 		info, err := b.HostInfo()
 		if err != nil {
+			h.log.Error().Err(err).Msg("failed to get host info from backend")
 			continue
 		}
 		domain := info.Domain
 
 		sandboxes, err := b.Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{})
 		if err != nil {
+			h.log.Error().Err(err).Msg("failed to list pod sandboxes from backend")
 			continue
 		}
 		for _, sandbox := range sandboxes {
 			status, err := b.Containers().PodSandboxStatus(ctx, sandbox.GetId(), false)
 			if err != nil {
+				h.log.Error().Err(err).Msg("failed to get pod sandbox status from backend")
 				continue
 			}
 			ip := status.GetStatus().GetNetwork().GetIp()
+			ips := status.GetStatus().GetNetwork().GetAdditionalIps()
 			if ip == "" {
+				h.log.Warn().Str("sandbox", sandbox.GetId()).Msg("pod sandbox has no IP address, skipping")
 				continue
 			}
+			h.log.Info().Str("sandbox", sandbox.GetId()).Str("ip", ip).Any("additionalIps", ips).Msg("found pod sandbox IP from backend")
 			name := sandbox.GetMetadata().GetName()
 			hostname := strings.ToLower(fmt.Sprintf("%s.%s", name, domain))
 			entries[hostname] = append(entries[hostname], ip)
+
+			containers, err := b.Containers().ListContainers(ctx, &runtimeapi.ContainerFilter{PodSandboxId: sandbox.GetId()})
+			if err != nil {
+				h.log.Error().Err(err).Msg("failed to list containers for sandbox from backend")
+				continue
+			}
+			for _, container := range containers {
+				h.log.Info().Str("container", container.GetId()).Str("name", container.GetMetadata().GetName()).Str("podSandbox", sandbox.GetId()).Msg("found container in sandbox")
+				hostnames := []string{
+					strings.ToLower(fmt.Sprintf("%s.%s", container.Metadata.Name, sandbox.Metadata.Namespace)),
+					strings.ToLower(fmt.Sprintf("%s.%s.%s", container.Metadata.Name, sandbox.Metadata.Namespace, domain)),
+				}
+				for _, ip := range ips {
+					for _, hostname := range hostnames {
+						entries[hostname] = append(entries[hostname], ip.GetIp())
+					}
+				}
+			}
 		}
 	}
 
+	h.log.Info().Any("entries", entries).Msg("Host Entries")
 	return entries
 }
 
@@ -205,6 +244,27 @@ func (h *hostsImpl) HostAliases(ctx context.Context, network backend.Network) []
 		})
 	}
 	return hostAliases
+}
+
+func (h *hostsImpl) HostAliasesWithPod(ctx context.Context, runtime backend.Runtime, network backend.Network, pod *v1.Pod) []v1.HostAlias {
+	h.log.Info().Str("runtime", string(runtime)).Str("network", string(network)).Any("pod", pod).Msg("HostAliasesWithPod")
+	aliases := h.HostAliases(ctx, network)
+	sandbox, err := h.backends[runtime].Containers().PodSandboxStatus(ctx, pod.Name, false)
+	if err != nil {
+		h.log.Error().Err(err).Str("pod", pod.Name).Msg("failed to get pod sandbox status for host aliases")
+		return aliases
+	}
+	h.log.Info().Any("status", sandbox.GetStatus()).Msg("pod sandbox status")
+	ips := sandbox.GetStatus().GetNetwork().GetAdditionalIps()
+	for _, container := range pod.Spec.Containers {
+		for _, ip := range ips {
+			aliases = append(aliases, v1.HostAlias{
+				IP:        ip.GetIp(),
+				Hostnames: []string{strings.ToLower(container.Name)},
+			})
+		}
+	}
+	return aliases
 }
 
 func (h *hostsImpl) Resolver() *net.Resolver {

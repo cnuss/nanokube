@@ -10,7 +10,6 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid"
-	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -120,10 +119,10 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 		}
 	}
 
-	// Inject host aliases so the kubelet includes them in its managed /etc/hosts
-	if h := m.crid.Hosts(); h != nil {
-		pod.Spec.HostAliases = h.HostAliases(ctx, backend.NetworkHost)
-	}
+	// Host aliases are now injected via the pod admit handler in container_manager.go
+	// if h := m.crid.Hosts(); h != nil {
+	// 	pod.Spec.HostAliases = h.HostAliases(ctx, backend.NetworkHost)
+	// }
 
 	out, err := sigyaml.Marshal(pod)
 	if err != nil {

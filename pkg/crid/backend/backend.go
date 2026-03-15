@@ -53,6 +53,7 @@ type Hosts interface {
 	Entries(ctx context.Context, network Network) map[string][]string
 	ExtraHosts(ctx context.Context, network Network) []string
 	HostAliases(ctx context.Context, network Network) []v1.HostAlias
+	HostAliasesWithPod(ctx context.Context, runtime Runtime, network Network, pod *v1.Pod) []v1.HostAlias
 	Resolver() *net.Resolver
 }
 
