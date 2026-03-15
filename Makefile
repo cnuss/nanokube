@@ -67,7 +67,7 @@ DATA ?= /tmp/nanokube-test
 define run-nanokube
 	@mkdir -p $(DATA); \
 	trap 'kill $$! 2>/dev/null; wait' EXIT; \
-	./nanokube $(1) $(ARGS) --clean --data $(DATA) >/dev/null 2>&1 & \
+	./nanokube $(1) $(ARGS) --clean --data $(DATA) & \
 	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
 	echo "########################################"; \
 	echo "# NANOKUBE LOG: $(DATA)/log"; \

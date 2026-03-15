@@ -67,20 +67,27 @@ func (m *Manifests) writeKubeconfig(hostname string) {
 	kubeconfigPath := m.crid.Files().Kubeconfig
 
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
+		manifestsLog.Info().Str("path", kubeconfigPath).Msg("writing kubeconfig")
 		clientcmd.WriteToFile(config, kubeconfigPath)
+	} else {
+		manifestsLog.Info().Str("path", kubeconfigPath).Msg("kubeconfig already exists, skipping")
 	}
 
 	// Merge into ~/.kube/config
-	dst, err := clientcmd.LoadFromFile(m.crid.Files().RecommendedHomeFile)
+	recommendedPath := m.crid.Files().RecommendedHomeFile
+	dst, err := clientcmd.LoadFromFile(recommendedPath)
 	if err != nil {
+		manifestsLog.Info().Str("path", recommendedPath).Msg("creating ~/.kube/config")
 		dst = clientcmdapi.NewConfig()
 	}
 	dst.Clusters[m.crid.Name()] = config.Clusters[m.crid.Name()]
 	dst.AuthInfos[m.crid.Name()] = config.AuthInfos[m.crid.Name()]
 	dst.Contexts[m.crid.Name()] = config.Contexts[m.crid.Name()]
 	dst.CurrentContext = m.crid.Name()
-	if err := clientcmd.WriteToFile(*dst, m.crid.Files().RecommendedHomeFile); err != nil {
-		manifestsLog.Warn().Err(err).Msg("failed to write ~/.kube/config")
+	if err := clientcmd.WriteToFile(*dst, recommendedPath); err != nil {
+		manifestsLog.Warn().Err(err).Str("path", recommendedPath).Msg("failed to write ~/.kube/config")
+	} else {
+		manifestsLog.Info().Str("path", recommendedPath).Str("context", m.crid.Name()).Msg("merged kubeconfig")
 	}
 }
 

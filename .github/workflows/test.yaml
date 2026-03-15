@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, "1.35"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   critest:
     runs-on: ubuntu-latest
