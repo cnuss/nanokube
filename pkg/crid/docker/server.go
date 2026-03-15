@@ -744,19 +744,17 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		ExtraHosts: extraHosts,
 	}
 
-	// Port mappings
+	// Port mappings — only publish when both containerPort and hostPort are set
 	if pms := config.GetPortMappings(); len(pms) > 0 {
 		dockerConfig.ExposedPorts = nat.PortSet{}
 		hostConfig.PortBindings = nat.PortMap{}
 		for _, pm := range pms {
 			port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
 			dockerConfig.ExposedPorts[port] = struct{}{}
-			hostPort := pm.GetHostPort()
-			if hostPort == 0 {
-				hostPort = pm.GetContainerPort()
-			}
-			hostConfig.PortBindings[port] = []nat.PortBinding{
-				{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
+			if hostPort := pm.GetHostPort(); hostPort != 0 {
+				hostConfig.PortBindings[port] = []nat.PortBinding{
+					{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
+				}
 			}
 		}
 	}
@@ -811,10 +809,12 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 	}
 
-	// Create per-sandbox bridge network for pod isolation
+	// Create per-sandbox bridge network for pod isolation (idempotent)
 	if networkMode != backend.NetworkHost {
-		if _, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{Labels: labels}); err != nil {
-			return nil, component.WrapErr(s.log, err)
+		if _, err := s.backend.client.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
+			if _, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{Labels: labels}); err != nil {
+				return nil, component.WrapErr(s.log, err)
+			}
 		}
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
