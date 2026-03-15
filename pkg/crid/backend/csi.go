@@ -314,6 +314,10 @@ func (c *CSIImpl) Provision(ctx context.Context, opts provisioner.ProvisionOptio
 
 	resp, err := c.backend.VolumeServer().CreateVolume(ctx, &csipb.CreateVolumeRequest{
 		Name: opts.PVName,
+		Parameters: map[string]string{
+			"name":      opts.PVC.Name,
+			"namespace": opts.PVC.Namespace,
+		},
 		CapacityRange: &csipb.CapacityRange{
 			RequiredBytes: capacity.Value(),
 		},

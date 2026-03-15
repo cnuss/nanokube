@@ -319,8 +319,8 @@ func (p *ProberImpl) resolveContainerID(ctx context.Context, podUID types.UID, c
 	containers, err := p.backend.containers.ListContainers(ctx, &runtimeapi.ContainerFilter{
 		State: &runtimeapi.ContainerStateValue{State: state},
 		LabelSelector: map[string]string{
-			p.backend.Labels().PodUIDKey():        string(podUID),
-			p.backend.Labels().ContainerNameKey(): containerName,
+			p.backend.Labels().UIDKey():  string(podUID),
+			p.backend.Labels().NameKey(): containerName,
 		},
 	})
 	if err != nil {

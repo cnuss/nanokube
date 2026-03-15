@@ -80,7 +80,7 @@ func (m *ContainerManagerImpl) streamContainerEvents(ctx context.Context) {
 			if ev.Resource != ResourceContainer {
 				continue
 			}
-			uid := m.backend.Labels().PodUID(ev.Attributes)
+			uid := m.backend.Labels().UID(ev.Attributes)
 			if uid == "" {
 				continue
 			}
@@ -326,7 +326,7 @@ func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, s
 	sandboxes, err := p.backend.ContainerServer().ListPodSandbox(p.ctx, &runtimeapi.ListPodSandboxRequest{
 		Filter: &runtimeapi.PodSandboxFilter{
 			LabelSelector: map[string]string{
-				p.backend.Labels().PodUIDKey(): string(pod.UID),
+				p.backend.Labels().UIDKey(): string(pod.UID),
 			},
 		},
 	})
@@ -352,7 +352,7 @@ func (p *podContainerManager) Exists(pod *v1.Pod) bool {
 	sandboxes, err := p.backend.ContainerServer().ListPodSandbox(p.ctx, &runtimeapi.ListPodSandboxRequest{
 		Filter: &runtimeapi.PodSandboxFilter{
 			LabelSelector: map[string]string{
-				p.backend.Labels().PodUIDKey(): string(pod.UID),
+				p.backend.Labels().UIDKey(): string(pod.UID),
 			},
 		},
 	})

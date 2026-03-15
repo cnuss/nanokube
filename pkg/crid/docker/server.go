@@ -12,6 +12,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
+	"github.com/cnuss/nanokube/pkg/crid/labels"
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
@@ -119,7 +120,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 	status := &runtimeapi.ContainerStatus{
 		Id: inspect.ID,
 		Metadata: &runtimeapi.ContainerMetadata{
-			Name:    s.backend.labels.ContainerName(inspect.Config.Labels),
+			Name:    s.backend.labels.GetName(inspect.Config.Labels),
 			Attempt: s.backend.labels.Attempt(inspect.Config.Labels),
 		},
 		State:       state,
@@ -192,16 +193,13 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	name, labels, err := s.backend.labels.NewBuilder(nil).
 		WithLabels(sandboxLabels).
 		WithLabels(config.GetLabels()).
-		WithContainer(sandboxID, meta.GetName(), meta.GetAttempt()).
+		WithType(labels.TypeContainer).WithName(meta.GetName()).WithParentUid(sandboxID).WithAttempt(meta.GetAttempt()).
 		WithAnnotations(sandboxAnnotations).
 		WithAnnotations(config.GetAnnotations()).
 		WithLogDirectory(s.backend.labels.LogDirectory(sandboxInspect.Config.Labels)).
 		WithLogPath(config.GetLogPath()).
-		WithPod(
-			s.backend.labels.PodName(sandboxInspect.Config.Labels),
-			s.backend.labels.PodNamespace(sandboxInspect.Config.Labels),
-			s.backend.labels.PodUID(sandboxInspect.Config.Labels),
-		).
+		WithNamespace(s.backend.labels.Namespace(sandboxInspect.Config.Labels)).
+		WithUid(s.backend.labels.UID(sandboxInspect.Config.Labels)).
 		Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
@@ -384,12 +382,12 @@ func (s *Server) GetContainerEvents(_ *runtimeapi.GetEventsRequest, stream grpc.
 			}
 
 			// Skip sandbox containers — CRI events are for app containers only
-			if ev.Attributes[lp.Prefix("type")] == "sandbox" {
+			if ev.Attributes[lp.Prefix("type")] == string(labels.TypeSandbox) {
 				continue
 			}
 
 			containerID := ev.ID
-			sandboxID := lp.SandboxID(ev.Attributes)
+			sandboxID := lp.ParentUID(ev.Attributes)
 
 			var sandboxStatus *runtimeapi.PodSandboxStatus
 			if sandboxID != "" {
@@ -462,7 +460,7 @@ func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListCon
 func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContainersRequest) (*runtimeapi.ListContainersResponse, error) {
 	s.log.Trace().Msg("ListContainers")
 
-	lb := s.backend.labels.NewBuilder(nil).WithType("container")
+	lb := s.backend.labels.NewBuilder(nil).WithType(labels.TypeContainer)
 	f := s.backend.Into.Filters(lb)
 
 	if filter := req.GetFilter(); filter != nil {
@@ -470,7 +468,7 @@ func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContain
 			f.Add("id", filter.Id)
 		}
 		if filter.PodSandboxId != "" {
-			f.Add("label", s.backend.labels.SandboxIDFilter(filter.PodSandboxId))
+			f.Add("label", s.backend.labels.ParentUIDFilter(filter.PodSandboxId))
 		}
 		if filter.State != nil {
 			switch filter.State.State {
@@ -517,7 +515,7 @@ func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSand
 		req = &runtimeapi.ListPodSandboxRequest{}
 	}
 
-	f := s.backend.Into.Filters(s.backend.labels.NewBuilder(nil).WithType("sandbox"))
+	f := s.backend.Into.Filters(s.backend.labels.NewBuilder(nil).WithType(labels.TypeSandbox))
 
 	if filter := req.GetFilter(); filter != nil {
 		if filter.Id != "" {
@@ -600,9 +598,9 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 	status := &runtimeapi.PodSandboxStatus{
 		Id: inspect.ID,
 		Metadata: &runtimeapi.PodSandboxMetadata{
-			Name:      s.backend.labels.PodName(inspect.Config.Labels),
-			Namespace: s.backend.labels.PodNamespace(inspect.Config.Labels),
-			Uid:       s.backend.labels.PodUID(inspect.Config.Labels),
+			Name:      s.backend.labels.GetName(inspect.Config.Labels),
+			Namespace: s.backend.labels.Namespace(inspect.Config.Labels),
+			Uid:       s.backend.labels.UID(inspect.Config.Labels),
 		},
 		State:     s.backend.Into.PodState(inspect.State.Status),
 		CreatedAt: createdAt,
@@ -687,8 +685,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	meta := config.GetMetadata()
 
 	name, labels, err := s.backend.labels.NewBuilder(config.GetLabels()).
-		WithSandbox(meta.GetUid()).
-		WithPod(meta.GetName(), meta.GetNamespace(), meta.GetUid()).
+		WithType(labels.TypeSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUid(meta.GetUid()).
 		WithAnnotations(config.GetAnnotations()).
 		WithLogDirectory(config.GetLogDirectory()).
 		Build()
@@ -1067,7 +1064,12 @@ func (s *Server) CreateVolume(ctx context.Context, req *csipb.CreateVolumeReques
 	name := req.GetName()
 	s.log.Info().Str("name", name).Msg("CreateVolume")
 
-	volName, volLabels, err := s.backend.labels.NewBuilder(nil).WithVolume(name).Build()
+	params := req.GetParameters()
+	volName, volLabels, err := s.backend.labels.NewBuilder(nil).
+		WithType(labels.TypeVolume).WithUid(name).
+		WithName(params["name"]).
+		WithNamespace(params["namespace"]).
+		Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, fmt.Errorf("build volume labels: %w", err))
 	}
@@ -1092,7 +1094,7 @@ func (s *Server) DeleteVolume(ctx context.Context, req *csipb.DeleteVolumeReques
 	volumeID := req.GetVolumeId()
 	s.log.Info().Str("volume", volumeID).Msg("DeleteVolume")
 
-	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
+	volName, _, err := s.backend.labels.NewBuilder(nil).WithType(labels.TypeVolume).WithUid(volumeID).Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, fmt.Errorf("build volume name: %w", err))
 	}
@@ -1137,7 +1139,7 @@ func (s *Server) ControllerUnpublishVolume(_ context.Context, _ *csipb.Controlle
 // ValidateVolumeCapabilities implements [csipb.ControllerServer].
 func (s *Server) ValidateVolumeCapabilities(ctx context.Context, req *csipb.ValidateVolumeCapabilitiesRequest) (*csipb.ValidateVolumeCapabilitiesResponse, error) {
 	volumeID := req.GetVolumeId()
-	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
+	volName, _, err := s.backend.labels.NewBuilder(nil).WithType(labels.TypeVolume).WithUid(volumeID).Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, fmt.Errorf("build volume name: %w", err))
 	}
@@ -1207,7 +1209,7 @@ func (s *Server) ControllerExpandVolume(_ context.Context, req *csipb.Controller
 // ControllerGetVolume implements [csipb.ControllerServer].
 func (s *Server) ControllerGetVolume(ctx context.Context, req *csipb.ControllerGetVolumeRequest) (*csipb.ControllerGetVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
-	volName, _, err := s.backend.labels.NewBuilder(nil).WithVolume(volumeID).Build()
+	volName, _, err := s.backend.labels.NewBuilder(nil).WithType(labels.TypeVolume).WithUid(volumeID).Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, fmt.Errorf("build volume name: %w", err))
 	}

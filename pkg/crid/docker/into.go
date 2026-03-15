@@ -53,9 +53,9 @@ func (i *DockerInto) CreatedAt(ts string) int64 {
 func (i *DockerInto) Container(c container.Summary) *runtimeapi.Container {
 	return &runtimeapi.Container{
 		Id:           c.ID,
-		PodSandboxId: i.labels.SandboxID(c.Labels),
+		PodSandboxId: i.labels.ParentUID(c.Labels),
 		Metadata: &runtimeapi.ContainerMetadata{
-			Name:    i.labels.ContainerName(c.Labels),
+			Name:    i.labels.GetName(c.Labels),
 			Attempt: i.labels.Attempt(c.Labels),
 		},
 		Image:       &runtimeapi.ImageSpec{Image: c.Image},
@@ -71,9 +71,9 @@ func (i *DockerInto) PodSandbox(c container.Summary) *runtimeapi.PodSandbox {
 	return &runtimeapi.PodSandbox{
 		Id: c.ID,
 		Metadata: &runtimeapi.PodSandboxMetadata{
-			Name:      i.labels.PodName(c.Labels),
-			Namespace: i.labels.PodNamespace(c.Labels),
-			Uid:       i.labels.PodUID(c.Labels),
+			Name:      i.labels.GetName(c.Labels),
+			Namespace: i.labels.Namespace(c.Labels),
+			Uid:       i.labels.UID(c.Labels),
 		},
 		State:       i.PodState(c.State),
 		CreatedAt:   time.Unix(c.Created, 0).UnixNano(),

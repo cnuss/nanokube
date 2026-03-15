@@ -108,10 +108,10 @@ func (e *EventRecorderImpl) handleEvent(ev Event) {
 	}
 
 	lp := e.backend.Labels()
-	name := lp.PodName(ev.Attributes)
-	namespace := lp.PodNamespace(ev.Attributes)
-	uid := lp.PodUID(ev.Attributes)
-	containerName := lp.ContainerName(ev.Attributes)
+	name := lp.GetName(ev.Attributes)
+	namespace := lp.Namespace(ev.Attributes)
+	uid := lp.UID(ev.Attributes)
+	containerName := lp.GetName(ev.Attributes)
 
 	if name == "" || namespace == "" || uid == "" {
 		return
