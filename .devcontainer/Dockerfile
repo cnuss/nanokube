@@ -6,9 +6,6 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && dpkg -i /tmp/k9s.deb \
     && rm /tmp/k9s.deb
 
-# Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
-
 # Pre-install Go tools (also auto-installed by the VS Code Go extension)
 USER vscode
 RUN go install golang.org/x/tools/gopls@latest \
