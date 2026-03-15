@@ -309,6 +309,28 @@ func (p *ProberImpl) runProbe(ctx context.Context, uid types.UID, container *v1.
 	}
 }
 
+// resolveSandboxID finds the running sandbox container ID for a given pod UID.
+// Probes exec into the sandbox (busybox) rather than the app container, so
+// probe tooling doesn't depend on the app image contents.
+func (p *ProberImpl) resolveSandboxID(ctx context.Context, podUID types.UID) (string, error) {
+	if p.backend == nil {
+		return "", fmt.Errorf("no CRI backend available")
+	}
+	sandboxes, err := p.backend.containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{
+		State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY},
+		LabelSelector: map[string]string{
+			p.backend.Labels().UIDKey(): string(podUID),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("list sandboxes: %w", err)
+	}
+	if len(sandboxes) == 0 {
+		return "", fmt.Errorf("no ready sandbox found for %s", podUID)
+	}
+	return sandboxes[0].Id, nil
+}
+
 // resolveContainerID finds the running container ID for a given pod UID and
 // container name by querying the CRI backend with label selectors.
 func (p *ProberImpl) resolveContainerID(ctx context.Context, podUID types.UID, containerName string) (string, error) {
@@ -343,62 +365,74 @@ func (p *ProberImpl) executeProbe(ctx context.Context, probeSpec *v1.Probe, cont
 		timeoutSec = 1
 	}
 
-	containerID, err := p.resolveContainerID(ctx, podUID, container.Name)
-	if err != nil {
-		p.log.Debug().Err(err).Str("pod", podName).Str("container", container.Name).Msg("resolve container for probe")
-		return probe.Failure
-	}
-
 	var cmd []string
+	var execTarget string // container ID to exec into
 
 	switch {
 	case handler.Exec != nil:
-		cmd = handler.Exec.Command
-
-	case handler.HTTPGet != nil:
-		scheme := "http"
-		if handler.HTTPGet.Scheme == v1.URISchemeHTTPS {
-			scheme = "https"
-		}
-		port := handler.HTTPGet.Port.IntValue()
-		if port == 0 {
-			port, err = probe.ResolveContainerPort(handler.HTTPGet.Port, container)
-			if err != nil {
-				p.log.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("http probe port error")
-				return probe.Failure
-			}
-		}
-		path := handler.HTTPGet.Path
-		if path == "" {
-			path = "/"
-		}
-		url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
-		cmd = []string{"wget", "-q", "-O", "/dev/null", "-S", fmt.Sprintf("--timeout=%d", timeoutSec)}
-		if host := handler.HTTPGet.Host; host != "" {
-			cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
-		}
-		for _, h := range handler.HTTPGet.HTTPHeaders {
-			cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
-		}
-		cmd = append(cmd, url)
-
-	case handler.TCPSocket != nil:
-		port, err := probe.ResolveContainerPort(handler.TCPSocket.Port, container)
+		// Exec probes run in the app container per Kubernetes spec
+		containerID, err := p.resolveContainerID(ctx, podUID, container.Name)
 		if err != nil {
-			p.log.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("tcp probe port error")
+			p.log.Debug().Err(err).Str("pod", podName).Str("container", container.Name).Msg("resolve container for probe")
 			return probe.Failure
 		}
-		cmd = []string{"nc", "-z", fmt.Sprintf("-w%d", timeoutSec), "localhost", fmt.Sprintf("%d", port)}
+		execTarget = containerID
+		cmd = handler.Exec.Command
 
-	case handler.GRPC != nil:
-		p.log.Warn().Str("pod", podName).Str("container", container.Name).Msg("grpc probe not supported, treating as success")
-		return probe.Success
+	case handler.HTTPGet != nil, handler.TCPSocket != nil, handler.GRPC != nil:
+		// HTTP/TCP/GRPC probes exec into the sandbox (busybox) which shares
+		// the pod network namespace and always has wget/nc available.
+		sandboxID, err := p.resolveSandboxID(ctx, podUID)
+		if err != nil {
+			p.log.Debug().Err(err).Str("pod", podName).Msg("resolve sandbox for probe")
+			return probe.Failure
+		}
+		execTarget = sandboxID
+
+		if handler.HTTPGet != nil {
+			scheme := "http"
+			if handler.HTTPGet.Scheme == v1.URISchemeHTTPS {
+				scheme = "https"
+			}
+			port := handler.HTTPGet.Port.IntValue()
+			if port == 0 {
+				port, err = probe.ResolveContainerPort(handler.HTTPGet.Port, container)
+				if err != nil {
+					p.log.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("http probe port error")
+					return probe.Failure
+				}
+			}
+			path := handler.HTTPGet.Path
+			if path == "" {
+				path = "/"
+			}
+			url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
+			cmd = []string{"wget", "-q", "-O", "/dev/null", "-S", fmt.Sprintf("--timeout=%d", timeoutSec)}
+			if host := handler.HTTPGet.Host; host != "" {
+				cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
+			}
+			for _, h := range handler.HTTPGet.HTTPHeaders {
+				cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
+			}
+			cmd = append(cmd, url)
+		} else if handler.TCPSocket != nil {
+			port, err := probe.ResolveContainerPort(handler.TCPSocket.Port, container)
+			if err != nil {
+				p.log.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("tcp probe port error")
+				return probe.Failure
+			}
+			cmd = []string{"nc", "-z", fmt.Sprintf("-w%d", timeoutSec), "localhost", fmt.Sprintf("%d", port)}
+		} else {
+			// GRPC: TCP connect fallback (does not speak the GRPC health protocol)
+			cmd = []string{"nc", "-z", fmt.Sprintf("-w%d", timeoutSec), "localhost", fmt.Sprintf("%d", handler.GRPC.Port)}
+		}
 
 	default:
-		return probe.Success
+		p.log.Warn().Str("pod", podName).Str("container", container.Name).Msg("unknown probe handler")
+		return probe.Failure
 	}
 
-	stdout, stderr, execErr := p.backend.containers.ExecSync(ctx, containerID, cmd, timeout)
+	stdout, stderr, execErr := p.backend.containers.ExecSync(ctx, execTarget, cmd, timeout)
 	if execErr != nil {
 		p.log.Debug().
 			Err(execErr).

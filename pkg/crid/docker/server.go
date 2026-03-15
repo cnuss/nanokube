@@ -32,7 +32,7 @@ import (
 	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
-const defaultPauseImage = "registry.k8s.io/pause:3.10"
+const defaultPauseImage = "busybox:latest"
 
 func NewServer(b *DockerBackend, parent backend.Backend) *Server {
 	return &Server{
@@ -722,9 +722,10 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	}
 
 	dockerConfig := &container.Config{
-		Image:    defaultPauseImage,
-		Hostname: config.GetHostname(),
-		Labels:   labels,
+		Image:      defaultPauseImage,
+		Entrypoint: []string{"sleep", "infinity"},
+		Hostname:   config.GetHostname(),
+		Labels:     labels,
 	}
 
 	networkMode := backend.NetworkBridge
