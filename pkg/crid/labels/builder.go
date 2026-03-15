@@ -3,10 +3,29 @@ package labels
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 )
 
-var errBuilderSealed = errors.New("LabelBuilder: mutation after Build")
+var (
+	errBuilderSealed = errors.New("LabelBuilder: mutation after Build")
+	reNotDNS         = regexp.MustCompile(`[^a-z0-9-]`)
+	reMultiDash      = regexp.MustCompile(`-{2,}`)
+)
+
+// dnsNormalize converts a string to a valid RFC 1123 DNS label:
+// lowercase, alphanumeric + hyphens, no leading/trailing hyphens, max 63 chars.
+func normalize(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "_", "-")
+	s = strings.ReplaceAll(s, ".", "-")
+	s = reNotDNS.ReplaceAllString(s, "")
+	s = reMultiDash.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	return s
+}
 
 type LabelBuilder struct {
 	mu     sync.Mutex
@@ -71,6 +90,29 @@ func (b *LabelBuilder) WithAttempt(attempt uint32) *LabelBuilder {
 	return b
 }
 
+// Clone returns an unsealed copy of the builder.
+func (b *LabelBuilder) Clone() *LabelBuilder {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	clone := &LabelBuilder{
+		lp:     b.lp,
+		labels: make(map[string]string, len(b.labels)),
+	}
+	for k, v := range b.labels {
+		clone.labels[k] = v
+	}
+	return clone
+}
+
+// IncrementAttempt bumps the attempt counter by one.
+func (b *LabelBuilder) IncrementAttempt() *LabelBuilder {
+	b.mu.Lock()
+	current, _ := strconv.ParseUint(b.labels[b.lp.Prefix(attemptKey)], 10, 32)
+	b.mu.Unlock()
+	b.set(attemptKey, fmt.Sprintf("%d", current+1))
+	return b
+}
+
 func (b *LabelBuilder) WithLabels(labels map[string]string) *LabelBuilder {
 	if len(labels) == 0 {
 		return b
@@ -129,15 +171,15 @@ func (b *LabelBuilder) Build() (string, map[string]string, error) {
 		return "", nil, b.err
 	}
 	b.built = true
-	name := fmt.Sprintf("%s_%s_%s_%s_%s_%s",
-		b.lp.name,
-		b.get(typeKey),
-		b.get(nameKey),
-		b.get(namespaceKey),
-		b.get(uidKey),
-		b.get(attemptKey),
-	)
-	return name, b.labels, nil
+	name := normalize(b.get(nameKey))
+	if attempt := b.get(attemptKey); attempt != "" {
+		name += "-" + attempt
+	}
+	if t := b.get(typeKey); t != string(TypeContainer) && t != string(TypeVolume) {
+		name += "-" + t
+	}
+	parts := []string{name, normalize(b.get(namespaceKey)), normalize(b.lp.name)}
+	return strings.Join(parts, "."), b.labels, nil
 }
 
 func (b *LabelBuilder) InternalLabels() map[string]string {

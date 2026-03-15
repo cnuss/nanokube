@@ -2,7 +2,8 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: kubernetes
+  name: control-plane
+  namespace: kube-system
 spec:
   containers:
     - name: debug

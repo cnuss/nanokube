@@ -190,17 +190,20 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	sandboxAnnotations := s.backend.labels.ExtractAnnotations(sandboxInspect.Config.Labels)
 
 	// Labels: start from sandbox, layer container labels on top
-	name, labels, err := s.backend.labels.NewBuilder(nil).
-		WithLabels(sandboxLabels).
+	labelBuilder := s.backend.labels.NewBuilder(sandboxInspect.Config.Labels).WithLabels(sandboxLabels).
 		WithLabels(config.GetLabels()).
-		WithType(labels.TypeContainer).WithName(meta.GetName()).WithParentUid(sandboxID).WithAttempt(meta.GetAttempt()).
+		WithType(labels.TypeContainer).
+		WithName(meta.GetName()).
+		WithNamespace(s.backend.labels.Namespace(sandboxInspect.Config.Labels)).
+		WithParentUid(sandboxID).
+		WithAttempt(meta.GetAttempt()).
 		WithAnnotations(sandboxAnnotations).
 		WithAnnotations(config.GetAnnotations()).
 		WithLogDirectory(s.backend.labels.LogDirectory(sandboxInspect.Config.Labels)).
 		WithLogPath(config.GetLogPath()).
-		WithNamespace(s.backend.labels.Namespace(sandboxInspect.Config.Labels)).
-		WithUid(s.backend.labels.UID(sandboxInspect.Config.Labels)).
-		Build()
+		WithUid(s.backend.labels.UID(sandboxInspect.Config.Labels))
+
+	name, labels, err := labelBuilder.Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
@@ -265,7 +268,27 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		}
 	}
 
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
+	nameFn := func() string {
+		return name
+	}
+
+	dockerConfigFn := func() *container.Config {
+		return dockerConfig
+	}
+
+	var createFn func() (container.CreateResponse, error)
+	createFn = func() (container.CreateResponse, error) {
+		resp, err := s.backend.client.ContainerCreate(ctx, dockerConfigFn(), hostConfig, nil, nil, nameFn())
+		if err != nil && errdefs.IsConflict(err) {
+			// Increment attempt in case its a ReplicaSet
+			name, labels, err = labelBuilder.Clone().IncrementAttempt().Build()
+			dockerConfig.Labels = labels
+			return createFn()
+		}
+		return resp, err
+	}
+
+	resp, err := createFn()
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
