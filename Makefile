@@ -89,4 +89,4 @@ helm: build
 critest: build
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$(DATA)/docker/cri.sock" ],\
-		critest --ginkgo.v --ginkgo.skip 'AppArmor|SecComp|RunAsUser|Privileged|UserNamespace|SELinux|SupplementalGroups|OOM' $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
+		critest --ginkgo.v --ginkgo.focus 'Conformance' $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
