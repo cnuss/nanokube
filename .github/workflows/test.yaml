@@ -11,8 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  critest:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        suite: [critest, e2e]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,24 +35,4 @@ jobs:
 
       - run: cd kubernetes && git fetch --tags
       - run: make init
-      - run: make critest
-
-  # e2e disabled until #4 is resolved (/dev/kmsg permission on GHA)
-  # e2e:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         submodules: recursive
-  #         fetch-depth: 0
-  #         fetch-tags: true
-  #     - uses: actions/setup-go@v5
-  #       with:
-  #         go-version-file: go.mod
-  #     - uses: actions/cache@v4
-  #       with:
-  #         path: ~/go/bin
-  #         key: go-bin-${{ runner.os }}-critest-v1.35.0-kuttl-0.25.0
-  #     - run: cd kubernetes && git fetch --tags
-  #     - run: make init
-  #     - run: make e2e
+      - run: make ${{ matrix.suite }}
