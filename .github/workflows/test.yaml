@@ -1,0 +1,36 @@
+name: test
+
+on:
+  push:
+    branches: [main, "1.35"]
+  pull_request:
+    branches: [main, "1.35"]
+
+jobs:
+  critest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run CRI conformance tests
+        run: make critest
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run e2e tests
+        run: make e2e

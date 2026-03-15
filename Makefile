@@ -28,7 +28,7 @@ patch-save:
 
 patch: patch-kubernetes
 
-build: patch
+build: patch init
 	CGO_ENABLED=0 go build -ldflags="-s -w $(VERSION_LDFLAGS)" -o nanokube .
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 
