@@ -268,27 +268,14 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		}
 	}
 
-	nameFn := func() string {
-		return name
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
+	for err != nil && errdefs.IsConflict(err) {
+		labelBuilder = labelBuilder.Clone().IncrementAttempt()
+		name, labels, err = labelBuilder.Build()
+		dockerConfig.Labels = labels
+		s.log.Info().Str("name", name).Msg("container name conflict, retrying")
+		resp, err = s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	}
-
-	dockerConfigFn := func() *container.Config {
-		return dockerConfig
-	}
-
-	var createFn func() (container.CreateResponse, error)
-	createFn = func() (container.CreateResponse, error) {
-		resp, err := s.backend.client.ContainerCreate(ctx, dockerConfigFn(), hostConfig, nil, nil, nameFn())
-		if err != nil && errdefs.IsConflict(err) {
-			// Increment attempt in case its a ReplicaSet
-			name, labels, err = labelBuilder.Clone().IncrementAttempt().Build()
-			dockerConfig.Labels = labels
-			return createFn()
-		}
-		return resp, err
-	}
-
-	resp, err := createFn()
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
