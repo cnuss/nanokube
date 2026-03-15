@@ -18,8 +18,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run CRI conformance tests
-        run: make critest
+      - uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: go-bin-${{ runner.os }}-critest-v1.35.0-kuttl-0.25.0
+
+      - run: make init
+      - run: make critest
 
   e2e:
     runs-on: ubuntu-latest
@@ -32,5 +37,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run e2e tests
-        run: make e2e
+      - uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: go-bin-${{ runner.os }}-critest-v1.35.0-kuttl-0.25.0
+
+      - run: make init
+      - run: make e2e

@@ -1,6 +1,7 @@
 .PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e helm
 
 CRITEST_VERSION := v1.35.0
+KUTTL_VERSION := 0.25.0
 
 VERSION_PKG := k8s.io/component-base/version
 KUBE_GIT_VERSION := $(shell cd kubernetes && git describe --tags --match='v*' 2>/dev/null | sed 's/-g/-/')
@@ -28,7 +29,7 @@ patch-save:
 
 patch: patch-kubernetes
 
-build: patch init
+build: patch
 	CGO_ENABLED=0 go build -ldflags="-s -w $(VERSION_LDFLAGS)" -o nanokube .
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 
@@ -52,9 +53,11 @@ run: fmt build
 run-clean: ARGS += --clean
 run-clean: run
 
+KUTTL_ARCH = $(shell go env GOARCH | sed 's/amd64/x86_64/')
+
 init:
-	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)
-	go install sigs.k8s.io/kuttl/cmd/kubectl-kuttl@latest
+	@which critest >/dev/null 2>&1 || curl -fsSL https://github.com/kubernetes-sigs/cri-tools/releases/download/$(CRITEST_VERSION)/critest-$(CRITEST_VERSION)-$$(go env GOOS)-$$(go env GOARCH).tar.gz | tar xz -C $$(go env GOPATH)/bin critest
+	@which kubectl-kuttl >/dev/null 2>&1 || curl -fsSLo $$(go env GOPATH)/bin/kubectl-kuttl https://github.com/kudobuilder/kuttl/releases/download/v$(KUTTL_VERSION)/kubectl-kuttl_$(KUTTL_VERSION)_$$(go env GOOS)_$(KUTTL_ARCH) && chmod +x $$(go env GOPATH)/bin/kubectl-kuttl
 
 WHAT ?=
 
