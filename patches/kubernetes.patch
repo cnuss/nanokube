@@ -109,6 +109,39 @@ index 834213e337f..89fcd5271ff 100644
  				}
  			},
  		}
+diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
+index b8b7cfd84e9..b04f690eb36 100644
+--- a/pkg/kubelet/kubelet.go
++++ b/pkg/kubelet/kubelet.go
+@@ -34,7 +34,7 @@ import (
+ 	"time"
+ 
+ 	cadvisorapi "github.com/google/cadvisor/info/v1"
+-	inuserns "github.com/moby/sys/userns"
++
+ 	"github.com/opencontainers/selinux/go-selinux"
+ 	"go.opentelemetry.io/otel/attribute"
+ 	"go.opentelemetry.io/otel/codes"
+@@ -558,16 +558,9 @@ func NewMainKubelet(ctx context.Context,
+ 
+ 	oomWatcher, err := oomwatcher.NewWatcher(kubeDeps.Recorder)
+ 	if err != nil {
+-		if inuserns.RunningInUserNS() {
+-			if utilfeature.DefaultFeatureGate.Enabled(features.KubeletInUserNamespace) {
+-				// oomwatcher.NewWatcher returns "open /dev/kmsg: operation not permitted" error,
+-				// when running in a user namespace with sysctl value `kernel.dmesg_restrict=1`.
+-				klog.V(2).InfoS("Failed to create an oomWatcher (running in UserNS, ignoring)", "err", err)
+-				oomWatcher = nil
+-			} else {
+-				klog.ErrorS(err, "Failed to create an oomWatcher (running in UserNS, Hint: enable KubeletInUserNamespace feature flag to ignore the error)")
+-				return nil, err
+-			}
++		if utilfeature.DefaultFeatureGate.Enabled(features.KubeletInUserNamespace) {
++			klog.V(2).InfoS("Failed to create an oomWatcher (ignoring, KubeletInUserNamespace enabled)", "err", err)
++			oomWatcher = nil
+ 		} else {
+ 			return nil, err
+ 		}
 diff --git a/pkg/kubelet/pod/mirror_client.go b/pkg/kubelet/pod/mirror_client.go
 index 08cbfe61b4f..57df45f831b 100644
 --- a/pkg/kubelet/pod/mirror_client.go
