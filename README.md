@@ -43,7 +43,8 @@ Docker is auto-detected by probing common socket paths (`/var/run/docker.sock`, 
 ```bash
 make submodules   # init git submodules (etcd, kubernetes)
 make build        # apply patches + build binary
-make run          # fmt, build, and run with --clean
+make run          # fmt, build, and run
+make run-clean    # fmt, build, and run with --clean
 ```
 
 ## Testing

@@ -10,6 +10,7 @@ NanoKube is a single-binary Kubernetes distribution written in Go. It runs etcd,
 make submodules        # init git submodules (required before first build)
 make build             # apply patches + build binary
 make run               # fmt, build, run
+make run-clean         # fmt, build, run with --clean
 ./nanokube             # run directly (--clean removes data dir first)
 ```
 
@@ -65,6 +66,7 @@ All tests are idempotent — `make critest` and `make e2e` can each be run multi
 | `make critest` | CRI conformance tests |
 | `make fmt` | Format Go code |
 | `make run` | Format, build, and run |
+| `make run-clean` | Format, build, and run with `--clean` |
 
 ## Architecture
 

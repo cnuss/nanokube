@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      initContainers:
+        - name: wait-for-redis
+          image: {{ .Values.worker.image }}
+          command: ["sh", "-c", "until nc -z redis 6379; do sleep 1; done"]
+      containers:
+        - name: worker
+          image: {{ .Values.worker.image }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "worker started"
+              while true; do
+                echo "$(date): heartbeat" >> /tmp/worker.log
+                sleep 10
+              done
+          env:
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: password
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["test", "-f", "/tmp/worker.log"]
+            initialDelaySeconds: 15
+            periodSeconds: 10

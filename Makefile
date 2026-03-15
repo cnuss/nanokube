@@ -1,4 +1,4 @@
-.PHONY: build clean test submodules run fmt patch-save critest init e2e
+.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e helm
 
 CRITEST_VERSION := v1.35.0
 
@@ -49,6 +49,9 @@ ARGS ?=
 run: fmt build
 	./nanokube $(ARGS)
 
+run-clean: ARGS += --clean
+run-clean: run
+
 init:
 	go install github.com/kubernetes-sigs/cri-tools/cmd/critest@$(CRITEST_VERSION)
 	go install sigs.k8s.io/kuttl/cmd/kubectl-kuttl@latest
@@ -73,6 +76,11 @@ e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
 		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
+
+helm: build
+	$(call run-nanokube,,\
+		kubectl get nodes >/dev/null 2>&1,\
+		helm upgrade --install guestbook tests/helm/guestbook -n guestbook --create-namespace --wait --timeout 120s)
 
 # TODO unhardcode docker
 critest: build

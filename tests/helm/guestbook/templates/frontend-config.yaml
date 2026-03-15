@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: {{ .Release.Namespace }}
+data:
+  default.conf: |
+    server {
+        listen 80;
+        location / {
+            default_type text/html;
+            return 200 '<html><body><h1>Guestbook</h1><p>Redis: redis:6379</p></body></html>\n';
+        }
+        location /healthz {
+            return 200 'ok\n';
+        }
+    }

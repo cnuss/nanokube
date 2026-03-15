@@ -2,12 +2,11 @@ package crid
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"path/filepath"
 	"sync"
 	"time"
-
-	"crypto/tls"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
@@ -105,19 +104,35 @@ func (c *CRID) Stop() component.Stopped {
 	})
 }
 
-func (c *CRID) WithClient(client clientset.Interface) *CRID {
-	if c.broadcaster != nil {
-		c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
-		c.log.Info().Msg("event sink connected")
-	}
-	for _, b := range c.Backends() {
-		go b.CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
-	}
-	return c
+func (c *CRID) WithClient(client clientset.Interface) {
+	go func() {
+		c.log.Info().Msg("waiting for API server")
+		for {
+			if _, err := client.Discovery().ServerVersion(); err == nil {
+				break
+			}
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+			}
+		}
+		c.log.Info().Msg("API server reachable")
+
+		if c.broadcaster != nil {
+			c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
+			c.log.Info().Msg("event sink connected")
+		}
+
+		for _, b := range c.Backends() {
+			b.CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
+		}
+	}()
 }
 
-func (c *CRID) Name() string    { return c.name }
-func (c *CRID) DataDir() string { return c.dataDir }
+func (c *CRID) Context() context.Context { return c.ctx }
+func (c *CRID) Name() string             { return c.name }
+func (c *CRID) DataDir() string          { return c.dataDir }
 func (c *CRID) DataDirs() config.DataDirs {
 	c.dataDirsOnce.Do(func() {
 		c.dataDirs = config.NewDataDirs(c.dataDir)

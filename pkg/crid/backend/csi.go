@@ -63,7 +63,7 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 	os.MkdirAll(csiPluginDir, 0o755)
 
 	// Remove stale sockets from previous runs
-	c.csiEndpoint = filepath.Join(csiPluginDir, c.driverName+"-csi.sock")
+	c.csiEndpoint = filepath.Join(csiPluginDir, c.driverName+".sock")
 	c.regEndpoint = filepath.Join(registrationDir, c.driverName+"-reg.sock")
 	os.Remove(c.csiEndpoint)
 	os.Remove(c.regEndpoint)
@@ -113,11 +113,11 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 	return nil
 }
 
-// StartProvisioner reconciles the CSIDriver and StorageClass objects, then
-// creates and runs a ProvisionController for this backend.
-// It blocks until ctx is cancelled.
+// StartProvisioner spawns a goroutine that waits for the API server,
+// reconciles the CSIDriver and StorageClass objects, then runs a
+// ProvisionController for this backend.
 func (c *CSIImpl) StartProvisioner(ctx context.Context, client clientset.Interface, isDefault bool) {
-	c.log.Warn().Any("client", client).Bool("isDefault", isDefault).Msg("StartProvisioner")
+	c.log.Warn().Bool("isDefault", isDefault).Msg("StartProvisioner")
 
 	fm := metav1.ApplyOptions{FieldManager: string(c.backend.Name()), Force: true}
 

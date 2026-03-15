@@ -36,11 +36,11 @@ func NewManifests(crid *crid.CRID) *Manifests {
 	}
 }
 
-func (m *Manifests) kubeconfig() clientcmdapi.Config {
+func (m *Manifests) kubeconfig(hostname string) clientcmdapi.Config {
 	return clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
 			m.crid.Name(): {
-				Server:                   "https://127.0.0.1:6443",
+				Server:                   fmt.Sprintf("https://%s:6443", hostname),
 				CertificateAuthorityData: m.crid.Certs().Cert(),
 			},
 		},
@@ -62,8 +62,8 @@ func (m *Manifests) kubeconfig() clientcmdapi.Config {
 
 // writeKubeconfig writes the cluster kubeconfig to the data directory
 // and merges it into ~/.kube/config so kubectl works without --kubeconfig.
-func (m *Manifests) writeKubeconfig() {
-	config := m.kubeconfig()
+func (m *Manifests) writeKubeconfig(hostname string) {
+	config := m.kubeconfig(hostname)
 	kubeconfigPath := m.crid.Files().Kubeconfig
 
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
@@ -88,7 +88,7 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	version := strings.SplitN(versionutil.Get().GitVersion, "-", 2)[0]
 	manifestsLog.Info().Str("version", version).Msg("starting manifests")
 
-	m.writeKubeconfig()
+	m.writeKubeconfig(m.crid.Hosts().Hostname())
 
 	pod := &v1.Pod{}
 	if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(kubeSystemManifest), 4096).Decode(pod); err != nil {

@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-data
+  namespace: {{ .Release.Namespace }}
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-redis
+          image: {{ .Values.worker.image }}
+          command: ["sh", "-c", "until nc -z redis 6379; do sleep 1; done"]
+      containers:
+        - name: seed
+          image: {{ .Values.redis.image }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              redis-cli -h redis SET guestbook:entry:1 "Hello from nanokube"
+              redis-cli -h redis SET guestbook:entry:2 "Helm chart test"
+              redis-cli -h redis SET guestbook:count 2
+              echo "seeded $(redis-cli -h redis GET guestbook:count) entries"
+  backoffLimit: 3

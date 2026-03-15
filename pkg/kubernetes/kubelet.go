@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -17,18 +18,155 @@ import (
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
-var kubeletLog = newLogger("kubelet")
-
 type Kubelet struct {
+	ctx          context.Context
 	crid         *crid.CRID
+	log          component.Logger
 	featureGates map[string]bool
+
+	flags     *options.KubeletFlags
+	flagsOnce sync.Once
+
+	config     *kubeletconfig.KubeletConfiguration
+	configOnce sync.Once
+
+	client        *clientset.Clientset
+	clientOnce    sync.Once
+	heartbeat     *clientset.Clientset
+	heartbeatOnce sync.Once
 }
 
-func NewKubelet(cr *crid.CRID, featureGates map[string]bool) *Kubelet {
-	return &Kubelet{
-		crid:         cr,
+func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
+	k := &Kubelet{
+		ctx:          crid.Context(),
+		crid:         crid,
 		featureGates: featureGates,
+		log:          component.NewLogger("kubelet"),
 	}
+	go k.KubeClient()
+	return k
+}
+
+func (k *Kubelet) Flags() *options.KubeletFlags {
+	k.flagsOnce.Do(func() {
+		k.log.Info().Msg("initializing flags")
+		hostInfo, _ := k.crid.DefaultBackend().HostInfo()
+		dataDirs := k.crid.DataDirs()
+
+		k.flags = options.NewKubeletFlags()
+		k.flags.RootDirectory = dataDirs.Root
+		k.flags.CertDirectory = dataDirs.PKI
+		k.flags.HostnameOverride = hostInfo.Hostname
+		k.flags.MaxContainerCount = 100
+		k.flags.MaxPerPodContainerCount = 2
+		k.flags.NodeLabels = map[string]string{} // TODO: Probe
+	})
+	return k.flags
+}
+
+func (k *Kubelet) Config() *kubeletconfig.KubeletConfiguration {
+	k.configOnce.Do(func() {
+		k.log.Info().Msg("initializing config")
+		hostInfo, _ := k.crid.DefaultBackend().HostInfo()
+		dataDirs := k.crid.DataDirs()
+
+		config, err := options.NewKubeletConfiguration()
+		if err != nil {
+			k.log.Error().Err(err).Msg("failed to create kubelet config")
+			return
+		}
+		config.ImageMinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
+		config.StaticPodPath = dataDirs.Manifests
+		config.PodLogsDir = dataDirs.Logs
+		config.ClusterDomain = "cluster.local" // TODO: Probe
+		config.ClusterDNS = hostInfo.Nameservers
+		config.Authentication = kubeletconfig.KubeletAuthentication{
+			Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
+			Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
+		}
+		config.Authorization = kubeletconfig.KubeletAuthorization{
+			Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
+		}
+		config.TLSCertFile = k.crid.Certs().CertPath()
+		config.TLSPrivateKeyFile = k.crid.Certs().KeyPath()
+		config.EnableServer = true
+		config.Port = 10250
+		config.ReadOnlyPort = 0
+		config.EnableControllerAttachDetach = true
+		config.HairpinMode = kubeletconfig.HairpinVeth
+		config.CgroupsPerQOS = false
+		config.CgroupDriver = "cgroupfs"
+		config.EnforceNodeAllocatable = []string{}
+		config.EvictionHard = map[string]string{}
+		config.ImageGCHighThresholdPercent = 100
+		config.FailSwapOn = false
+		config.LocalStorageCapacityIsolation = false
+		config.RotateCertificates = false
+		config.ServerTLSBootstrap = false
+		config.RegisterNode = true
+		config.CPUCFSQuota = false
+		config.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
+		config.ContainerLogMaxFiles = 5
+		config.ContainerLogMaxWorkers = 1
+		config.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
+		config.ProtectKernelDefaults = false
+		config.FeatureGates = k.featureGates
+		k.config = config
+	})
+	return k.config
+}
+
+// KubeClient blocks until the API server is reachable, then connects
+// CRID (event sink, CSI provisioner). Safe to call from a goroutine.
+// Returns the client for convenience.
+func (k *Kubelet) KubeClient() *clientset.Clientset {
+	k.clientOnce.Do(func() {
+		k.log.Info().Msg("initializing kube client")
+		for {
+			restConfig, err := clientcmd.BuildConfigFromFlags("", k.crid.Files().Kubeconfig)
+			if err != nil {
+				k.log.Debug().Err(err).Msg("kubeconfig not ready")
+			} else if client, err := clientset.NewForConfig(restConfig); err != nil {
+				k.log.Debug().Err(err).Msg("kube client not ready")
+			} else {
+				k.log.Info().Msg("kube client ready")
+				k.client = client
+				k.crid.WithClient(client)
+				return
+			}
+			select {
+			case <-k.ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+			}
+		}
+	})
+	return k.client
+}
+
+func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
+	k.heartbeatOnce.Do(func() {
+		k.log.Info().Msg("initializing heartbeat client")
+		config := k.Config()
+		restConfig, err := clientcmd.BuildConfigFromFlags("", k.crid.Files().Kubeconfig)
+		if err != nil {
+			k.log.Error().Err(err).Msg("heartbeat kubeconfig failed")
+			return
+		}
+		restConfig.Timeout = config.NodeStatusUpdateFrequency.Duration
+		leaseTimeout := time.Duration(config.NodeLeaseDurationSeconds) * time.Second
+		if restConfig.Timeout > leaseTimeout {
+			restConfig.Timeout = leaseTimeout
+		}
+		restConfig.QPS = float32(-1)
+		client, err := clientset.NewForConfig(restConfig)
+		if err != nil {
+			k.log.Error().Err(err).Msg("heartbeat client failed")
+			return
+		}
+		k.heartbeat = client
+	})
+	return k.heartbeat
 }
 
 func (k *Kubelet) Stop() component.Stopped {
@@ -36,111 +174,14 @@ func (k *Kubelet) Stop() component.Stopped {
 }
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
-	kubeletLog.Info().Msg("starting kubelet")
-	hostInfo, err := k.crid.DefaultBackend().HostInfo()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get host info from CRID: %w", err)
-	}
-
-	dataDirs := k.crid.DataDirs()
-
-	flags := options.NewKubeletFlags()
-	flags.RootDirectory = dataDirs.Root
-	flags.CertDirectory = dataDirs.PKI
-	flags.HostnameOverride = hostInfo.Hostname
-	flags.MaxContainerCount = 100
-	flags.MaxPerPodContainerCount = 2
-	flags.NodeLabels = map[string]string{} // TODO: Probe
-
-	// Build KubeletConfiguration with upstream defaults, then apply our overrides
-	config, err := options.NewKubeletConfiguration()
-	if err != nil {
-		return nil, fmt.Errorf("kubelet config: %w", err)
-	}
-	config.ImageMinimumGCAge = metav1.Duration{Duration: 1 * time.Minute}
-	config.StaticPodPath = dataDirs.Manifests
-	config.PodLogsDir = dataDirs.Logs
-	config.ClusterDomain = "cluster.local" // TODO: Probe
-	config.ClusterDNS = hostInfo.Nameservers
-	config.Authentication = kubeletconfig.KubeletAuthentication{
-		Anonymous: kubeletconfig.KubeletAnonymousAuthentication{Enabled: true},
-		Webhook:   kubeletconfig.KubeletWebhookAuthentication{Enabled: false},
-	}
-	config.Authorization = kubeletconfig.KubeletAuthorization{
-		Mode: kubeletconfig.KubeletAuthorizationModeAlwaysAllow,
-	}
-	config.TLSCertFile = k.crid.Certs().CertPath()
-	config.TLSPrivateKeyFile = k.crid.Certs().KeyPath()
-	config.EnableServer = true
-	config.Port = 10250
-	config.ReadOnlyPort = 0
-	config.EnableControllerAttachDetach = true
-	config.HairpinMode = kubeletconfig.HairpinVeth
-	config.CgroupsPerQOS = false
-	config.CgroupDriver = "cgroupfs"
-	config.EnforceNodeAllocatable = []string{}
-	config.EvictionHard = map[string]string{}
-	config.ImageGCHighThresholdPercent = 100
-	config.FailSwapOn = false
-	config.LocalStorageCapacityIsolation = false
-	config.RotateCertificates = false
-	config.ServerTLSBootstrap = false
-	config.RegisterNode = true
-	config.CPUCFSQuota = false
-	config.CPUCFSQuotaPeriod = metav1.Duration{Duration: 100 * time.Millisecond}
-	config.ContainerLogMaxFiles = 5
-	config.ContainerLogMaxWorkers = 1
-	config.ContainerLogMonitorInterval = metav1.Duration{Duration: 10 * time.Second}
-	config.ProtectKernelDefaults = false
-	config.FeatureGates = k.featureGates
-
-	// Create k8s clients from kubeconfig
-	kubeconfigPath := k.crid.Files().Kubeconfig
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("kubelet kubeconfig: %w", err)
-	}
-	client, err := clientset.NewForConfig(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("kubelet client: %w", err)
-	}
-
-	heartbeatConfig := *restConfig
-	heartbeatConfig.Timeout = config.NodeStatusUpdateFrequency.Duration
-	leaseTimeout := time.Duration(config.NodeLeaseDurationSeconds) * time.Second
-	if heartbeatConfig.Timeout > leaseTimeout {
-		heartbeatConfig.Timeout = leaseTimeout
-	}
-	heartbeatConfig.QPS = float32(-1)
-	heartbeatClient, err := clientset.NewForConfig(&heartbeatConfig)
-	if err != nil {
-		return nil, fmt.Errorf("kubelet heartbeat client: %w", err)
-	}
-
-	// Connect the CRID to the kubernetes API server once it's reachable.
-	// The API server runs as a static pod, so it won't be up until the
-	// kubelet starts watching the manifests directory.
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			if _, err := client.Discovery().ServerVersion(); err == nil {
-				k.crid.WithClient(client)
-				return
-			}
-			time.Sleep(1 * time.Second)
-		}
-	}()
+	k.log.Info().Msg("starting kubelet")
 
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(
-		flags,
-		config,
-		client,
-		heartbeatClient,
+		k.Flags(),
+		k.Config(),
+		k.KubeClient(),
+		k.HeartbeatClient(),
 		k.crid.DefaultBackend().Cadvisor(),
 		k.crid.DefaultBackend().Images(),
 		k.crid.DefaultBackend().Containers(),
@@ -155,9 +196,9 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.TLSOptions = k.crid.TLSOptions()
 	exited := make(chan error, 1)
 	go func() {
-		kubeletLog.Info().Msg("hollow kubelet goroutine starting")
+		k.log.Info().Msg("hollow kubelet goroutine starting")
 		hk.Run(ctx)
-		kubeletLog.Warn().Msg("hollow kubelet goroutine exited")
+		k.log.Warn().Msg("hollow kubelet goroutine exited")
 		exited <- fmt.Errorf("kubelet exited unexpectedly")
 	}()
 
@@ -182,15 +223,15 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 			resp, err := httpClient.Do(req)
 			cancel()
 			if err != nil {
-				kubeletLog.Debug().Err(err).Msg("healthz probe failed")
+				k.log.Debug().Err(err).Msg("healthz probe failed")
 				continue
 			}
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				kubeletLog.Info().Msg("kubelet is ready")
+				k.log.Info().Msg("kubelet is ready")
 				return component.Ready(), nil
 			}
-			kubeletLog.Debug().Int("status", resp.StatusCode).Msg("healthz returned non-200")
+			k.log.Debug().Int("status", resp.StatusCode).Msg("healthz returned non-200")
 		}
 	}
 }
