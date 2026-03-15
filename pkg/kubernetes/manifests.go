@@ -122,7 +122,7 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 
 	// Inject host aliases so the kubelet includes them in its managed /etc/hosts
 	if h := m.crid.Hosts(); h != nil {
-		pod.Spec.HostAliases = h.HostAliases(backend.NetworkHost)
+		pod.Spec.HostAliases = h.HostAliases(ctx, backend.NetworkHost)
 	}
 
 	out, err := sigyaml.Marshal(pod)

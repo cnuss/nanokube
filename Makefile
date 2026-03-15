@@ -67,7 +67,7 @@ DATA ?= /tmp/nanokube-test
 define run-nanokube
 	@mkdir -p $(DATA); \
 	trap 'kill $$! 2>/dev/null; wait' EXIT; \
-	./nanokube $(1) $(ARGS) --clean --data $(DATA) & \
+	./nanokube $(1) $(ARGS) --clean --data $(DATA) >/dev/null 2>&1 & \
 	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
 	echo "########################################"; \
 	echo "# NANOKUBE LOG: $(DATA)/log"; \
@@ -89,4 +89,4 @@ helm: build
 critest: build
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$(DATA)/docker/cri.sock" ],\
-		critest --ginkgo.v --ginkgo.focus 'Conformance' --ginkgo.skip 'symlink' $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
+		critest --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")

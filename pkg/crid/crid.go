@@ -179,7 +179,7 @@ func (c *CRID) Backend(runtime backend.Runtime) backend.Backend {
 
 func (c *CRID) Hosts() backend.Hosts {
 	c.hostsOnce.Do(func() {
-		h, err := newHosts(c.ctx, c.Backends())
+		h, err := NewHosts(c.ctx, c.Backends())
 		if err != nil {
 			c.log.Error().Err(err).Msg("failed to initialize hosts")
 			return

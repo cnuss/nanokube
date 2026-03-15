@@ -47,8 +47,13 @@ const (
 
 type Hosts interface {
 	Hostname() string
-	ExtraHosts(network Network) []string
-	HostAliases(network Network) []v1.HostAlias
+	WithContext(ctx context.Context) Hosts
+	WithHost(name string, addrs []string) Hosts
+	WithBackend(runtime Runtime, backend Backend) Hosts
+	Entries(ctx context.Context, network Network) map[string][]string
+	ExtraHosts(ctx context.Context, network Network) []string
+	HostAliases(ctx context.Context, network Network) []v1.HostAlias
+	Resolver() *net.Resolver
 }
 
 // EventResource classifies the source of an event.

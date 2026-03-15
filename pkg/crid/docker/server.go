@@ -718,7 +718,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 	var extraHosts []string
 	if h := s.backend.parent.Hosts(); h != nil {
-		extraHosts = h.ExtraHosts(networkMode)
+		extraHosts = h.ExtraHosts(ctx, networkMode)
 	}
 
 	hostConfig := &container.HostConfig{
