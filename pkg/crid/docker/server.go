@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -660,6 +662,9 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	id := req.GetPodSandboxId()
 	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
 
+	// Inspect sandbox to find its networks before removal
+	inspect, inspectErr := s.backend.client.ContainerInspect(ctx, id)
+
 	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
 	})
@@ -675,6 +680,19 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	// Remove the sandbox container itself
 	if _, err := s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: id}); err != nil {
 		return nil, component.WrapErr(s.log, err)
+	}
+
+	// Remove per-sandbox bridge networks
+	if inspectErr == nil && inspect.NetworkSettings != nil {
+		for netName := range inspect.NetworkSettings.Networks {
+			if netName == "bridge" || netName == "host" || netName == "none" {
+				continue
+			}
+			s.log.Debug().Str("network", netName).Msg("removing sandbox network")
+			if err := s.backend.client.NetworkRemove(ctx, netName); err != nil {
+				s.log.Warn().Str("network", netName).Err(err).Msg("failed to remove sandbox network")
+			}
+		}
 	}
 
 	return &runtimeapi.RemovePodSandboxResponse{}, nil
@@ -726,13 +744,6 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		ExtraHosts: extraHosts,
 	}
 
-	// DNS
-	if dns := config.GetDnsConfig(); dns != nil {
-		hostConfig.DNS = dns.GetServers()
-		hostConfig.DNSSearch = dns.GetSearches()
-		hostConfig.DNSOptions = dns.GetOptions()
-	}
-
 	// Port mappings
 	if pms := config.GetPortMappings(); len(pms) > 0 {
 		dockerConfig.ExposedPorts = nat.PortSet{}
@@ -770,6 +781,48 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 	}
 
+	// DNS — on user-defined bridges Docker's embedded DNS (127.0.0.11)
+	// overrides --dns in resolv.conf, so we bind-mount a custom one.
+	// For host-network sandboxes, Docker respects hostConfig.DNS directly.
+	networkingConfig := &network.NetworkingConfig{}
+	if dns := config.GetDnsConfig(); dns != nil {
+		if networkMode == backend.NetworkHost {
+			hostConfig.DNS = dns.GetServers()
+			hostConfig.DNSSearch = dns.GetSearches()
+			hostConfig.DNSOptions = dns.GetOptions()
+		} else if servers := dns.GetServers(); len(servers) > 0 {
+			var lines []string
+			for _, ns := range servers {
+				lines = append(lines, "nameserver "+ns)
+			}
+			if search := dns.GetSearches(); len(search) > 0 {
+				lines = append(lines, "search "+strings.Join(search, " "))
+			}
+			if opts := dns.GetOptions(); len(opts) > 0 {
+				lines = append(lines, "options "+strings.Join(opts, " "))
+			}
+			resolvDir := filepath.Join(s.backend.DataDir(), "resolv")
+			os.MkdirAll(resolvDir, 0o755)
+			resolvPath := filepath.Join(resolvDir, name)
+			if err := os.WriteFile(resolvPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+				return nil, component.WrapErr(s.log, err)
+			}
+			hostConfig.Binds = append(hostConfig.Binds, resolvPath+":/etc/resolv.conf:ro")
+		}
+	}
+
+	// Create per-sandbox bridge network for pod isolation
+	if networkMode != backend.NetworkHost {
+		if _, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{Labels: labels}); err != nil {
+			return nil, component.WrapErr(s.log, err)
+		}
+		networkingConfig = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				name: {},
+			},
+		}
+	}
+
 	// Ensure pause image is available
 	imgSpec := &runtimeapi.ImageSpec{Image: dockerConfig.Image}
 	imgReq := &runtimeapi.ImageStatusRequest{Image: imgSpec, Verbose: true}
@@ -787,7 +840,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		platform = &ocispec.Platform{OS: status.Info["os"], Architecture: status.Info["architecture"]}
 	}
 
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, &network.NetworkingConfig{}, platform, name)
+	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, networkingConfig, platform, name)
 	if err != nil {
 		if errdefs.IsConflict(err) {
 			s.log.Warn().Str("name", name).Msg("sandbox name conflict, removing old sandbox")

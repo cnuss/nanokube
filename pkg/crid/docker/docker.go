@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	dockervolume "github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -79,6 +80,17 @@ func (b *DockerBackend) Cleanup(ctx context.Context) error {
 		b.log.Info().Str("name", v.Name).Msg("cleanup: removing volume")
 		if err := b.client.VolumeRemove(ctx, v.Name, true); err != nil {
 			errs = append(errs, fmt.Errorf("remove volume %s: %w", v.Name, err))
+		}
+	}
+
+	networks, err := b.client.NetworkList(ctx, network.ListOptions{Filters: f})
+	if err != nil {
+		return err
+	}
+	for _, n := range networks {
+		b.log.Info().Str("name", n.Name).Msg("cleanup: removing network")
+		if err := b.client.NetworkRemove(ctx, n.ID); err != nil {
+			errs = append(errs, fmt.Errorf("remove network %s: %w", n.Name, err))
 		}
 	}
 
@@ -509,22 +521,28 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 }
 
 // getIPFromInspect extracts the container IP from Docker inspect response.
-// On Docker Desktop (macOS), bridge IPs are not routable from the host,
-// so we return 127.0.0.1 when on bridge with published ports.
+// Published ports get 127.0.0.1 (Docker Desktop: bridge IPs aren't
+// host-routable, but published ports are). Otherwise return the bridge IP.
 func getIPFromInspect(inspect container.InspectResponse) string {
 	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
 		return ""
 	}
 	if inspect.NetworkSettings != nil {
-		if _, onBridge := inspect.NetworkSettings.Networks["bridge"]; onBridge {
-			for _, bindings := range inspect.NetworkSettings.Ports {
-				for _, b := range bindings {
-					if b.HostIP == "" || b.HostIP == "0.0.0.0" {
-						return "127.0.0.1"
-					}
+		// Published ports → 127.0.0.1 (works on both Linux and Docker Desktop)
+		for _, bindings := range inspect.NetworkSettings.Ports {
+			for _, b := range bindings {
+				if b.HostIP == "" || b.HostIP == "0.0.0.0" {
+					return "127.0.0.1"
 				}
 			}
 		}
+		// Prefer user-defined bridge network IP (per-sandbox network)
+		for name, n := range inspect.NetworkSettings.Networks {
+			if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
+				return n.IPAddress
+			}
+		}
+		// Fallback: any network IP
 		for _, n := range inspect.NetworkSettings.Networks {
 			if n.IPAddress != "" {
 				return n.IPAddress
