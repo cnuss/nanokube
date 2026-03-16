@@ -1,3 +1,4 @@
 nanokube
 kubeconfig
 tests/artifacts/
+cri-tools/critest

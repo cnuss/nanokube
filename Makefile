@@ -1,7 +1,7 @@
 .PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e helm reset
 
-CRITEST_VERSION := v1.35.0
 KUTTL_VERSION := 0.25.0
+CRITEST := cri-tools/critest
 
 VERSION_PKG := k8s.io/component-base/version
 KUBE_GIT_VERSION := $(shell cd kubernetes && git describe --tags --match='v*' 2>/dev/null | sed 's/-g/-/')
@@ -55,8 +55,10 @@ run-clean: run
 
 KUTTL_ARCH = $(shell go env GOARCH | sed 's/amd64/x86_64/')
 
+$(CRITEST):
+	cd cri-tools && go test -c -o critest ./cmd/critest/
+
 init:
-	@which critest >/dev/null 2>&1 || curl -fsSL https://github.com/kubernetes-sigs/cri-tools/releases/download/$(CRITEST_VERSION)/critest-$(CRITEST_VERSION)-$$(go env GOOS)-$$(go env GOARCH).tar.gz | tar xz -C $$(go env GOPATH)/bin critest
 	@which kubectl-kuttl >/dev/null 2>&1 || curl -fsSLo $$(go env GOPATH)/bin/kubectl-kuttl https://github.com/kudobuilder/kuttl/releases/download/v$(KUTTL_VERSION)/kubectl-kuttl_$(KUTTL_VERSION)_$$(go env GOOS)_$(KUTTL_ARCH) && chmod +x $$(go env GOPATH)/bin/kubectl-kuttl
 
 WHAT ?=
@@ -88,10 +90,10 @@ helm: build
 		helm upgrade --install guestbook tests/helm/guestbook -n guestbook --create-namespace --wait --timeout 120s)
 
 # TODO unhardcode docker
-critest: build
+critest: build $(CRITEST)
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$(DATA)/docker/cri.sock" ],\
-		critest --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
+		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
 
 reset:
 	@pkill -f nanokube 2>/dev/null; true

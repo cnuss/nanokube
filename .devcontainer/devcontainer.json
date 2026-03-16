@@ -19,5 +19,12 @@
     "ghcr.io/devcontainers/features/copilot-cli:1": {},
     "ghcr.io/rio/features/k9s:1": {}
   },
-  "postCreateCommand": "make submodules"
+  "postCreateCommand": "make submodules",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.makefile-tools"
+      ]
+    }
+  }
 }
