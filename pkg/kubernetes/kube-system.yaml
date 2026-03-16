@@ -47,6 +47,8 @@ spec:
       image: registry.k8s.io/kube-apiserver
       ports:
         - containerPort: 6443
+          hostPort: 6443
+          protocol: TCP
       command:
         - kube-apiserver
         - --bind-address=0.0.0.0
