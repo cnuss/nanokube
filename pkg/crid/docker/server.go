@@ -725,7 +725,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 	dockerConfig := &container.Config{
 		Image:      defaultPauseImage,
-		Entrypoint: []string{"sleep", "infinity"},
+		Entrypoint: []string{"tail", "-f", "/dev/null"},
 		Hostname:   config.GetHostname(),
 		Labels:     labels,
 	}
