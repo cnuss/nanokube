@@ -713,7 +713,6 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	s.log.Info().Any("req", req).Msg("RunPodSandbox")
 	config := req.GetConfig()
 	meta := config.GetMetadata()
-
 	name, labels, err := s.backend.labels.NewBuilder(config.GetLabels()).
 		WithType(labels.TypeSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUid(meta.GetUid()).
 		WithAnnotations(config.GetAnnotations()).
@@ -722,6 +721,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
+	dnsAliases := s.backend.labels.DNSAliases(config.GetAnnotations())
 
 	dockerConfig := &container.Config{
 		Image:      defaultPauseImage,
@@ -814,9 +814,10 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 				return nil, component.WrapErr(s.log, err)
 			}
 		}
+		aliases := append([]string{meta.GetName()}, dnsAliases...)
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				name: {Aliases: []string{meta.GetName()}},
+				name: {Aliases: aliases},
 			},
 		}
 	}

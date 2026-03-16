@@ -3,8 +3,10 @@ package backend
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/pkg/crid/labels"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
@@ -405,13 +407,28 @@ type podAdmitHandler struct {
 }
 
 func (n *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
+	pod := attrs.Pod
+
 	if h := n.backend.Hosts(); h != nil {
 		network := NetworkBridge
-		if attrs.Pod.Spec.HostNetwork {
+		if pod.Spec.HostNetwork {
 			network = NetworkHost
 		}
-		attrs.Pod.Spec.HostAliases = append(attrs.Pod.Spec.HostAliases, h.HostAliases(n.backend.ctx, network)...)
+		pod.Spec.HostAliases = append(pod.Spec.HostAliases, h.HostAliases(n.backend.ctx, network)...)
 	}
+
+	// Inject container names as annotation so RunPodSandbox can set DNS aliases
+	if len(pod.Spec.Containers) > 0 {
+		names := make([]string, 0, len(pod.Spec.Containers))
+		for _, c := range pod.Spec.Containers {
+			names = append(names, c.Name)
+		}
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		pod.Annotations[n.backend.Labels().Prefix(labels.DNSAliasesKey)] = strings.Join(names, ",")
+	}
+
 	return lifecycle.PodAdmitResult{Admit: true}
 }
 

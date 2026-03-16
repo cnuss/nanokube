@@ -22,6 +22,7 @@ var (
 	logPathKey     = "log-path"
 	labelsKey      = "labels"
 	annotationsKey = "annotations"
+	DNSAliasesKey  = "dns-aliases"
 
 	TypeUnknown   ResourceType = "unknown"
 	TypeSandbox   ResourceType = "sandbox"
@@ -46,6 +47,7 @@ type LabelProvider interface {
 	// Key accessors
 	UIDKey() string
 	NameKey() string
+	DNSAliases(annotations map[string]string) []string
 
 	// Filters
 	ManagedByFilter() string
@@ -114,6 +116,13 @@ func (l *LabelProviderImpl) UIDKey() string {
 
 func (l *LabelProviderImpl) NameKey() string {
 	return l.Prefix(nameKey)
+}
+
+func (l *LabelProviderImpl) DNSAliases(annotations map[string]string) []string {
+	if v, ok := annotations[l.Prefix(DNSAliasesKey)]; ok && v != "" {
+		return strings.Split(v, ",")
+	}
+	return nil
 }
 
 func (l *LabelProviderImpl) ManagedByFilter() string {
