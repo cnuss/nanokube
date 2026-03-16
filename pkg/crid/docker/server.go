@@ -817,9 +817,11 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 			}
 		}
 		aliases := append([]string{meta.GetName()}, dnsAliases...)
+		shared := s.backend.SharedNetwork(ctx)
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				name: {Aliases: aliases},
+				name:   {Aliases: aliases},
+				shared: {Aliases: aliases},
 			},
 		}
 	}

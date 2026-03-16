@@ -46,6 +46,8 @@ type DockerBackend struct {
 	parent     backend.Backend
 	serverOnce sync.Once
 	domainOnce sync.Once
+
+	sharedNetwork string
 }
 
 var _ backend.Driver = &DockerBackend{}
@@ -154,6 +156,18 @@ func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 
 func (b *DockerBackend) Name() backend.Runtime {
 	return backend.Docker
+}
+
+// SharedNetwork returns the name of the shared bridge network used for
+// cross-pod DNS discovery. Created idempotently on first call.
+func (b *DockerBackend) SharedNetwork(ctx context.Context) string {
+	name := b.labels.Name()
+	if _, err := b.client.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
+		b.client.NetworkCreate(ctx, name, network.CreateOptions{
+			Labels: map[string]string{b.labels.Prefix("managed-by"): b.labels.Name()},
+		})
+	}
+	return name
 }
 
 func (b *DockerBackend) init() {
