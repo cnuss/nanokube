@@ -1,4 +1,4 @@
-.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e helm
+.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e helm reset
 
 CRITEST_VERSION := v1.35.0
 KUTTL_VERSION := 0.25.0
@@ -92,3 +92,11 @@ critest: build
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$(DATA)/docker/cri.sock" ],\
 		critest --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
+
+reset:
+	@pkill -f nanokube 2>/dev/null; true
+	@docker ps -aq | xargs -r docker rm -f 2>/dev/null; true
+	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
+	@docker system prune -f >/dev/null 2>&1; true
+	@rm -rf ~/.nanokube
+	@echo "reset complete"
