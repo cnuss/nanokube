@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -779,34 +777,14 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 	}
 
-	// DNS — on user-defined bridges Docker's embedded DNS (127.0.0.11)
-	// overrides --dns in resolv.conf, so we bind-mount a custom one.
-	// For host-network sandboxes, Docker respects hostConfig.DNS directly.
+	// DNS — host-network sandboxes use hostConfig.DNS directly.
+	// Bridge-mode sandboxes use Docker's embedded DNS (127.0.0.11) on the
+	// shared network for service discovery via DNS aliases.
 	networkingConfig := &network.NetworkingConfig{}
-	if dns := config.GetDnsConfig(); dns != nil {
-		if networkMode == backend.NetworkHost {
-			hostConfig.DNS = dns.GetServers()
-			hostConfig.DNSSearch = dns.GetSearches()
-			hostConfig.DNSOptions = dns.GetOptions()
-		} else if servers := dns.GetServers(); len(servers) > 0 {
-			var lines []string
-			for _, ns := range servers {
-				lines = append(lines, "nameserver "+ns)
-			}
-			if search := dns.GetSearches(); len(search) > 0 {
-				lines = append(lines, "search "+strings.Join(search, " "))
-			}
-			if opts := dns.GetOptions(); len(opts) > 0 {
-				lines = append(lines, "options "+strings.Join(opts, " "))
-			}
-			resolvDir := filepath.Join(s.backend.DataDir(), "resolv")
-			os.MkdirAll(resolvDir, 0o755)
-			resolvPath := filepath.Join(resolvDir, name)
-			if err := os.WriteFile(resolvPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-				return nil, component.WrapErr(s.log, err)
-			}
-			hostConfig.Binds = append(hostConfig.Binds, resolvPath+":/etc/resolv.conf:ro")
-		}
+	if dns := config.GetDnsConfig(); dns != nil && networkMode == backend.NetworkHost {
+		hostConfig.DNS = dns.GetServers()
+		hostConfig.DNSSearch = dns.GetSearches()
+		hostConfig.DNSOptions = dns.GetOptions()
 	}
 
 	// Create per-sandbox bridge network for pod isolation (idempotent)
