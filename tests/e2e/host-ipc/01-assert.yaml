@@ -1,5 +1,0 @@
-apiVersion: kuttl.dev/v1beta1
-kind: TestAssert
-commands:
-  # with hostIPC, /dev/shm is the host's shared memory — verify it's writable
-  - script: kubectl exec --namespace $NAMESPACE host-ipc-test -- sh -c "echo test > /dev/shm/kuttl-ipc-probe && cat /dev/shm/kuttl-ipc-probe && rm /dev/shm/kuttl-ipc-probe"

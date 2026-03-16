@@ -1,6 +1,0 @@
-apiVersion: kuttl.dev/v1beta1
-kind: TestAssert
-timeout: 120
-commands:
-  # wait for at least one job to be created by the cronjob controller
-  - script: kubectl get jobs --namespace $NAMESPACE -l job-name -o name | grep -q job

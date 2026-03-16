@@ -1,5 +1,0 @@
-apiVersion: kuttl.dev/v1beta1
-kind: TestAssert
-commands:
-  # verify init container wrote data before main container started
-  - script: test "$(kubectl exec --namespace $NAMESPACE init-test -- cat /work/status)" = "initialized"

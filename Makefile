@@ -1,4 +1,4 @@
-.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e helm reset
+.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e e2e-baseline helm reset
 
 KUTTL_VERSION := 0.25.0
 CRITEST := cri-tools/critest
@@ -79,6 +79,9 @@ define run-nanokube
 	$(3)
 endef
 
+baseline:
+	kubectl kuttl test --config tests/kuttl-test.yaml --start-kind --test configmap
+
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
@@ -94,6 +97,9 @@ critest: build $(CRITEST)
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$(DATA)/docker/cri.sock" ],\
 		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
+
+e2e-baseline:
+	kubectl kuttl test --config tests/kuttl-test.yaml --start-kind $(if $(WHAT),--test $(WHAT))
 
 reset:
 	@pkill -f nanokube 2>/dev/null; true

@@ -53,9 +53,10 @@ make run-clean    # fmt, build, and run with --clean
 make test                        # unit tests
 make e2e                         # kuttl e2e suite (24 tests)
 make e2e WHAT=exec               # single e2e test by name
+make e2e-baseline                # e2e suite against Kind (reference baseline)
+make e2e-baseline WHAT=configmap # single baseline test by name
 make critest                     # CRI conformance tests
 make critest WHAT="port mapping" # single critest by focus
-make scenarios                   # kuttl scenario tests
 ```
 
 ## License
