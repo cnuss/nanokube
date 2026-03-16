@@ -719,7 +719,6 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
-	dnsAliases := s.backend.labels.DNSAliases(config.GetAnnotations())
 
 	dockerConfig := &container.Config{
 		Image:      defaultPauseImage,
@@ -777,27 +776,39 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		}
 	}
 
-	// DNS — host-network sandboxes use hostConfig.DNS directly.
-	// Bridge-mode sandboxes use Docker's embedded DNS (127.0.0.11) on the
-	// shared network for service discovery via DNS aliases.
+	// DNS — always pass CRI DNS config to Docker. For host-network, Docker
+	// writes these directly to resolv.conf. For bridge-mode, Docker's embedded
+	// DNS (127.0.0.11) uses them as upstream servers (ExtServers).
 	networkingConfig := &network.NetworkingConfig{}
-	if dns := config.GetDnsConfig(); dns != nil && networkMode == backend.NetworkHost {
+	if dns := config.GetDnsConfig(); dns != nil {
 		hostConfig.DNS = dns.GetServers()
 		hostConfig.DNSSearch = dns.GetSearches()
 		hostConfig.DNSOptions = dns.GetOptions()
 	}
 
-	// Create per-sandbox bridge network for pod isolation (idempotent)
+	// Network setup for non-host sandboxes.
+	// Option A: per-sandbox bridge + shared network (isolation + DNS discovery)
+	// Option B: default bridge only (simpler, CRI DNS conformance, no isolation)
 	if networkMode != backend.NetworkHost {
-		if _, err := s.CreateNetwork(ctx, name); err != nil {
-			return nil, component.WrapErr(s.log, err)
-		}
-		aliases := append([]string{meta.GetName()}, dnsAliases...)
-		shared := s.backend.parent.SharedNetwork()
+		// --- Option A: per-sandbox + shared network ---
+		// dnsAliases := s.backend.labels.DNSAliases(config.GetAnnotations())
+		// aliases := append([]string{meta.GetName()}, dnsAliases...)
+		// shared := s.backend.parent.SharedNetwork()
+		// if _, err := s.CreateNetwork(ctx, name); err != nil {
+		// 	return nil, component.WrapErr(s.log, err)
+		// }
+		// shared := s.backend.parent.SharedNetwork()
+		// networkingConfig = &network.NetworkingConfig{
+		// 	EndpointsConfig: map[string]*network.EndpointSettings{
+		// 		name:   {Aliases: aliases},
+		// 		shared: {Aliases: aliases},
+		// 	},
+		// }
+
+		// --- Option B: default bridge ---
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				name:   {Aliases: aliases},
-				shared: {Aliases: aliases},
+				"bridge": {},
 			},
 		}
 	}
@@ -1286,6 +1297,12 @@ func (s *Server) CreateNetwork(ctx context.Context, name string) (string, error)
 	}
 	resp, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{
 		Labels: s.backend.labels.NewBuilder(nil).InternalLabels(),
+		Options: map[string]string{
+			"com.docker.network.bridge.enable_icc":           "true",
+			"com.docker.network.bridge.enable_ip_masquerade": "true",
+			"com.docker.network.bridge.host_binding_ipv4":    "0.0.0.0",
+			"com.docker.network.driver.mtu":                  "65535",
+		},
 	})
 	if err != nil {
 		return "", err
