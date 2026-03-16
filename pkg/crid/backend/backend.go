@@ -181,6 +181,7 @@ type Backend interface {
 	Subscribe() <-chan Event
 
 	// Networking
+	Networks() NetworkProvider
 	SharedNetwork() string
 
 	// KubeClient
