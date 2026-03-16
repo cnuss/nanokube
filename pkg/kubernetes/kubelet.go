@@ -131,7 +131,7 @@ func (k *Kubelet) KubeClient() *clientset.Clientset {
 			} else {
 				k.log.Info().Msg("kube client ready")
 				k.client = client
-				k.crid.WithClient(client)
+				k.crid.WithKubeClient(client)
 				return
 			}
 			select {

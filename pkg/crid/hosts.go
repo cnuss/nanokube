@@ -142,7 +142,7 @@ func (h *hostsImpl) WithBackend(runtime backend.Runtime, backend backend.Backend
 	return h
 }
 
-func (h *hostsImpl) Entries(ctx context.Context, network backend.Network) map[string][]string {
+func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) map[string][]string {
 	entries := make(map[string][]string)
 
 	hostname := h.hostname
@@ -216,7 +216,7 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.Network) map[st
 	return entries
 }
 
-func (h *hostsImpl) ExtraHosts(ctx context.Context, network backend.Network) []string {
+func (h *hostsImpl) ExtraHosts(ctx context.Context, network backend.NetworkType) []string {
 	var extraHosts []string
 	entries := h.Entries(ctx, network)
 	for hostname, ips := range entries {
@@ -227,7 +227,7 @@ func (h *hostsImpl) ExtraHosts(ctx context.Context, network backend.Network) []s
 	return extraHosts
 }
 
-func (h *hostsImpl) HostAliases(ctx context.Context, network backend.Network) []v1.HostAlias {
+func (h *hostsImpl) HostAliases(ctx context.Context, network backend.NetworkType) []v1.HostAlias {
 	ipHosts := make(map[string][]string)
 	entries := h.Entries(ctx, network)
 	for hostname, ips := range entries {
@@ -244,27 +244,6 @@ func (h *hostsImpl) HostAliases(ctx context.Context, network backend.Network) []
 		})
 	}
 	return hostAliases
-}
-
-func (h *hostsImpl) HostAliasesWithPod(ctx context.Context, runtime backend.Runtime, network backend.Network, pod *v1.Pod) []v1.HostAlias {
-	h.log.Info().Str("runtime", string(runtime)).Str("network", string(network)).Any("pod", pod).Msg("HostAliasesWithPod")
-	aliases := h.HostAliases(ctx, network)
-	sandbox, err := h.backends[runtime].Containers().PodSandboxStatus(ctx, pod.Name, false)
-	if err != nil {
-		h.log.Error().Err(err).Str("pod", pod.Name).Msg("failed to get pod sandbox status for host aliases")
-		return aliases
-	}
-	h.log.Info().Any("status", sandbox.GetStatus()).Msg("pod sandbox status")
-	ips := sandbox.GetStatus().GetNetwork().GetAdditionalIps()
-	for _, container := range pod.Spec.Containers {
-		for _, ip := range ips {
-			aliases = append(aliases, v1.HostAlias{
-				IP:        ip.GetIp(),
-				Hostnames: []string{strings.ToLower(container.Name)},
-			})
-		}
-	}
-	return aliases
 }
 
 func (h *hostsImpl) Resolver() *net.Resolver {

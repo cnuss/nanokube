@@ -16,6 +16,7 @@ import (
 	tp "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -38,22 +39,28 @@ const (
 	Podman Runtime = "podman"
 )
 
-type Network string
+type NetworkType string
 
 const (
-	NetworkHost   Network = "Host"
-	NetworkBridge Network = "Bridge"
+	NetworkHost   NetworkType = "Host"
+	NetworkBridge NetworkType = "Bridge"
 )
+
+type NetworkProvider interface {
+	CreateNetwork(ctx context.Context, name string) (string, error)
+	RemoveNetwork(ctx context.Context, name string) error
+	ConnectNetwork(ctx context.Context, network, containerID string, aliases []string) error
+	DisconnectNetwork(ctx context.Context, network, containerID string) error
+}
 
 type Hosts interface {
 	Hostname() string
 	WithContext(ctx context.Context) Hosts
 	WithHost(name string, addrs []string) Hosts
 	WithBackend(runtime Runtime, backend Backend) Hosts
-	Entries(ctx context.Context, network Network) map[string][]string
-	ExtraHosts(ctx context.Context, network Network) []string
-	HostAliases(ctx context.Context, network Network) []v1.HostAlias
-	HostAliasesWithPod(ctx context.Context, runtime Runtime, network Network, pod *v1.Pod) []v1.HostAlias
+	Entries(ctx context.Context, network NetworkType) map[string][]string
+	ExtraHosts(ctx context.Context, network NetworkType) []string
+	HostAliases(ctx context.Context, network NetworkType) []v1.HostAlias
 	Resolver() *net.Resolver
 }
 
@@ -130,6 +137,7 @@ type Driver interface {
 	ImageServer() runtimeapi.ImageServiceServer
 	ContainerServer() runtimeapi.RuntimeServiceServer
 	VolumeServer() csipb.ControllerServer
+	Networks() NetworkProvider
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
 	Events(ctx context.Context) (<-chan Event, <-chan error)
@@ -171,6 +179,13 @@ type Backend interface {
 	// Subscribe returns a channel that receives all container lifecycle events.
 	// Each subscriber gets its own channel; closing the context unsubscribes.
 	Subscribe() <-chan Event
+
+	// Networking
+	SharedNetwork() string
+
+	// KubeClient
+	KubeClient() clientset.Interface
+	WithKubeClient(client clientset.Interface) Backend
 }
 
 // BackendImpl adds shared behavior on top of a Driver
@@ -216,6 +231,9 @@ type BackendImpl struct {
 
 	// sync
 	mu sync.Mutex
+
+	// kube client
+	kubeClient clientset.Interface
 }
 
 func NewBackend(name string, d Driver) Backend {
@@ -340,6 +358,12 @@ func (b *BackendImpl) clean() error {
 				errs = append(errs, fmt.Errorf("delete volume %s: %w", vol.GetVolume().GetVolumeId(), err))
 			}
 		}
+	}
+
+	// Remove shared network and reset sync.Once so it re-creates on next use
+	b.log.Info().Msg("removing shared network")
+	if err := b.Networks().RemoveNetwork(b.ctx, b.name); err != nil {
+		errs = append(errs, fmt.Errorf("remove shared network: %w", err))
 	}
 
 	return errors.Join(errs...)
@@ -567,6 +591,20 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 
 func (b *BackendImpl) Hosts() Hosts {
 	return b.hosts
+}
+
+func (b *BackendImpl) SharedNetwork() string {
+	b.Networks().CreateNetwork(b.ctx, b.name)
+	return b.name
+}
+
+func (b *BackendImpl) WithKubeClient(client clientset.Interface) Backend {
+	b.kubeClient = client
+	return b
+}
+
+func (b *BackendImpl) KubeClient() clientset.Interface {
+	return b.kubeClient
 }
 
 func (b *BackendImpl) socket() string {

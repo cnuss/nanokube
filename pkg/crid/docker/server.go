@@ -811,13 +811,11 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 	// Create per-sandbox bridge network for pod isolation (idempotent)
 	if networkMode != backend.NetworkHost {
-		if _, err := s.backend.client.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
-			if _, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{Labels: labels}); err != nil {
-				return nil, component.WrapErr(s.log, err)
-			}
+		if _, err := s.CreateNetwork(ctx, name); err != nil {
+			return nil, component.WrapErr(s.log, err)
 		}
 		aliases := append([]string{meta.GetName()}, dnsAliases...)
-		shared := s.backend.SharedNetwork(ctx)
+		shared := s.backend.parent.SharedNetwork()
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				name:   {Aliases: aliases},
@@ -1298,6 +1296,42 @@ func (s *Server) ControllerModifyVolume(_ context.Context, _ *csipb.ControllerMo
 	return &csipb.ControllerModifyVolumeResponse{}, nil
 }
 
+// --- Network Provider ---
+
+// CreateNetwork implements [backend.NetworkProvider]. Idempotent — returns
+// the network ID if it already exists.
+func (s *Server) CreateNetwork(ctx context.Context, name string) (string, error) {
+	if resp, err := s.backend.client.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
+		return resp.ID, nil
+	} else if !errdefs.IsNotFound(err) {
+		return "", err
+	}
+	resp, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{
+		Labels: s.backend.labels.NewBuilder(nil).InternalLabels(),
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+// RemoveNetwork implements [backend.NetworkProvider].
+func (s *Server) RemoveNetwork(ctx context.Context, name string) error {
+	return s.backend.client.NetworkRemove(ctx, name)
+}
+
+// ConnectNetwork implements [backend.NetworkProvider].
+func (s *Server) ConnectNetwork(ctx context.Context, net, containerID string, aliases []string) error {
+	return s.backend.client.NetworkConnect(ctx, net, containerID, &network.EndpointSettings{
+		Aliases: aliases,
+	})
+}
+
+// DisconnectNetwork implements [backend.NetworkProvider].
+func (s *Server) DisconnectNetwork(ctx context.Context, net, containerID string) error {
+	return s.backend.client.NetworkDisconnect(ctx, net, containerID, false)
+}
+
 // matchLabels returns true if the container's labels (including the packed
 // labels blob) satisfy every key=value pair in the selector.
 func (s *Server) matchLabels(dockerLabels map[string]string, selector map[string]string) bool {
@@ -1318,4 +1352,5 @@ var (
 	_ runtimeapi.ImageServiceServer   = &Server{}
 	_ runtimeapi.RuntimeServiceServer = &Server{}
 	_ csipb.ControllerServer          = &Server{}
+	_ backend.NetworkProvider         = &Server{}
 )

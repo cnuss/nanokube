@@ -37,6 +37,8 @@ func (n *NoopBackend) Labels() labels.LabelProvider                             
 func (n *NoopBackend) Images() internalapi.ImageManagerService                     { return nil }
 func (n *NoopBackend) Containers() internalapi.RuntimeService                      { return nil }
 func (n *NoopBackend) Volumes() csipb.ControllerServer                             { return nil }
+func (n *NoopBackend) Networks() NetworkProvider                                   { return nil }
+func (n *NoopBackend) SharedNetwork() string                                       { return "" }
 func (n *NoopBackend) ContainerManager() cm.ContainerManager                       { return nil }
 func (n *NoopBackend) Mounter() mount.Interface                                    { return nil }
 func (n *NoopBackend) Cadvisor() cadvisor.Interface                                { return nil }
@@ -53,6 +55,8 @@ func (n *NoopBackend) StorageClass() *storagev1ac.StorageClassApplyConfiguration
 func (n *NoopBackend) StartProvisioner(context.Context, clientset.Interface, bool) {}
 func (n *NoopBackend) Cleanup(context.Context) error                               { return nil }
 func (n *NoopBackend) Hosts() Hosts                                                { return nil }
+func (n *NoopBackend) WithKubeClient(client clientset.Interface) Backend           { return n }
+func (n *NoopBackend) KubeClient() clientset.Interface                             { return nil }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

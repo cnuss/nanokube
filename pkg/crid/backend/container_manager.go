@@ -25,7 +25,7 @@ import (
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
-func NewContainerManager(backend *BackendImpl) cm.ContainerManager {
+func NewContainerManager(backend Backend) cm.ContainerManager {
 	return &ContainerManagerImpl{
 		backend: backend,
 		log:     component.NewLogger("container-manager"),
@@ -34,7 +34,7 @@ func NewContainerManager(backend *BackendImpl) cm.ContainerManager {
 }
 
 type ContainerManagerImpl struct {
-	backend           *BackendImpl
+	backend           Backend
 	ctx               context.Context
 	log               component.Logger
 	node              *v1.Node
@@ -168,7 +168,8 @@ func (m *ContainerManagerImpl) UpdatePluginResources(*schedulerframework.NodeInf
 
 func (m *ContainerManagerImpl) InternalContainerLifecycle() cm.InternalContainerLifecycle {
 	return &containerLifecycle{
-		log: component.NewLogger("container-lifecycle"),
+		log:     component.NewLogger("container-lifecycle"),
+		backend: m.backend,
 	}
 }
 
@@ -194,6 +195,7 @@ func (m *ContainerManagerImpl) ShouldResetExtendedResourceCapacity() bool {
 
 func (m *ContainerManagerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHandler {
 	return &podAdmitHandler{
+		ctx:     m.ctx,
 		backend: m.backend,
 		log:     component.NewLogger("pod-admit-handler"),
 	}
@@ -297,7 +299,8 @@ func (m *ContainerManagerImpl) GetDynamicResources(pod *v1.Pod, container *v1.Co
 
 // internalContainerLifecycle implements cm.InternalContainerLifecycle as a no-op.
 type containerLifecycle struct {
-	log component.Logger
+	log     component.Logger
+	backend Backend
 }
 
 func (i *containerLifecycle) PreCreateContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerConfig *runtimeapi.ContainerConfig) error {
@@ -305,11 +308,12 @@ func (i *containerLifecycle) PreCreateContainer(logger klog.Logger, pod *v1.Pod,
 }
 
 func (i *containerLifecycle) PreStartContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerID string) error {
+	_ = i.backend.KubeClient()
 	return nil
 }
 
 func (i *containerLifecycle) PostStopContainer(logger klog.Logger, containerID string) error {
-	i.log.Warn().Msg("PostStopContainer not implemented")
+	_ = i.backend.KubeClient()
 	return nil
 }
 
@@ -317,28 +321,26 @@ func (i *containerLifecycle) PostStopContainer(logger klog.Logger, containerID s
 type podContainerManager struct {
 	ctx     context.Context
 	log     component.Logger
-	backend *BackendImpl
+	backend Backend
 }
 
 func (p *podContainerManager) GetPodContainerName(pod *v1.Pod) (cm.CgroupName, string) {
 	if p.backend == nil {
 		return nil, ""
 	}
-	sandboxes, err := p.backend.ContainerServer().ListPodSandbox(p.ctx, &runtimeapi.ListPodSandboxRequest{
-		Filter: &runtimeapi.PodSandboxFilter{
-			LabelSelector: map[string]string{
-				p.backend.Labels().UIDKey(): string(pod.UID),
-			},
+	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
+		LabelSelector: map[string]string{
+			p.backend.Labels().UIDKey(): string(pod.UID),
 		},
 	})
 	if err != nil {
 		p.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list sandboxes")
 		return nil, ""
 	}
-	if len(sandboxes.GetItems()) == 0 {
+	if len(sandboxes) == 0 {
 		return nil, ""
 	}
-	return nil, sandboxes.GetItems()[0].Id
+	return nil, sandboxes[0].Id
 }
 
 func (p *podContainerManager) EnsureExists(logger klog.Logger, pod *v1.Pod) error {
@@ -350,18 +352,16 @@ func (p *podContainerManager) Exists(pod *v1.Pod) bool {
 	if p.backend == nil {
 		return true
 	}
-	sandboxes, err := p.backend.ContainerServer().ListPodSandbox(p.ctx, &runtimeapi.ListPodSandboxRequest{
-		Filter: &runtimeapi.PodSandboxFilter{
-			LabelSelector: map[string]string{
-				p.backend.Labels().UIDKey(): string(pod.UID),
-			},
+	sandboxes, err := p.backend.Containers().ListPodSandbox(p.ctx, &runtimeapi.PodSandboxFilter{
+		LabelSelector: map[string]string{
+			p.backend.Labels().UIDKey(): string(pod.UID),
 		},
 	})
 	if err != nil {
 		p.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list sandboxes")
 		return true
 	}
-	return len(sandboxes.GetItems()) > 0
+	return len(sandboxes) > 0
 }
 
 func (p *podContainerManager) Destroy(logger klog.Logger, name cm.CgroupName) error {
@@ -402,19 +402,20 @@ func (p *podContainerManager) SetPodCgroupConfig(logger klog.Logger, pod *v1.Pod
 // podAdmitHandler implements lifecycle.PodAdmitHandler.
 // Injects host aliases into pod specs before kubelet generates /etc/hosts.
 type podAdmitHandler struct {
-	backend *BackendImpl
+	ctx     context.Context
+	backend Backend
 	log     component.Logger
 }
 
-func (n *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
+func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attrs.Pod
 
-	if h := n.backend.Hosts(); h != nil {
+	if h := p.backend.Hosts(); h != nil {
 		network := NetworkBridge
 		if pod.Spec.HostNetwork {
 			network = NetworkHost
 		}
-		pod.Spec.HostAliases = append(pod.Spec.HostAliases, h.HostAliases(n.backend.ctx, network)...)
+		pod.Spec.HostAliases = append(pod.Spec.HostAliases, h.HostAliases(p.ctx, network)...)
 	}
 
 	// Inject container names as annotation so RunPodSandbox can set DNS aliases
@@ -426,7 +427,7 @@ func (n *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 		if pod.Annotations == nil {
 			pod.Annotations = make(map[string]string)
 		}
-		pod.Annotations[n.backend.Labels().Prefix(labels.DNSAliasesKey)] = strings.Join(names, ",")
+		pod.Annotations[p.backend.Labels().Prefix(labels.DNSAliasesKey)] = strings.Join(names, ",")
 	}
 
 	return lifecycle.PodAdmitResult{Admit: true}

@@ -104,7 +104,7 @@ func (c *CRID) Stop() component.Stopped {
 	})
 }
 
-func (c *CRID) WithClient(client clientset.Interface) {
+func (c *CRID) WithKubeClient(client clientset.Interface) {
 	go func() {
 		c.log.Info().Msg("waiting for API server")
 		for {
@@ -125,7 +125,7 @@ func (c *CRID) WithClient(client clientset.Interface) {
 		}
 
 		for _, b := range c.Backends() {
-			b.CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
+			b.WithKubeClient(client).CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
 		}
 	}()
 }
