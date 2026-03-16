@@ -749,10 +749,12 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		for _, pm := range pms {
 			port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
 			dockerConfig.ExposedPorts[port] = struct{}{}
-			if hostPort := pm.GetHostPort(); hostPort != 0 {
-				hostConfig.PortBindings[port] = []nat.PortBinding{
-					{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
-				}
+			hostPort := pm.GetHostPort()
+			if hostPort == 0 {
+				hostPort = pm.GetContainerPort()
+			}
+			hostConfig.PortBindings[port] = []nat.PortBinding{
+				{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
 			}
 		}
 	}
