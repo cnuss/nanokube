@@ -102,7 +102,7 @@ E2E tests from [kuttl-conformance](https://github.com/cnuss/kuttl-conformance) r
 |                   | pod-lifecycle-hooks      | :green_circle: |
 |                   | resource-requests-limits | :green_circle: |
 |                   | restart-policy           | :green_circle: |
-|                   | pod-probes               | :red_circle:   |
+|                   | pod-probes               | :green_circle: |
 |                   | security-context         | :red_circle:   |
 | **policy**        | horizontal-pod-autoscaler| :green_circle: |
 |                   | limit-range              | :green_circle: |
@@ -122,7 +122,7 @@ E2E tests from [kuttl-conformance](https://github.com/cnuss/kuttl-conformance) r
 |                   | replicaset               | :red_circle:   |
 |                   | statefulset              | :red_circle:   |
 
-**29/46 passing** — failures are primarily due to host port conflicts (multiple nginx pods binding port 80) and missing ClusterIP service networking.
+**30/46 passing** — remaining failures are due to missing ClusterIP service networking, SecurityContext pass-through, and node label requirements.
 
 ## License
 

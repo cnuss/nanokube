@@ -242,7 +242,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		hostConfig.Binds = append(hostConfig.Binds, bind)
 	}
 
-	// Linux resources
+	// Linux resources + security context
 	if linux := config.GetLinux(); linux != nil {
 		if res := linux.GetResources(); res != nil {
 			hostConfig.Resources.CPUShares = res.GetCpuShares()
@@ -256,6 +256,15 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 			}
 			if sc.GetReadonlyRootfs() {
 				hostConfig.ReadonlyRootfs = true
+			}
+			if uid := sc.GetRunAsUser(); uid != nil {
+				dockerConfig.User = strconv.FormatInt(uid.GetValue(), 10)
+			}
+			if gid := sc.GetRunAsGroup(); gid != nil {
+				dockerConfig.User += ":" + strconv.FormatInt(gid.GetValue(), 10)
+			}
+			if username := sc.GetRunAsUsername(); username != "" {
+				dockerConfig.User = username
 			}
 		}
 	}
