@@ -1,4 +1,5 @@
 nanokube
 kubeconfig
 tests/artifacts/
+kind-logs-*
 cri-tools/critest

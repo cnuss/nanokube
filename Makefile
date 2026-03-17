@@ -79,13 +79,10 @@ define run-nanokube
 	$(3)
 endef
 
-baseline:
-	kubectl kuttl test --config tests/kuttl-test.yaml --start-kind --test configmap
-
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
-		kubectl kuttl test --config tests/kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
+		cd tests && kubectl kuttl test --config kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
 
 helm: build
 	$(call run-nanokube,,\
@@ -99,7 +96,7 @@ critest: build $(CRITEST)
 		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
 
 e2e-baseline:
-	kubectl kuttl test --config tests/kuttl-test.yaml --start-kind $(if $(WHAT),--test $(WHAT))
+	cd tests && kubectl kuttl test --config kuttl-test.yaml --start-kind $(if $(WHAT),--test $(WHAT))
 
 reset:
 	@pkill -f nanokube 2>/dev/null; true

@@ -36,13 +36,51 @@ func init() {
 	}
 	DefaultHosts.hostname = &hostname
 
-	var ifIps []string = make([]string, 0)
-	var nsIps []string = make([]string, 0)
+	outboundIps, err := localOutboundIPs()
+	if err != nil {
+		DefaultHosts.log.Error().Err(err).Msg("failed to get local outbound IP")
+	}
 
+	lookupIps, err := lookupIPs(hostname)
+	if err != nil {
+		DefaultHosts.log.Error().Err(err).Msg("failed to lookup IPs for hostname")
+	}
+
+	interfaceIps, err := interfaceIPs()
+	if err != nil {
+		DefaultHosts.log.Error().Err(err).Msg("failed to get interface IPs")
+	}
+
+	DefaultHosts.addrs[hostname] = append(DefaultHosts.addrs[hostname], outboundIps...)
+	DefaultHosts.log.Info().Str("hostname", hostname).Strs("outboundIPs", outboundIps).Strs("lookupIPs", lookupIps).Strs("interfaceIPs", interfaceIps).Msg("resolved local IP addresses")
+
+	// net.DefaultResolver = DefaultHosts.Resolver()
+}
+
+// localOutboundIP discovers the preferred outbound IP by opening a UDP
+// connection to a public address. No packets are actually sent.
+func localOutboundIPs() ([]string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:53")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return []string{conn.LocalAddr().(*net.UDPAddr).IP.String()}, nil
+}
+
+func lookupIPs(host string) ([]string, error) {
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return nil, err
+	}
+	return ips, nil
+}
+
+func interfaceIPs() ([]string, error) {
+	var ips []string
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		DefaultHosts.log.Error().Err(err).Msg("failed to get network interfaces")
-		return
+		return nil, err
 	}
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagRunning == 0 || iface.Flags&net.FlagLoopback != 0 {
@@ -58,34 +96,11 @@ func init() {
 				continue
 			}
 			if ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast() {
-				DefaultHosts.addrs[hostname] = append(DefaultHosts.addrs[hostname], ip.String())
+				ips = append(ips, ip.String())
 			}
-			ifIps = append(ifIps, ip.String())
 		}
 	}
-
-	nsIps, err = net.LookupHost(hostname)
-	DefaultHosts.log.Info().Str("hostname", hostname).Strs("interfaceIPs", ifIps).Strs("nslookupIPs", nsIps).Msg("resolved local IP addresses")
-
-	if err != nil {
-		panic(fmt.Sprintf("failed to resolve hostname '%s' to IP addresses: %v", hostname, err))
-	}
-
-	ifSet := make(map[string]bool, len(ifIps))
-	for _, ip := range ifIps {
-		ifSet[ip] = true
-	}
-	for _, nsIP := range nsIps {
-		parsed := net.ParseIP(strings.SplitN(nsIP, "%", 2)[0])
-		if parsed == nil || parsed.IsLoopback() || parsed.IsLinkLocalUnicast() {
-			continue
-		}
-		if !ifSet[nsIP] {
-			panic(fmt.Sprintf("hostname '%s' resolves to %s which is not bound to any local interface — check /etc/hosts or DNS", hostname, nsIP))
-		}
-	}
-
-	// net.DefaultResolver = DefaultHosts.Resolver()
+	return ips, nil
 }
 
 type hostsImpl struct {
