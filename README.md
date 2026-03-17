@@ -38,6 +38,16 @@ nanokube includes its own CRI (Container Runtime Interface) daemon that bridges 
 
 Docker is auto-detected by probing common socket paths (`/var/run/docker.sock`, `~/.colima/default/docker.sock`, `~/.rd/docker.sock`, etc.). If no runtime is found, nanokube starts with a no-op backend.
 
+## Networking
+
+nanokube uses Docker's networking directly — there is no kube-proxy or CNI plugin.
+
+**Shared bridge (default)** — Pods without `hostPort` all run on Docker's default `bridge` network. Containers can listen on any port without conflict since no host port binding occurs. `containerPort` in a pod spec is treated as informational only, matching upstream Kubernetes semantics.
+
+**Dedicated network (hostPort)** — When a pod specifies `hostPort`, nanokube creates a per-sandbox Docker network with explicit port publishing. This isolates the host port binding to that sandbox, preventing conflicts with other pods on the shared bridge.
+
+**DNS** — nanokube runs an embedded DNS server that resolves pod and service names. For bridge-mode pods, Docker's built-in DNS (`127.0.0.11`) forwards to the CRI-configured DNS servers. For host-network pods, resolv.conf is written directly.
+
 ## Build
 
 ```bash
