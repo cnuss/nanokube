@@ -739,23 +739,6 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		IpcMode: container.IpcMode("shareable"),
 	}
 
-	// Port mappings — only publish when both containerPort and hostPort are set
-	if pms := config.GetPortMappings(); len(pms) > 0 {
-		dockerConfig.ExposedPorts = nat.PortSet{}
-		hostConfig.PortBindings = nat.PortMap{}
-		for _, pm := range pms {
-			port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
-			dockerConfig.ExposedPorts[port] = struct{}{}
-			hostPort := pm.GetHostPort()
-			if hostPort == 0 {
-				hostPort = pm.GetContainerPort()
-			}
-			hostConfig.PortBindings[port] = []nat.PortBinding{
-				{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
-			}
-		}
-	}
-
 	// Linux namespace options
 	if linux := config.GetLinux(); linux != nil {
 		if sc := linux.GetSecurityContext(); sc != nil {
@@ -786,29 +769,41 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		hostConfig.DNSOptions = dns.GetOptions()
 	}
 
-	// Network setup for non-host sandboxes.
-	// Option A: per-sandbox bridge + shared network (isolation + DNS discovery)
-	// Option B: default bridge only (simpler, CRI DNS conformance, no isolation)
 	if networkMode != backend.NetworkHost {
-		// --- Option A: per-sandbox + shared network ---
-		// dnsAliases := s.backend.labels.DNSAliases(config.GetAnnotations())
-		// aliases := append([]string{meta.GetName()}, dnsAliases...)
-		// shared := s.backend.parent.SharedNetwork()
-		// if _, err := s.CreateNetwork(ctx, name); err != nil {
-		// 	return nil, component.WrapErr(s.log, err)
-		// }
-		// shared := s.backend.parent.SharedNetwork()
-		// networkingConfig = &network.NetworkingConfig{
-		// 	EndpointsConfig: map[string]*network.EndpointSettings{
-		// 		name:   {Aliases: aliases},
-		// 		shared: {Aliases: aliases},
-		// 	},
-		// }
+		networkName := "bridge"
 
-		// --- Option B: default bridge ---
+		// Port mappings — only publish when hostPort is explicitly set.
+		// containerPort alone is informational in Kubernetes; it doesn't bind to the host.
+		// Pods with host ports get a dedicated network to avoid port conflicts on the shared bridge.
+		var hasHostPorts bool
+		for _, pm := range config.GetPortMappings() {
+			if pm.GetHostPort() != 0 {
+				hasHostPorts = true
+				break
+			}
+		}
+		if hasHostPorts {
+			networkName, err = s.backend.server.CreateNetwork(ctx, name)
+			if err != nil {
+				return nil, component.WrapErr(s.log, err)
+			}
+			dockerConfig.ExposedPorts = nat.PortSet{}
+			hostConfig.PortBindings = nat.PortMap{}
+			for _, pm := range config.GetPortMappings() {
+				if pm.GetHostPort() == 0 {
+					continue
+				}
+				port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
+				dockerConfig.ExposedPorts[port] = struct{}{}
+				hostConfig.PortBindings[port] = []nat.PortBinding{
+					{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(pm.GetHostPort()))},
+				}
+			}
+		}
+
 		networkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				"bridge": {},
+				networkName: {},
 			},
 		}
 	}
