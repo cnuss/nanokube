@@ -1,5 +1,0 @@
-apiVersion: v2
-name: guestbook
-description: Guestbook micro-app for nanokube integration testing
-version: 0.1.0
-type: application
