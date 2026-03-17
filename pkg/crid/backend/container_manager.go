@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -486,6 +487,24 @@ func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 			network = NetworkHost
 		}
 		pod.Spec.HostAliases = append(pod.Spec.HostAliases, h.HostAliases(p.backend.Context(), network)...)
+	}
+
+	// Inject security context as annotation so CreateContainer can apply it on
+	// platforms where kubelet doesn't populate LinuxContainerConfig (e.g. macOS).
+	if sc := pod.Spec.SecurityContext; sc != nil {
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		var user string
+		if sc.RunAsUser != nil {
+			user = strconv.FormatInt(*sc.RunAsUser, 10)
+		}
+		if sc.RunAsGroup != nil {
+			user += ":" + strconv.FormatInt(*sc.RunAsGroup, 10)
+		}
+		if user != "" {
+			pod.Annotations[p.backend.Labels().Prefix(labels.SecurityContextKey)] = user
+		}
 	}
 
 	// Inject container names as annotation so RunPodSandbox can set DNS aliases

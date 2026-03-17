@@ -269,6 +269,14 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		}
 	}
 
+	// Fallback: pick up security context from annotation when kubelet doesn't
+	// populate LinuxContainerConfig (e.g. macOS/darwin).
+	if dockerConfig.User == "" {
+		if user := s.backend.labels.SecurityContext(sandboxAnnotations); user != "" {
+			dockerConfig.User = user
+		}
+	}
+
 	// Log config
 	if config.GetLogPath() != "" {
 		hostConfig.LogConfig = container.LogConfig{
