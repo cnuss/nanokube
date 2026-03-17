@@ -19,22 +19,22 @@ Requires Go 1.25+ and a container runtime (Docker recommended).
 nanokube [flags]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--name` | `nanokube` | Cluster name |
-| `--data` | `~/.nanokube` | Data directory |
-| `--clean` | `false` | Clean data directory before starting |
-| `--kubelet` | `true` | Start the kubelet component |
-| `-v, --verbose` | `false` | Enable debug logging (`-v` debug, `-vv` trace) |
+| Flag             | Default      | Description                                      |
+|------------------|--------------|--------------------------------------------------|
+| `--name`         | `nanokube`   | Cluster name                                     |
+| `--data`         | `~/.nanokube`| Data directory                                   |
+| `--clean`        | `false`      | Clean data directory before starting             |
+| `--kubelet`      | `true`       | Start the kubelet component                      |
+| `-v, --verbose`  | `false`      | Enable debug logging (`-v` debug, `-vv` trace)   |
 
 ## Container Runtimes
 
 nanokube includes its own CRI (Container Runtime Interface) daemon that bridges Kubernetes to container runtimes directly — no external CRI shim required.
 
-| Runtime | Status |
-|---------|--------|
-| Docker | Supported |
-| Podman | Planned |
+| Runtime | Status    |
+|---------|-----------|
+| Docker  | Supported |
+| Podman  | Planned   |
 
 Docker is auto-detected by probing common socket paths (`/var/run/docker.sock`, `~/.colima/default/docker.sock`, `~/.rd/docker.sock`, etc.). If no runtime is found, nanokube starts with a no-op backend.
 
@@ -50,14 +50,69 @@ make run-clean    # fmt, build, and run with --clean
 ## Testing
 
 ```bash
-make test                        # unit tests
-make e2e                         # kuttl e2e suite (24 tests)
-make e2e WHAT=exec               # single e2e test by name
-make e2e-baseline                # e2e suite against Kind (reference baseline)
-make e2e-baseline WHAT=configmap # single baseline test by name
-make critest                     # CRI conformance tests
-make critest WHAT="port mapping" # single critest by focus
+make test                           # unit tests
+make e2e                            # kuttl e2e suite
+make e2e SUITE=pods                 # single suite
+make e2e SUITE=pods WHAT=dns-config # single test in a suite
+make e2e-baseline                   # e2e suite against Kind (reference baseline)
+make critest                        # CRI conformance tests
+make critest WHAT="port mapping"    # single critest by focus
 ```
+
+## Conformance
+
+E2E tests from [kuttl-conformance](https://github.com/cnuss/kuttl-conformance) run against nanokube with Docker.
+
+| Suite             | Test                     | Status         |
+|-------------------|--------------------------|----------------|
+| **api**           | crd-lifecycle            | :green_circle: |
+|                   | finalizers               | :green_circle: |
+|                   | labels-annotations       | :green_circle: |
+|                   | namespace-lifecycle      | :green_circle: |
+| **auth**          | serviceaccount-token     | :green_circle: |
+|                   | clusterrole-binding      | :red_circle:   |
+|                   | rbac                     | :red_circle:   |
+| **configuration** | configmap-mount          | :green_circle: |
+|                   | hostpath-volume          | :green_circle: |
+|                   | persistent-volume-claim  | :green_circle: |
+|                   | secret-mount             | :green_circle: |
+|                   | volume-submounts         | :green_circle: |
+|                   | volume-types             | :green_circle: |
+| **networking**    | ingress                  | :green_circle: |
+|                   | endpoint-slices          | :red_circle:   |
+|                   | headless-service         | :red_circle:   |
+|                   | network-policy           | :red_circle:   |
+|                   | service-clusterip        | :red_circle:   |
+|                   | service-nodeport         | :red_circle:   |
+| **observability** | pod-events               | :green_circle: |
+|                   | pod-logs                 | :green_circle: |
+| **pods**          | dns-config               | :green_circle: |
+|                   | init-containers          | :green_circle: |
+|                   | pod-lifecycle            | :green_circle: |
+|                   | pod-lifecycle-hooks      | :green_circle: |
+|                   | resource-requests-limits | :green_circle: |
+|                   | restart-policy           | :green_circle: |
+|                   | pod-probes               | :red_circle:   |
+|                   | security-context         | :red_circle:   |
+| **policy**        | horizontal-pod-autoscaler| :green_circle: |
+|                   | limit-range              | :green_circle: |
+|                   | resource-quota           | :green_circle: |
+|                   | pod-disruption-budget    | :red_circle:   |
+| **scheduling**    | pod-affinity             | :green_circle: |
+|                   | priority-class           | :green_circle: |
+|                   | taints-tolerations       | :green_circle: |
+|                   | topology-spread          | :green_circle: |
+|                   | node-affinity            | :red_circle:   |
+|                   | node-selector            | :red_circle:   |
+| **workloads**     | cronjob-scheduling       | :green_circle: |
+|                   | daemonset                | :green_circle: |
+|                   | job-completion           | :green_circle: |
+|                   | deployment-lifecycle     | :red_circle:   |
+|                   | deployment-strategy      | :red_circle:   |
+|                   | replicaset               | :red_circle:   |
+|                   | statefulset              | :red_circle:   |
+
+**29/46 passing** — failures are primarily due to host port conflicts (multiple nginx pods binding port 80) and missing ClusterIP service networking.
 
 ## License
 

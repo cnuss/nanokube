@@ -62,6 +62,7 @@ init:
 	@which kubectl-kuttl >/dev/null 2>&1 || curl -fsSLo $$(go env GOPATH)/bin/kubectl-kuttl https://github.com/kudobuilder/kuttl/releases/download/v$(KUTTL_VERSION)/kubectl-kuttl_$(KUTTL_VERSION)_$$(go env GOOS)_$(KUTTL_ARCH) && chmod +x $$(go env GOPATH)/bin/kubectl-kuttl
 
 WHAT ?=
+SUITE ?=
 
 DATA ?= /tmp/nanokube-test
 V ?= 0
@@ -79,10 +80,12 @@ define run-nanokube
 	$(3)
 endef
 
+KUTTL_CONFIG = $(if $(SUITE),e2e/$(SUITE)/kuttl-test.yaml,kuttl-test.yaml)
+
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
-		cd tests && kubectl kuttl test --config kuttl-test.yaml $(if $(WHAT),--test $(WHAT)))
+		cd tests && kubectl kuttl test --config $(KUTTL_CONFIG) $(if $(WHAT),--test $(WHAT)))
 
 helm: build
 	$(call run-nanokube,,\
@@ -96,7 +99,7 @@ critest: build $(CRITEST)
 		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
 
 e2e-baseline:
-	cd tests && kubectl kuttl test --config kuttl-test.yaml --start-kind $(if $(WHAT),--test $(WHAT))
+	cd tests && kubectl kuttl test --config $(KUTTL_CONFIG) --start-kind $(if $(WHAT),--test $(WHAT))
 
 reset:
 	@pkill -f nanokube 2>/dev/null; true
