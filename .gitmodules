@@ -11,4 +11,4 @@
 	url = https://github.com/kubernetes-sigs/cri-tools.git
 [submodule "tests"]
 	path = tests
-	url = https://github.com/cnuss/kuttl-conformance.git
+	url = https://github.com/cnuss/chainsaw-kube.git
