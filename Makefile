@@ -1,6 +1,4 @@
-.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e e2e-baseline helm reset
-
-KUTTL_VERSION := 0.25.0
+.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e reset
 CRITEST := cri-tools/critest
 
 VERSION_PKG := k8s.io/component-base/version
@@ -53,13 +51,11 @@ run: fmt build
 run-clean: ARGS += --clean
 run-clean: run
 
-KUTTL_ARCH = $(shell go env GOARCH | sed 's/amd64/x86_64/')
-
 $(CRITEST):
 	cd cri-tools && go test -c -o critest ./cmd/critest/
 
 init:
-	@which kubectl-kuttl >/dev/null 2>&1 || curl -fsSLo $$(go env GOPATH)/bin/kubectl-kuttl https://github.com/kudobuilder/kuttl/releases/download/v$(KUTTL_VERSION)/kubectl-kuttl_$(KUTTL_VERSION)_$$(go env GOOS)_$(KUTTL_ARCH) && chmod +x $$(go env GOPATH)/bin/kubectl-kuttl
+	cd tests && make install-chainsaw
 
 WHAT ?=
 SUITE ?=
@@ -80,26 +76,16 @@ define run-nanokube
 	$(3)
 endef
 
-KUTTL_CONFIG = $(if $(SUITE),e2e/$(SUITE)/kuttl-test.yaml,kuttl-test.yaml)
-
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
-		cd tests && kubectl kuttl test --config $(KUTTL_CONFIG) $(if $(WHAT),--test $(WHAT)))
-
-helm: build
-	$(call run-nanokube,,\
-		kubectl get nodes >/dev/null 2>&1,\
-		helm upgrade --install guestbook tests/helm/guestbook -n guestbook --create-namespace --wait --timeout 120s)
+		cd tests && make test KIND=false $(if $(SUITE),SUITE=$(SUITE)) $(if $(WHAT),WHAT=$(WHAT)))
 
 # TODO unhardcode docker
 critest: build $(CRITEST)
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$(DATA)/docker/cri.sock" ],\
 		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
-
-e2e-baseline:
-	cd tests && kubectl kuttl test --config $(KUTTL_CONFIG) --start-kind $(if $(WHAT),--test $(WHAT))
 
 reset:
 	@pkill -f nanokube 2>/dev/null; true
