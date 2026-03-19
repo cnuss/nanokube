@@ -688,13 +688,14 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	id := req.GetPodSandboxId()
 	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
 
-	// Confirm the sandbox exists
+	// Check if sandbox exists — if not, return success (idempotent)
 	status, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: id})
+	if status == nil || status.GetStatus() == nil {
+		s.log.Debug().Str("id", id[:min(12, len(id))]).Msg("sandbox not found, nothing to remove")
+		return &runtimeapi.RemovePodSandboxResponse{}, nil
+	}
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
-	}
-	if status == nil {
-		return nil, component.WrapErr(s.log, fmt.Errorf("pod sandbox not found: %s", id))
 	}
 
 	// Find all containers in the sandbox
@@ -736,8 +737,8 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	s.log.Info().Any("req", req).Msg("RunPodSandbox")
 	config := req.GetConfig()
+	s.log.Info().Any("config", config).Msg("RunPodSandbox")
 	meta := config.GetMetadata()
 	name, labels, err := s.backend.labels.NewBuilder(config.GetLabels()).
 		WithType(labels.TypeSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUid(meta.GetUid()).
@@ -808,17 +809,9 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 	if networkMode != backend.NetworkHost {
 		networkName := "bridge"
 
-		// Port mappings — only publish when hostPort is explicitly set.
-		// containerPort alone is informational in Kubernetes; it doesn't bind to the host.
-		// Pods with host ports get a dedicated network to avoid port conflicts on the shared bridge.
-		var hasHostPorts bool
-		for _, pm := range config.GetPortMappings() {
-			if pm.GetHostPort() != 0 {
-				hasHostPorts = true
-				break
-			}
-		}
-		if hasHostPorts {
+		// DEVNOTE: NOT JUST KUBERNETES! ****critest relies on this as well, change with caution****
+		// Port mappings — if specified, allocate a per-sandbox bridge network and configure port bindings
+		if len(config.GetPortMappings()) > 0 {
 			network, err := s.backend.parent.IPAM().AllocateNetwork(ctx, config)
 			if err != nil {
 				return nil, component.WrapErr(s.log, err)
@@ -827,13 +820,16 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 			dockerConfig.ExposedPorts = nat.PortSet{}
 			hostConfig.PortBindings = nat.PortMap{}
 			for _, pm := range config.GetPortMappings() {
-				if pm.GetHostPort() == 0 {
-					continue
+				containerPort := pm.GetContainerPort()
+				hostPort := pm.GetHostPort()
+				if hostPort == 0 {
+					hostPort = containerPort
+					s.log.Info().Int32("containerPort", containerPort).Msg("host port not specified, using same port as container")
 				}
-				port := nat.Port(fmt.Sprintf("%d/%s", pm.GetContainerPort(), strings.ToLower(pm.GetProtocol().String())))
+				port := nat.Port(fmt.Sprintf("%d/%s", containerPort, strings.ToLower(pm.GetProtocol().String())))
 				dockerConfig.ExposedPorts[port] = struct{}{}
 				hostConfig.PortBindings[port] = []nat.PortBinding{
-					{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(pm.GetHostPort()))},
+					{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
 				}
 			}
 		}
