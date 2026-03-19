@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/component"
@@ -123,18 +124,20 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 	i.staticNetsMu.Lock()
 	defer i.staticNetsMu.Unlock()
 
-	var unallocated []NetworkSpec
-	var last *NetworkSpec = &i.reservedNet
+	// Collect and sort allocated networks by IP to find the highest one.
+	var allocated []*NetworkSpec
 	for _, net := range i.staticNets {
-		if net == nil {
-			unallocated = append(unallocated, i.reservedNet)
-		} else {
-			last = net
+		if net != nil {
+			allocated = append(allocated, net)
 		}
 	}
+	sort.Slice(allocated, func(a, b int) bool {
+		return bytes.Compare(allocated[a].Network.IP, allocated[b].Network.IP) < 0
+	})
 
-	if len(unallocated) != 0 {
-		last = &unallocated[0]
+	var last *NetworkSpec = &i.reservedNet
+	if len(allocated) > 0 {
+		last = allocated[len(allocated)-1]
 	}
 
 	// Calculate the next /30 subnet after the last one.
