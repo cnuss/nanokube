@@ -1,12 +1,15 @@
 package labels
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+
+	v1 "k8s.io/api/core/v1"
 )
 
 var (
@@ -149,6 +152,16 @@ func (b *LabelBuilder) WithAnnotations(annotations map[string]string) *LabelBuil
 	return b
 }
 
+func (b *LabelBuilder) WithHostAliases(aliases []v1.HostAlias) *LabelBuilder {
+	if len(aliases) == 0 {
+		return b
+	}
+	raw, _ := json.Marshal(aliases)
+	return b.WithAnnotations(map[string]string{
+		b.lp.Prefix(HostAliasesKey): string(raw),
+	})
+}
+
 func (b *LabelBuilder) WithLogDirectory(logDir string) *LabelBuilder {
 	if logDir != "" {
 		b.set(logDirKey, logDir)
@@ -178,8 +191,13 @@ func (b *LabelBuilder) Build() (string, map[string]string, error) {
 	if t := b.get(typeKey); t != string(TypeContainer) && t != string(TypeVolume) {
 		name += "-" + t
 	}
-	parts := []string{name, normalize(b.get(namespaceKey)), normalize(b.lp.name)}
-	return strings.Join(parts, "."), b.labels, nil
+	namespace := normalize(b.get(namespaceKey))
+	if namespace != "" {
+		name = name + "." + namespace
+	}
+	name = name + "." + normalize(b.lp.name)
+
+	return name, b.labels, nil
 }
 
 func (b *LabelBuilder) InternalLabels() map[string]string {

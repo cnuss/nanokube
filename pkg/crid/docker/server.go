@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,30 +29,32 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 const defaultPauseImage = "busybox:latest"
 
 func NewServer(b *DockerBackend, parent backend.Backend) *Server {
 	return &Server{
-		backend:   b,
-		streaming: parent.Streaming(),
-		log:       component.NewLogger("docker-server"),
+		backend: b,
+		parent:  parent,
+		log:     component.NewLogger("docker-server"),
 	}
 }
 
 type Server struct {
 	runtimeapi.UnsafeImageServiceServer
 	runtimeapi.UnsafeRuntimeServiceServer
-	log       component.Logger
-	backend   *DockerBackend
-	streaming streaming.Server
+	log     component.Logger
+	backend *DockerBackend
+	parent  backend.Backend
 }
 
 // Attach implements [v1.RuntimeServiceServer].
 func (s *Server) Attach(ctx context.Context, req *runtimeapi.AttachRequest) (*runtimeapi.AttachResponse, error) {
-	return s.streaming.GetAttach(req)
+	if s.parent.Streaming() == nil {
+		return nil, status.Error(codes.Unavailable, "streaming server not ready")
+	}
+	return s.parent.Streaming().GetAttach(req)
 }
 
 // CheckpointContainer implements [v1.RuntimeServiceServer].
@@ -303,7 +307,10 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 
 // Exec implements [v1.RuntimeServiceServer].
 func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtimeapi.ExecResponse, error) {
-	return s.streaming.GetExec(req)
+	if s.parent.Streaming() == nil {
+		return nil, status.Error(codes.Unavailable, "streaming server not ready")
+	}
+	return s.parent.Streaming().GetExec(req)
 }
 
 // ExecSync implements [v1.RuntimeServiceServer].
@@ -655,7 +662,10 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 
 // PortForward implements [v1.RuntimeServiceServer].
 func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardRequest) (*runtimeapi.PortForwardResponse, error) {
-	return s.streaming.GetPortForward(req)
+	if s.parent.Streaming() == nil {
+		return nil, status.Error(codes.Unavailable, "streaming server not ready")
+	}
+	return s.parent.Streaming().GetPortForward(req)
 }
 
 // RemoveContainer implements [v1.RuntimeServiceServer].
@@ -678,15 +688,24 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	id := req.GetPodSandboxId()
 	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
 
-	// Inspect sandbox to find its networks before removal
-	inspect, inspectErr := s.backend.client.ContainerInspect(ctx, id)
+	// Confirm the sandbox exists
+	status, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: id})
+	if err != nil {
+		return nil, component.WrapErr(s.log, err)
+	}
+	if status == nil {
+		return nil, component.WrapErr(s.log, fmt.Errorf("pod sandbox not found: %s", id))
+	}
 
+	// Find all containers in the sandbox
 	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
 	})
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
+
+	// Remove all containers in the sandbox
 	for _, c := range resp.Containers {
 		if _, err := s.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{ContainerId: c.Id}); err != nil {
 			return nil, component.WrapErr(s.log, err)
@@ -699,16 +718,8 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 	}
 
 	// Remove per-sandbox bridge networks
-	if inspectErr == nil && inspect.NetworkSettings != nil {
-		for netName := range inspect.NetworkSettings.Networks {
-			if netName == "bridge" || netName == "host" || netName == "none" {
-				continue
-			}
-			s.log.Debug().Str("network", netName).Msg("removing sandbox network")
-			if err := s.backend.client.NetworkRemove(ctx, netName); err != nil {
-				s.log.Warn().Str("network", netName).Err(err).Msg("failed to remove sandbox network")
-			}
-		}
+	if err := s.backend.parent.IPAM().DeallocateNetwork(ctx, status.GetStatus()); err != nil {
+		s.log.Warn().Err(err).Str("sandbox", id[:min(12, len(id))]).Msg("failed to deallocate sandbox network")
 	}
 
 	return &runtimeapi.RemovePodSandboxResponse{}, nil
@@ -786,6 +797,14 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		hostConfig.DNSOptions = dns.GetOptions()
 	}
 
+	extraHosts := s.backend.parent.Hosts().ExtraHosts(ctx, networkMode)
+	for _, extraHost := range s.backend.labels.ExtraHosts(config.GetAnnotations()) {
+		// Host aliases — kubelet injects these as annotations via podAdmitHandler
+		extraHosts = append(extraHosts, extraHost)
+	}
+	slices.Sort(extraHosts)
+	hostConfig.ExtraHosts = slices.Compact(extraHosts)
+
 	if networkMode != backend.NetworkHost {
 		networkName := "bridge"
 
@@ -800,10 +819,11 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 			}
 		}
 		if hasHostPorts {
-			networkName, err = s.backend.server.CreateNetwork(ctx, name)
+			network, err := s.backend.parent.IPAM().AllocateNetwork(ctx, config)
 			if err != nil {
 				return nil, component.WrapErr(s.log, err)
 			}
+			networkName = network.Name
 			dockerConfig.ExposedPorts = nat.PortSet{}
 			hostConfig.PortBindings = nat.PortMap{}
 			for _, pm := range config.GetPortMappings() {
@@ -1297,34 +1317,183 @@ func (s *Server) ControllerModifyVolume(_ context.Context, _ *csipb.ControllerMo
 	return &csipb.ControllerModifyVolumeResponse{}, nil
 }
 
+func newNetworkSpec(inspect *network.Inspect) *backend.NetworkSpec {
+	if inspect == nil || inspect.IPAM.Config == nil || len(inspect.IPAM.Config) == 0 {
+		return nil
+	}
+	cfg := inspect.IPAM.Config[0]
+	_, network, err := net.ParseCIDR(cfg.Subnet)
+	if err != nil {
+		return nil
+	}
+	return &backend.NetworkSpec{
+		Name:    inspect.Name,
+		Type:    backend.NetworkBridge,
+		Gateway: net.ParseIP(cfg.Gateway),
+		Network: *network,
+	}
+}
+
 // --- Network Provider ---
+
+func (s *Server) DefaultNetwork(ctx context.Context) backend.NetworkSpec {
+	var resp network.Inspect
+	var err error
+
+	resp, err = s.backend.client.NetworkInspect(ctx, "bridge", network.InspectOptions{Verbose: true})
+	if err == nil {
+		networkSpec := newNetworkSpec(&resp)
+		if networkSpec != nil {
+			return *networkSpec
+		}
+	}
+
+	s.log.Warn().Err(err).Msg("failed to get bridge network, trying host network")
+	resp, err = s.backend.client.NetworkInspect(ctx, "host", network.InspectOptions{Verbose: true})
+	if err == nil {
+		networkSpec := newNetworkSpec(&resp)
+		if networkSpec != nil {
+			return *networkSpec
+		}
+	}
+
+	s.log.Warn().Err(err).Msg("failed to get host network, trying none network")
+	resp, err = s.backend.client.NetworkInspect(ctx, "none", network.InspectOptions{Verbose: true})
+	if err == nil {
+		networkSpec := newNetworkSpec(&resp)
+		if networkSpec != nil {
+			return *networkSpec
+		}
+	}
+
+	s.log.Warn().Err(err).Msg("failed to get default networks, returning empty network spec")
+	return backend.NetworkSpec{}
+}
+
+func (s *Server) GetNetwork(ctx context.Context, name string) (*backend.NetworkSpec, error) {
+	netName, _, err := s.backend.Labels().NewBuilder(nil).
+		WithType(labels.TypeNetwork).
+		WithName(name).
+		Build()
+	if err != nil {
+		return nil, component.WrapErr(s.log, err)
+	}
+
+	resp, err := s.backend.client.NetworkInspect(ctx, netName, network.InspectOptions{Verbose: true})
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, component.WrapErr(s.log, err)
+	}
+
+	var networkType backend.NetworkType
+	switch resp.Driver {
+	case "bridge":
+		networkType = backend.NetworkBridge
+	case "host":
+		networkType = backend.NetworkHost
+	default:
+		return nil, component.WrapErr(s.log, fmt.Errorf("unsupported network %s: %s", resp.Name, resp.Driver))
+	}
+
+	isDefault := resp.Options["com.docker.network.bridge.default_bridge"] == "true"
+	managedBy := resp.Labels[s.backend.labels.ManagedByKey()]
+	if !isDefault && managedBy != s.backend.labels.Name() {
+		return nil, component.WrapErr(s.log, fmt.Errorf("network %q is not managed by this runtime (managedBy=%q)", resp.Name, managedBy))
+	}
+
+	var network net.IPNet
+	var gateway net.IP
+
+	if resp.IPAM.Config != nil {
+		for _, cfg := range resp.IPAM.Config {
+			if cfg.Subnet != "" && cfg.Gateway != "" {
+				gateway = net.ParseIP(cfg.Gateway)
+				if gateway == nil {
+					s.log.Warn().Str("gateway", cfg.Gateway).Msgf("failed to parse gateway for network %q, skipping", name)
+					continue
+				}
+				_, ipNet, err := net.ParseCIDR(cfg.Subnet)
+				if err != nil {
+					s.log.Warn().Err(err).Str("subnet", cfg.Subnet).Msgf("failed to parse subnet for network %q, skipping", name)
+					continue
+				}
+				network = *ipNet
+			}
+		}
+	}
+
+	return &backend.NetworkSpec{
+		Name:    resp.Name,
+		Type:    networkType,
+		Gateway: gateway,
+		Network: network,
+	}, nil
+}
 
 // CreateNetwork implements [backend.NetworkProvider]. Idempotent — returns
 // the network ID if it already exists.
-func (s *Server) CreateNetwork(ctx context.Context, name string) (string, error) {
-	if resp, err := s.backend.client.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
-		return resp.ID, nil
-	} else if !errdefs.IsNotFound(err) {
-		return "", err
+func (s *Server) CreateNetwork(ctx context.Context, name string, net *net.IPNet) (backend.NetworkSpec, error) {
+	existing, _ := s.GetNetwork(ctx, name)
+	if existing != nil {
+		return *existing, nil
 	}
-	resp, err := s.backend.client.NetworkCreate(ctx, name, network.CreateOptions{
-		Labels: s.backend.labels.NewBuilder(nil).InternalLabels(),
+
+	netName, netLabels, err := s.backend.labels.NewBuilder(nil).
+		WithType(labels.TypeNetwork).
+		WithName(name).
+		Build()
+	if err != nil {
+		return backend.NetworkSpec{}, component.WrapErr(s.log, err)
+	}
+
+	createOptions := network.CreateOptions{
+		Driver: "bridge",
+		Labels: netLabels,
 		Options: map[string]string{
 			"com.docker.network.bridge.enable_icc":           "true",
 			"com.docker.network.bridge.enable_ip_masquerade": "true",
 			"com.docker.network.bridge.host_binding_ipv4":    "0.0.0.0",
 			"com.docker.network.driver.mtu":                  "65535",
 		},
-	})
-	if err != nil {
-		return "", err
 	}
-	return resp.ID, nil
+
+	if net != nil {
+		createOptions.IPAM = &network.IPAM{
+			Driver: "default",
+			Config: []network.IPAMConfig{
+				{Subnet: net.String()},
+			},
+		}
+	}
+
+	_, err = s.backend.client.NetworkCreate(ctx, netName, createOptions)
+	if err != nil {
+		return backend.NetworkSpec{}, component.WrapErr(s.log, err)
+	}
+
+	// DEVNOTE: Using original name
+	network, err := s.GetNetwork(ctx, name)
+	if err != nil {
+		return backend.NetworkSpec{}, component.WrapErr(s.log, err)
+	} else if network == nil {
+		return backend.NetworkSpec{}, component.WrapErr(s.log, fmt.Errorf("network %q not found after creation", name))
+	}
+
+	return *network, nil
 }
 
 // RemoveNetwork implements [backend.NetworkProvider].
 func (s *Server) RemoveNetwork(ctx context.Context, name string) error {
-	return s.backend.client.NetworkRemove(ctx, name)
+	netName, _, err := s.backend.labels.NewBuilder(nil).
+		WithType(labels.TypeNetwork).
+		WithName(name).
+		Build()
+	if err != nil {
+		return component.WrapErr(s.log, err)
+	}
+	return s.backend.client.NetworkRemove(ctx, netName)
 }
 
 // ConnectNetwork implements [backend.NetworkProvider].

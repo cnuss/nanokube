@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -480,6 +481,8 @@ type podAdmitHandler struct {
 
 func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attrs.Pod
+	hosts := p.backend.Hosts()
+	p.log.Info().Any("attrs", attrs).Any("hosts", hosts.Entries(p.backend.Context(), NetworkBridge)).Msg("admitting pod")
 
 	if h := p.backend.Hosts(); h != nil {
 		network := NetworkBridge
@@ -505,6 +508,15 @@ func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 		if user != "" {
 			pod.Annotations[p.backend.Labels().Prefix(labels.SecurityContextKey)] = user
 		}
+	}
+
+	// Inject host aliases as annotation so RunPodSandbox can set ExtraHosts
+	if len(pod.Spec.HostAliases) > 0 {
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		b, _ := json.Marshal(pod.Spec.HostAliases)
+		pod.Annotations[p.backend.Labels().Prefix(labels.HostAliasesKey)] = string(b)
 	}
 
 	// Inject container names as annotation so RunPodSandbox can set DNS aliases

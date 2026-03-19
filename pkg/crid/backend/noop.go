@@ -57,6 +57,7 @@ func (n *NoopBackend) Cleanup(context.Context) error                            
 func (n *NoopBackend) Hosts() Hosts                                                { return nil }
 func (n *NoopBackend) WithKubeClient(client clientset.Interface) Backend           { return n }
 func (n *NoopBackend) KubeClient() clientset.Interface                             { return nil }
+func (n *NoopBackend) IPAM() Ipam                                                  { return nil }
 func (n *NoopBackend) HostInfo() (*HostInfo, error) {
 	return &HostInfo{
 		Hostname: "localhost",

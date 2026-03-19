@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	v1 "k8s.io/api/core/v1"
 )
 
 type ResourceType string
@@ -23,12 +25,14 @@ var (
 	labelsKey          = "labels"
 	annotationsKey     = "annotations"
 	DNSAliasesKey      = "dns-aliases"
+	HostAliasesKey     = "host-aliases"
 	SecurityContextKey = "security-context"
 
 	TypeUnknown   ResourceType = "unknown"
 	TypeSandbox   ResourceType = "sandbox"
 	TypeContainer ResourceType = "container"
 	TypeVolume    ResourceType = "volume"
+	TypeNetwork   ResourceType = "network"
 )
 
 type LabelProvider interface {
@@ -48,7 +52,9 @@ type LabelProvider interface {
 	// Key accessors
 	UIDKey() string
 	NameKey() string
+	ManagedByKey() string
 	DNSAliases(annotations map[string]string) []string
+	ExtraHosts(annotations map[string]string) []string
 	SecurityContext(annotations map[string]string) string
 
 	// Filters
@@ -112,6 +118,10 @@ func (l *LabelProviderImpl) LogPath(dockerLabels map[string]string) string {
 	return filepath.Join(dir, path)
 }
 
+func (l *LabelProviderImpl) ManagedByKey() string {
+	return l.Prefix(managedByKey)
+}
+
 func (l *LabelProviderImpl) UIDKey() string {
 	return l.Prefix(uidKey)
 }
@@ -125,6 +135,24 @@ func (l *LabelProviderImpl) DNSAliases(annotations map[string]string) []string {
 		return strings.Split(v, ",")
 	}
 	return nil
+}
+
+func (l *LabelProviderImpl) ExtraHosts(annotations map[string]string) []string {
+	v, ok := annotations[l.Prefix(HostAliasesKey)]
+	if !ok || v == "" {
+		return nil
+	}
+	var entries []v1.HostAlias
+	if json.Unmarshal([]byte(v), &entries) != nil {
+		return nil
+	}
+	var extraHosts []string
+	for _, e := range entries {
+		for _, h := range e.Hostnames {
+			extraHosts = append(extraHosts, h+":"+e.IP)
+		}
+	}
+	return extraHosts
 }
 
 func (l *LabelProviderImpl) SecurityContext(annotations map[string]string) string {

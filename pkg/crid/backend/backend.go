@@ -46,14 +46,24 @@ const (
 	NetworkBridge NetworkType = "Bridge"
 )
 
+type NetworkSpec struct {
+	Name    string
+	Type    NetworkType
+	Gateway net.IP
+	Network net.IPNet
+}
+
 type NetworkProvider interface {
-	CreateNetwork(ctx context.Context, name string) (string, error)
+	DefaultNetwork(ctx context.Context) NetworkSpec
+	GetNetwork(ctx context.Context, name string) (*NetworkSpec, error)
+	CreateNetwork(ctx context.Context, name string, net *net.IPNet) (NetworkSpec, error)
 	RemoveNetwork(ctx context.Context, name string) error
 	ConnectNetwork(ctx context.Context, network, containerID string, aliases []string) error
 	DisconnectNetwork(ctx context.Context, network, containerID string) error
 }
 
 type Hosts interface {
+	Log() component.Logger
 	Hostname() string
 	WithContext(ctx context.Context) Hosts
 	WithHost(name string, addrs []string) Hosts
@@ -61,7 +71,6 @@ type Hosts interface {
 	Entries(ctx context.Context, network NetworkType) map[string][]string
 	ExtraHosts(ctx context.Context, network NetworkType) []string
 	HostAliases(ctx context.Context, network NetworkType) []v1.HostAlias
-	Resolver() *net.Resolver
 }
 
 // EventResource classifies the source of an event.
@@ -183,6 +192,7 @@ type Backend interface {
 	// Networking
 	Networks() NetworkProvider
 	SharedNetwork() string
+	IPAM() Ipam
 
 	// KubeClient
 	KubeClient() clientset.Interface
@@ -221,6 +231,7 @@ type BackendImpl struct {
 
 	// hosts
 	hosts Hosts
+	ipam  Ipam
 
 	// events
 	broadcaster record.EventBroadcaster
@@ -258,6 +269,12 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 	b.ctx = ctx
 	b.hosts = hosts
 	b.broadcaster = broadcaster
+
+	ipam, err := NewIpam(ctx, b.Driver)
+	if err != nil {
+		return component.WrapErr(b.log, err)
+	}
+	b.ipam = ipam
 
 	os.MkdirAll(b.DataDir(), 0o755)
 	os.Remove(b.socket())
@@ -595,8 +612,12 @@ func (b *BackendImpl) Hosts() Hosts {
 }
 
 func (b *BackendImpl) SharedNetwork() string {
-	b.Networks().CreateNetwork(b.ctx, b.name)
+	b.Networks().CreateNetwork(b.ctx, b.name, nil)
 	return b.name
+}
+
+func (b *BackendImpl) IPAM() Ipam {
+	return b.ipam
 }
 
 func (b *BackendImpl) WithKubeClient(client clientset.Interface) Backend {

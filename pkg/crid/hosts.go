@@ -10,7 +10,6 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
-	"github.com/miekg/dns"
 	v1 "k8s.io/api/core/v1"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
@@ -22,13 +21,9 @@ var DefaultHosts = &hostsImpl{
 	hostname: nil,
 	backends: map[backend.Runtime]backend.Backend{},
 	addrs:    make(map[string][]string),
-	resolver: net.DefaultResolver,
 }
 
 func init() {
-	DefaultHosts.mu.Lock()
-	defer DefaultHosts.mu.Unlock()
-
 	hostname, err := os.Hostname()
 	if err != nil {
 		DefaultHosts.log.Error().Err(err).Msg("failed to get hostname")
@@ -51,10 +46,22 @@ func init() {
 		DefaultHosts.log.Error().Err(err).Msg("failed to get interface IPs")
 	}
 
-	DefaultHosts.addrs[hostname] = append(DefaultHosts.addrs[hostname], outboundIps...)
-	DefaultHosts.log.Info().Str("hostname", hostname).Strs("outboundIPs", outboundIps).Strs("lookupIPs", lookupIps).Strs("interfaceIPs", interfaceIps).Msg("resolved local IP addresses")
+	DefaultHosts.WithHost(hostname, outboundIps).Log().Info().Str("hostname", hostname).Strs("outboundIPs", outboundIps).Strs("lookupIPs", lookupIps).Strs("interfaceIPs", interfaceIps).Msg("resolved local IP addresses")
 
-	// net.DefaultResolver = DefaultHosts.Resolver()
+	// Sniff test to make sure hostname resolution is working: Check if outbound IPs are included in lookup IPs
+	found := false
+	for _, outboundIp := range outboundIps {
+		for _, lookupIp := range lookupIps {
+			if outboundIp == lookupIp {
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		panic(fmt.Sprintf("hostname resolution is not working: outbound IPs %v are not included in lookup IPs %v", outboundIps, lookupIps))
+	}
 }
 
 // localOutboundIP discovers the preferred outbound IP by opening a UDP
@@ -111,9 +118,6 @@ type hostsImpl struct {
 	addrs    map[string][]string
 	mu       sync.Mutex
 
-	resolver     *net.Resolver
-	resolverOnce sync.Once
-
 	localAddr     string
 	localAddrOnce sync.Once
 }
@@ -126,6 +130,10 @@ func NewHosts(ctx context.Context, backends map[backend.Runtime]backend.Backend)
 		DefaultHosts.WithBackend(runtime, backend)
 	}
 	return DefaultHosts.WithContext(ctx), nil
+}
+
+func (h *hostsImpl) Log() component.Logger {
+	return h.log
 }
 
 func (h *hostsImpl) Hostname() string {
@@ -259,132 +267,4 @@ func (h *hostsImpl) HostAliases(ctx context.Context, network backend.NetworkType
 		})
 	}
 	return hostAliases
-}
-
-func (h *hostsImpl) Resolver() *net.Resolver {
-	h.resolverOnce.Do(func() {
-		h.resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				fallback := func() (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, network, address)
-				}
-				return h.dial(ctx, network, address, fallback)
-			},
-		}
-	})
-	return h.resolver
-}
-
-func (h *hostsImpl) dial(ctx context.Context, _, _ string, fallback FallbackDial) (net.Conn, error) {
-	h.mu.Lock()
-	appCtx := h.ctx
-	h.mu.Unlock()
-
-	if appCtx == nil {
-		return fallback()
-	}
-
-	localAddr := h.startDNS(appCtx)
-	if localAddr == "" {
-		return fallback()
-	}
-
-	conn, err := (&net.Dialer{}).DialContext(ctx, "udp", localAddr)
-	if err != nil {
-		h.log.Warn().Err(err).Msg("local DNS server unreachable, using fallback")
-		return fallback()
-	}
-	return conn, nil
-}
-
-func (h *hostsImpl) startDNS(ctx context.Context) string {
-	h.localAddrOnce.Do(func() {
-		pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			h.log.Error().Err(err).Msg("failed to start DNS listener")
-			return
-		}
-		h.localAddr = pc.LocalAddr().String()
-		h.log.Info().Str("addr", h.localAddr).Msg("DNS server listening")
-
-		go func() {
-			<-ctx.Done()
-			pc.Close()
-		}()
-
-		go func() {
-			buf := make([]byte, 4096)
-			for {
-				n, addr, err := pc.ReadFrom(buf)
-				if err != nil {
-					return
-				}
-				go h.lookup(ctx, pc, addr, buf[:n])
-			}
-		}()
-	})
-	return h.localAddr
-}
-
-func addAnswers(resp *dns.Msg, qName string, qType uint16, ips []string, ttl uint32) {
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		if qType == dns.TypeA && ip.To4() != nil {
-			resp.Answer = append(resp.Answer, &dns.A{
-				Hdr: dns.RR_Header{Name: qName, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl},
-				A:   ip.To4(),
-			})
-		} else if qType == dns.TypeAAAA && ip.To4() == nil {
-			resp.Answer = append(resp.Answer, &dns.AAAA{
-				Hdr:  dns.RR_Header{Name: qName, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: ttl},
-				AAAA: ip,
-			})
-		}
-	}
-}
-
-func (h *hostsImpl) lookup(ctx context.Context, pc net.PacketConn, addr net.Addr, query []byte) {
-	msg := new(dns.Msg)
-	if err := msg.Unpack(query); err != nil {
-		return
-	}
-
-	resp := new(dns.Msg)
-	resp.SetReply(msg)
-
-	entries := h.Entries(ctx, backend.NetworkHost)
-	for _, q := range msg.Question {
-		name := strings.ToLower(strings.TrimSuffix(q.Name, "."))
-		if ips, found := entries[name]; found {
-			addAnswers(resp, q.Name, q.Qtype, ips, 5)
-		}
-	}
-
-	if len(resp.Answer) > 0 {
-		h.log.Debug().Str("name", msg.Question[0].Name).Int("answers", len(resp.Answer)).Msg("resolved from hosts")
-		out, _ := resp.Pack()
-		pc.WriteTo(out, addr)
-		return
-	}
-
-	// Fallback: CGO system resolver (handles macOS/Tailscale/mDNS)
-	q := msg.Question[0]
-	name := strings.TrimSuffix(q.Name, ".")
-	sysResolver := &net.Resolver{PreferGo: false}
-	ips, err := sysResolver.LookupHost(ctx, name)
-	if err != nil {
-		h.log.Debug().Err(err).Str("name", name).Msg("system lookup failed")
-		resp.Rcode = dns.RcodeNameError
-		out, _ := resp.Pack()
-		pc.WriteTo(out, addr)
-		return
-	}
-
-	addAnswers(resp, q.Name, q.Qtype, ips, 30)
-	out, _ := resp.Pack()
-	pc.WriteTo(out, addr)
 }
