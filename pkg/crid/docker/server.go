@@ -822,9 +822,10 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 			for _, pm := range config.GetPortMappings() {
 				containerPort := pm.GetContainerPort()
 				hostPort := pm.GetHostPort()
-				if hostPort == 0 {
+				if hostPort == 0 && len(config.Annotations) == 0 {
+					// If host port is not specified and we do not have any annotations, we're in critest
+					s.log.Info().Int32("containerPort", containerPort).Msg("host port not specified, defaulting to container port (critest compatibility)")
 					hostPort = containerPort
-					s.log.Info().Int32("containerPort", containerPort).Msg("host port not specified, using same port as container")
 				}
 				port := nat.Port(fmt.Sprintf("%d/%s", containerPort, strings.ToLower(pm.GetProtocol().String())))
 				dockerConfig.ExposedPorts[port] = struct{}{}
