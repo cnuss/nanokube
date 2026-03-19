@@ -11,10 +11,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/labels"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server/healthz"
-	clientset "k8s.io/client-go/kubernetes"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
@@ -311,83 +309,11 @@ func (i *containerLifecycle) PreCreateContainer(logger klog.Logger, pod *v1.Pod,
 }
 
 func (i *containerLifecycle) PreStartContainer(logger klog.Logger, pod *v1.Pod, container *v1.Container, containerID string) error {
-	client := i.backend.KubeClient()
-	if client == nil || pod.Spec.HostNetwork {
-		return nil
-	}
-
-	// Find the sandbox for this pod
-	sandboxID := i.resolveSandbox(pod)
-	if sandboxID == "" {
-		return nil
-	}
-
-	// Query Services whose selector matches this pod's labels
-	svcNames := i.matchingServiceNames(client, pod)
-	if len(svcNames) == 0 {
-		return nil
-	}
-
-	// Build full alias list: pod name + container names + service names
-	aliases := []string{pod.Name}
-	for _, c := range pod.Spec.Containers {
-		aliases = append(aliases, c.Name)
-	}
-	aliases = append(aliases, svcNames...)
-
-	// Disconnect and reconnect to update aliases on the shared network
-	shared := i.backend.SharedNetwork()
-	i.backend.Networks().DisconnectNetwork(i.backend.Context(), shared, sandboxID)
-	if err := i.backend.Networks().ConnectNetwork(i.backend.Context(), shared, sandboxID, aliases); err != nil {
-		i.log.Warn().Err(err).Str("pod", pod.Name).Strs("aliases", aliases).Msg("failed to update DNS aliases")
-	}
 	return nil
 }
 
 func (i *containerLifecycle) PostStopContainer(logger klog.Logger, containerID string) error {
 	return nil
-}
-
-func (i *containerLifecycle) resolveSandbox(pod *v1.Pod) string {
-	ctx := i.backend.Context()
-	sandboxes, err := i.backend.Containers().ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{
-		LabelSelector: map[string]string{
-			i.backend.Labels().UIDKey(): string(pod.UID),
-		},
-	})
-	if err != nil || len(sandboxes) == 0 {
-		return ""
-	}
-	return sandboxes[0].Id
-}
-
-func (i *containerLifecycle) matchingServiceNames(client clientset.Interface, pod *v1.Pod) []string {
-	ctx := i.backend.Context()
-	services, err := client.CoreV1().Services(pod.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		i.log.Warn().Err(err).Str("pod", pod.Name).Msg("failed to list services")
-		return nil
-	}
-
-	var names []string
-	for _, svc := range services.Items {
-		if len(svc.Spec.Selector) == 0 {
-			continue
-		}
-		if matchesSelector(pod.Labels, svc.Spec.Selector) {
-			names = append(names, svc.Name)
-		}
-	}
-	return names
-}
-
-func matchesSelector(podLabels, selector map[string]string) bool {
-	for k, v := range selector {
-		if podLabels[k] != v {
-			return false
-		}
-	}
-	return true
 }
 
 // podContainerManager implements cm.PodContainerManager.

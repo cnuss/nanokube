@@ -191,7 +191,6 @@ type Backend interface {
 
 	// Networking
 	Networks() NetworkProvider
-	SharedNetwork() string
 	IPAM() Ipam
 
 	// KubeClient
@@ -376,12 +375,6 @@ func (b *BackendImpl) clean() error {
 				errs = append(errs, fmt.Errorf("delete volume %s: %w", vol.GetVolume().GetVolumeId(), err))
 			}
 		}
-	}
-
-	// Remove shared network and reset sync.Once so it re-creates on next use
-	b.log.Info().Msg("removing shared network")
-	if err := b.Networks().RemoveNetwork(b.ctx, b.name); err != nil {
-		errs = append(errs, fmt.Errorf("remove shared network: %w", err))
 	}
 
 	return errors.Join(errs...)
@@ -609,11 +602,6 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 
 func (b *BackendImpl) Hosts() Hosts {
 	return b.hosts
-}
-
-func (b *BackendImpl) SharedNetwork() string {
-	b.Networks().CreateNetwork(b.ctx, b.name, nil)
-	return b.name
 }
 
 func (b *BackendImpl) IPAM() Ipam {

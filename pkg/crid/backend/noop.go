@@ -38,7 +38,6 @@ func (n *NoopBackend) Images() internalapi.ImageManagerService                  
 func (n *NoopBackend) Containers() internalapi.RuntimeService                      { return nil }
 func (n *NoopBackend) Volumes() csipb.ControllerServer                             { return nil }
 func (n *NoopBackend) Networks() NetworkProvider                                   { return nil }
-func (n *NoopBackend) SharedNetwork() string                                       { return "" }
 func (n *NoopBackend) ContainerManager() cm.ContainerManager                       { return nil }
 func (n *NoopBackend) Mounter() mount.Interface                                    { return nil }
 func (n *NoopBackend) Cadvisor() cadvisor.Interface                                { return nil }
