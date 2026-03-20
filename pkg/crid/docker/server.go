@@ -1431,7 +1431,7 @@ func (s *Server) GetNetwork(ctx context.Context, name string) (*backend.NetworkS
 
 // CreateNetwork implements [backend.NetworkProvider]. Idempotent — returns
 // the network ID if it already exists.
-func (s *Server) CreateNetwork(ctx context.Context, name string, net *net.IPNet) (backend.NetworkSpec, error) {
+func (s *Server) CreateNetwork(ctx context.Context, name string, net *net.IPNet, gateway *net.IP) (backend.NetworkSpec, error) {
 	existing, _ := s.GetNetwork(ctx, name)
 	if existing != nil {
 		return *existing, nil
@@ -1457,11 +1457,13 @@ func (s *Server) CreateNetwork(ctx context.Context, name string, net *net.IPNet)
 	}
 
 	if net != nil {
+		ipamConfig := network.IPAMConfig{Subnet: net.String()}
+		if gateway != nil {
+			ipamConfig.Gateway = gateway.String()
+		}
 		createOptions.IPAM = &network.IPAM{
 			Driver: "default",
-			Config: []network.IPAMConfig{
-				{Subnet: net.String()},
-			},
+			Config: []network.IPAMConfig{ipamConfig},
 		}
 	}
 

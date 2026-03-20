@@ -101,9 +101,20 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 		return nil, fmt.Errorf("parse kube-system manifest: %w", err)
 	}
 
+	ipam := m.crid.DefaultBackend().IPAM()
+	envOverrides := map[string]string{
+		"ADVERTISE_ADDRESS":        ipam.ServiceIp().String(),
+		"SERVICE_CLUSTER_IP_RANGE": ipam.ServiceNet().String(),
+	}
+
 	for i, c := range pod.Spec.Containers {
 		if pod.Spec.Containers[i].Name == "api" || pod.Spec.Containers[i].Name == "controller" || pod.Spec.Containers[i].Name == "scheduler" {
 			pod.Spec.Containers[i].Image = c.Image + ":" + version
+		}
+		for j, env := range c.Env {
+			if val, ok := envOverrides[env.Name]; ok {
+				pod.Spec.Containers[i].Env[j].Value = val
+			}
 		}
 	}
 

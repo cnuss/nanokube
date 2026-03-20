@@ -49,10 +49,16 @@ spec:
         - containerPort: 6443
           hostPort: 6443
           protocol: TCP
+      env:
+        - name: ADVERTISE_ADDRESS
+          value: "127.0.0.1"
+        - name: SERVICE_CLUSTER_IP_RANGE
+          value: "10.0.0.0/24"
       command:
         - kube-apiserver
         - --bind-address=0.0.0.0
-        - --advertise-address=127.0.0.1
+        - --advertise-address=$(ADVERTISE_ADDRESS)
+        - --service-cluster-ip-range=$(SERVICE_CLUSTER_IP_RANGE)
         - --external-hostname=localhost
         - --etcd-servers=https://127.0.0.1:2379
         - --etcd-cafile=/etc/kubernetes/ca.crt

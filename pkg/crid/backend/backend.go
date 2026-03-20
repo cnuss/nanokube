@@ -56,7 +56,7 @@ type NetworkSpec struct {
 type NetworkProvider interface {
 	DefaultNetwork(ctx context.Context) NetworkSpec
 	GetNetwork(ctx context.Context, name string) (*NetworkSpec, error)
-	CreateNetwork(ctx context.Context, name string, net *net.IPNet) (NetworkSpec, error)
+	CreateNetwork(ctx context.Context, name string, net *net.IPNet, gateway *net.IP) (NetworkSpec, error)
 	RemoveNetwork(ctx context.Context, name string) error
 	ConnectNetwork(ctx context.Context, network, containerID string, aliases []string) error
 	DisconnectNetwork(ctx context.Context, network, containerID string) error
