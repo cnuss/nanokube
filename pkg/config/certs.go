@@ -34,10 +34,10 @@ func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 		Hostname: hostname,
 	}
 
-	// Read existing certs if they exist
+	// Read existing certs if they exist and SANs are up to date
 	certPEM, certErr := os.ReadFile(filepath.Join(dataDir, "ca.crt"))
 	keyPEM, keyErr := os.ReadFile(filepath.Join(dataDir, "ca.key"))
-	if certErr == nil && keyErr == nil {
+	if certErr == nil && keyErr == nil && certsHaveIPs(certPEM, extraIPs) {
 		c.CertPEM = certPEM
 		c.KeyPEM = keyPEM
 		logger.Info().Msg("certificates loaded from disk")
@@ -102,16 +102,36 @@ func (c *Certs) Key() []byte {
 
 func (c *Certs) CertPath() string {
 	caFile := filepath.Join(c.DataDir, "ca.crt")
-	if _, err := os.Stat(caFile); os.IsNotExist(err) {
-		os.WriteFile(caFile, c.CertPEM, 0o644)
-	}
+	os.WriteFile(caFile, c.CertPEM, 0o644)
 	return caFile
 }
 
 func (c *Certs) KeyPath() string {
 	keyFile := filepath.Join(c.DataDir, "ca.key")
-	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
-		os.WriteFile(keyFile, c.KeyPEM, 0o600)
-	}
+	os.WriteFile(keyFile, c.KeyPEM, 0o600)
 	return keyFile
+}
+
+func certsHaveIPs(certPEM []byte, ips []net.IP) bool {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	for _, want := range ips {
+		found := false
+		for _, have := range cert.IPAddresses {
+			if have.Equal(want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

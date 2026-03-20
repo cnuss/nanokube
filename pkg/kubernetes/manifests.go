@@ -101,10 +101,10 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 		return nil, fmt.Errorf("parse kube-system manifest: %w", err)
 	}
 
-	ipam := m.crid.DefaultBackend().IPAM()
+	svc := m.crid.DefaultBackend().IPAM().Service()
 	envOverrides := map[string]string{
-		"ADVERTISE_ADDRESS":        ipam.ServiceIp().String(),
-		"SERVICE_CLUSTER_IP_RANGE": ipam.ServiceNet().String(),
+		"ADVERTISE_ADDRESS":        svc.IP.String(),
+		"SERVICE_CLUSTER_IP_RANGE": svc.Net.String(),
 	}
 
 	for i, c := range pod.Spec.Containers {

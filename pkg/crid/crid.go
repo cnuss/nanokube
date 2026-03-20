@@ -13,6 +13,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	"github.com/cnuss/nanokube/pkg/crid/docker"
 	"github.com/cnuss/nanokube/pkg/crid/podman"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
@@ -119,6 +120,16 @@ func (c *CRID) WithKubeClient(client clientset.Interface) {
 		}
 		c.log.Info().Msg("API server reachable")
 
+		// Delete stale kubernetes service if ClusterIP doesn't match the current service CIDR
+		if svc := c.DefaultBackend().IPAM().Service(); svc != nil {
+			if existing, err := client.CoreV1().Services("default").Get(c.ctx, "kubernetes", metav1.GetOptions{}); err == nil {
+				if existing.Spec.ClusterIP != svc.IP.String() {
+					c.log.Info().Str("old", existing.Spec.ClusterIP).Str("new", svc.IP.String()).Msg("deleting stale kubernetes service")
+					client.CoreV1().Services("default").Delete(c.ctx, "kubernetes", metav1.DeleteOptions{})
+				}
+			}
+		}
+
 		if c.broadcaster != nil {
 			c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
 			c.log.Info().Msg("event sink connected")
@@ -149,7 +160,7 @@ func (c *CRID) Files() *config.Files {
 
 func (c *CRID) Certs() *config.Certs {
 	c.certsOnce.Do(func() {
-		c.certs = config.NewCerts(c.name, c.dataDir, c.Hosts().Hostname(), c.DefaultBackend().IPAM().ServiceIp())
+		c.certs = config.NewCerts(c.name, c.dataDir, c.Hosts().Hostname(), c.DefaultBackend().IPAM().Service().IP)
 	})
 	return c.certs
 }
