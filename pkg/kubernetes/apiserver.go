@@ -76,11 +76,11 @@ func (a *APIServer) Start(ctx context.Context) (component.Started, error) {
 
 	a.cmd.SetArgs(args)
 
-	return component.Opened("tcp", "127.0.0.1:6443", func() {
+	return component.Opened("tcp", "127.0.0.1:443", func() {
 		go a.cmd.ExecuteContext(ctx)
 	}), nil
 }
 
 func (a *APIServer) Stop() component.Stopped {
-	return component.Closed("tcp", "127.0.0.1:6443", nil)
+	return component.Closed("tcp", "127.0.0.1:443", nil)
 }

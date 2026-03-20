@@ -39,7 +39,7 @@ func (m *Manifests) kubeconfig(hostname string) clientcmdapi.Config {
 	return clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
 			m.crid.Name(): {
-				Server:                   fmt.Sprintf("https://%s:6443", hostname),
+				Server:                   fmt.Sprintf("https://%s:443", hostname),
 				CertificateAuthorityData: m.crid.Certs().Cert(),
 			},
 		},

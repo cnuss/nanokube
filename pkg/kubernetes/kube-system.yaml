@@ -46,8 +46,8 @@ spec:
     - name: api
       image: registry.k8s.io/kube-apiserver
       ports:
-        - containerPort: 6443
-          hostPort: 6443
+        - containerPort: 443
+          hostPort: 443
           protocol: TCP
       env:
         - name: ADVERTISE_ADDRESS
@@ -57,6 +57,7 @@ spec:
       command:
         - kube-apiserver
         - --bind-address=0.0.0.0
+        - --secure-port=443
         - --advertise-address=$(ADVERTISE_ADDRESS)
         - --service-cluster-ip-range=$(SERVICE_CLUSTER_IP_RANGE)
         - --external-hostname=localhost
