@@ -149,7 +149,7 @@ func (c *CRID) Files() *config.Files {
 
 func (c *CRID) Certs() *config.Certs {
 	c.certsOnce.Do(func() {
-		c.certs = config.NewCerts(c.name, c.dataDir, c.Hosts().Hostname())
+		c.certs = config.NewCerts(c.name, c.dataDir, c.Hosts().Hostname(), c.DefaultBackend().IPAM().ServiceIp())
 	})
 	return c.certs
 }

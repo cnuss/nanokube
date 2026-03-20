@@ -27,7 +27,7 @@ type Certs struct {
 	KeyPEM   []byte
 }
 
-func NewCerts(name, dataDir, hostname string) *Certs {
+func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 	c := &Certs{
 		Name:     name,
 		DataDir:  dataDir,
@@ -70,10 +70,10 @@ func NewCerts(name, dataDir, hostname string) *Certs {
 			"kubernetes.default.svc",
 			"kubernetes.default.svc." + hostname,
 		},
-		IPAddresses: []net.IP{
+		IPAddresses: append([]net.IP{
 			net.ParseIP("127.0.0.1"),
 			net.ParseIP("::1"),
-		},
+		}, extraIPs...),
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

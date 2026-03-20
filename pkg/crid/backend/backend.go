@@ -229,8 +229,9 @@ type BackendImpl struct {
 	csi           CSI
 
 	// hosts
-	hosts Hosts
-	ipam  Ipam
+	hosts    Hosts
+	ipam     Ipam
+	ipamOnce sync.Once
 
 	// events
 	broadcaster record.EventBroadcaster
@@ -268,12 +269,6 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 	b.ctx = ctx
 	b.hosts = hosts
 	b.broadcaster = broadcaster
-
-	ipam, err := NewIpam(ctx, b.Driver)
-	if err != nil {
-		return component.WrapErr(b.log, err)
-	}
-	b.ipam = ipam
 
 	os.MkdirAll(b.DataDir(), 0o755)
 	os.Remove(b.socket())
@@ -605,6 +600,9 @@ func (b *BackendImpl) Hosts() Hosts {
 }
 
 func (b *BackendImpl) IPAM() Ipam {
+	b.ipamOnce.Do(func() {
+		b.ipam = NewIpam(b.Driver)
+	})
 	return b.ipam
 }
 

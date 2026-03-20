@@ -20,100 +20,96 @@ type Ipam interface {
 }
 
 type IpamImpl struct {
-	ctx    context.Context
 	log    component.Logger
 	driver Driver
 
-	minIp     net.IP
-	maxIp     net.IP
 	serviceIp net.IP
 
-	defaultNet  NetworkSpec
-	reservedNet NetworkSpec
+	defaultNet     NetworkSpec
+	reservedNet    NetworkSpec
+	reservedOnce   sync.Once
+	serviceNetOnce sync.Once
 
 	networks   map[*net.IP]*NetworkSpec
 	networksMu sync.Mutex
 }
 
-func NewIpam(ctx context.Context, driver Driver) (Ipam, error) {
-	log := component.NewLogger("ipam")
-
-	defaultNet := driver.Networks().DefaultNetwork(ctx)
-	if defaultNet.Type != NetworkBridge {
-		return nil, fmt.Errorf("unsupported default network type %q", defaultNet.Type)
-	}
-
-	// Create a network to reserve an IP range for sandboxes with host ports.
-	reservedNet, err := driver.Networks().CreateNetwork(ctx, "reserved", nil, nil)
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to create reserved network, trying to inspect it in case it already exists")
-		return nil, component.WrapErr(log, err)
-	}
-	err = driver.Networks().RemoveNetwork(ctx, "reserved")
-	if err != nil {
-		return nil, component.WrapErr(log, err)
-	}
-
-	// Reserve a {Reservation.GatewayIP}/30 for static pods. This also gives our static pod a predictable IP address. A /30 gives us 1 usable IP.
-	var serviceIp net.IP
-	ipNet := reservedNet.Network
-	ipNet.Mask = net.CIDRMask(30, 32)
-	gateway := make(net.IP, len(ipNet.IP))
-	copy(gateway, ipNet.IP)
-	for i := range gateway {
-		gateway[i] |= ^ipNet.Mask[i]
-	}
-	gateway[len(gateway)-1]-- // broadcast - 1
-	staticNet, err := driver.Networks().CreateNetwork(ctx, "static", &ipNet, &gateway)
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to create static network, trying to inspect it in case it already exists")
-		return nil, component.WrapErr(log, err)
-	}
-	// static IP is the gateway IP + 1, which is the first usable IP in the reserved /30 subnet.
-	// example: 172.18.0.0/30 → static IP: 172.18.0.2
-	serviceIp = make(net.IP, len(staticNet.Network.IP))
-	copy(serviceIp, staticNet.Network.IP)
-	serviceIp[len(serviceIp)-1] += 2
-
-	// minIp: gateway IP of the default network
-	// maxIp: broadcast IP of the reserved network (the last IP in the reserved range)
-	// examples:
-	// - defaultNet: 172.17.0.0/16, reservedNet: 172.18.0.0/16 → minIp: 172.17.0.1, maxIp: 172.18.255.255
-	// - defaultNet: 172.17.0.0/16, reservedNet: 172.25.0.0/16 → minIp: 172.17.0.1, maxIp: 172.25.255.255
-	minIp := make(net.IP, len(defaultNet.Network.IP))
-	copy(minIp, defaultNet.Network.IP)
-	minIp[len(minIp)-1] |= 1
-	maxIp := make(net.IP, len(reservedNet.Network.IP))
-	copy(maxIp, reservedNet.Network.IP)
-	for i := range maxIp {
-		maxIp[i] |= ^reservedNet.Network.Mask[i]
-	}
-
-	log.Info().Str("defaultNetwork", defaultNet.Name).Str("defaultSubnet", defaultNet.Network.String()).Str("reservedSubnet", reservedNet.Network.String()).Str("serviceIP", serviceIp.String()).Str("minIP", minIp.String()).Str("maxIP", maxIp.String()).Msg("IPAM initialized")
-
+func NewIpam(driver Driver) *IpamImpl {
 	return &IpamImpl{
-		ctx:         ctx,
-		log:         log,
-		driver:      driver,
-		minIp:       minIp,
-		maxIp:       maxIp,
-		serviceIp:   serviceIp,
-		defaultNet:  defaultNet,
-		reservedNet: reservedNet,
-		networks:    map[*net.IP]*NetworkSpec{&staticNet.Network.IP: &staticNet},
-	}, nil
+		log:      component.NewLogger("ipam"),
+		driver:   driver,
+		networks: map[*net.IP]*NetworkSpec{},
+	}
+}
+
+// initReserved discovers the default network and reserves an IP range.
+func (i *IpamImpl) initReserved() {
+	i.reservedOnce.Do(func() {
+		ctx := context.Background()
+
+		defaultNet := i.driver.Networks().DefaultNetwork(ctx)
+		i.defaultNet = defaultNet
+
+		reservedNet, err := i.driver.Networks().CreateNetwork(ctx, "reserved", nil, nil)
+		if err != nil {
+			i.log.Warn().Err(err).Msg("failed to create reserved network")
+			return
+		}
+		err = i.driver.Networks().RemoveNetwork(ctx, "reserved")
+		if err != nil {
+			i.log.Warn().Err(err).Msg("failed to remove reserved network")
+			return
+		}
+		i.reservedNet = reservedNet
+
+		i.log.Info().Str("defaultNetwork", defaultNet.Name).Str("defaultSubnet", defaultNet.Network.String()).Str("reservedSubnet", reservedNet.Network.String()).Msg("IPAM reserved range initialized")
+	})
+}
+
+// initService creates the static /30 network for the control plane pod.
+func (i *IpamImpl) initService() {
+	i.serviceNetOnce.Do(func() {
+		i.initReserved()
+		ctx := context.Background()
+
+		ipNet := i.reservedNet.Network
+		ipNet.Mask = net.CIDRMask(30, 32)
+		gateway := make(net.IP, len(ipNet.IP))
+		copy(gateway, ipNet.IP)
+		for j := range gateway {
+			gateway[j] |= ^ipNet.Mask[j]
+		}
+		gateway[len(gateway)-1]-- // broadcast - 1
+
+		staticNet, err := i.driver.Networks().CreateNetwork(ctx, "static", &ipNet, &gateway)
+		if err != nil {
+			i.log.Warn().Err(err).Msg("failed to create static network")
+			return
+		}
+
+		// Container gets the first usable IP (.1), gateway is pinned high (.2)
+		i.serviceIp = make(net.IP, len(staticNet.Network.IP))
+		copy(i.serviceIp, staticNet.Network.IP)
+		i.serviceIp[len(i.serviceIp)-1] += 1
+
+		i.networks[&staticNet.Network.IP] = &staticNet
+
+		i.log.Info().Str("serviceIP", i.serviceIp.String()).Msg("IPAM service network initialized")
+	})
 }
 
 func (i *IpamImpl) ServiceIp() net.IP {
-	// Used for the control plane static pod.
+	i.initService()
 	return i.serviceIp
 }
 
 func (i *IpamImpl) ServiceNet() *net.IPNet {
+	i.initReserved()
 	return &i.reservedNet.Network
 }
 
 func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSandboxConfig) (*NetworkSpec, error) {
+	i.initService()
 	i.log.Info().Str("pod", config.Metadata.Name).Msg("allocating network for pod")
 
 	if config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
@@ -167,15 +163,6 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 			carry = sum >> 8
 		}
 
-		// Check if the next subnet exceeds the max IP.
-		broadcast := make(net.IP, len(nextNet.IP))
-		copy(broadcast, nextNet.IP)
-		for j := range broadcast {
-			broadcast[j] |= ^nextNet.Mask[j]
-		}
-		if bytes.Compare(broadcast, i.maxIp) > 0 {
-			return nil, fmt.Errorf("no more available subnets for static pods")
-		}
 	}
 
 	netSpec, err := i.driver.Networks().CreateNetwork(ctx, config.Metadata.Uid, nextNet, nil)
