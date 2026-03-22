@@ -425,7 +425,6 @@ func (b *DockerBackend) Events(ctx context.Context) *backend.EventStream {
 	return b.events
 }
 
-
 // proxyStreams proxies stdin/stdout/stderr to/from a hijacked Docker connection.
 func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp dockertypes.HijackedResponse) error {
 	var wg sync.WaitGroup
@@ -471,18 +470,18 @@ func getIPFromInspect(inspect container.InspectResponse) string {
 		return ""
 	}
 	if inspect.NetworkSettings != nil {
-		// Published ports → 127.0.0.1 (works on both Linux and Docker Desktop)
+		// Prefer per-sandbox network IP
+		for name, n := range inspect.NetworkSettings.Networks {
+			if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
+				return n.IPAddress
+			}
+		}
+		// Fallback: published ports → 127.0.0.1 (Docker Desktop: bridge IPs aren't host-routable)
 		for _, bindings := range inspect.NetworkSettings.Ports {
 			for _, b := range bindings {
 				if b.HostIP == "" || b.HostIP == "0.0.0.0" {
 					return "127.0.0.1"
 				}
-			}
-		}
-		// Prefer user-defined bridge network IP (per-sandbox network)
-		for name, n := range inspect.NetworkSettings.Networks {
-			if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
-				return n.IPAddress
 			}
 		}
 		// Fallback: any network IP
