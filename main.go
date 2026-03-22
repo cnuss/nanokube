@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -17,8 +15,6 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
-
-var options = config.NewOptions()
 
 var featureGates = map[string]bool{
 	"APIServerIdentity":         false,
@@ -32,6 +28,9 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if options.DataDir == "" {
+			options.DataDir = config.DefaultDataDir(options.Name)
+		}
 		return options.Validate()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,18 +105,10 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+var options *config.Options
+
 func init() {
-	rootCmd.Flags().StringVar(&options.Name, "name", "nanokube", "cluster name")
-	rootCmd.Flags().CountVarP(&options.Verbosity, "verbose", "v", "verbosity (-v debug, -vv trace)")
-	rootCmd.Flags().BoolVar(&options.Clean, "clean", false, "clean data directory before starting")
-	rootCmd.Flags().BoolVar(&options.Kubelet, "kubelet", true, "start the kubelet component")
-	rootCmd.Flags().StringVar(&options.DataDir, "data", func() string {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatal().Err(err).Msg("failed to get home dir")
-		}
-		return filepath.Join(home, ".nanokube")
-	}(), "data directory")
+	options = config.NewOptions(rootCmd)
 }
 
 func main() {

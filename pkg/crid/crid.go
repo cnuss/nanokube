@@ -146,7 +146,8 @@ func (c *CRID) Name() string             { return c.name }
 func (c *CRID) DataDir() string          { return c.dataDir }
 func (c *CRID) DataDirs() config.DataDirs {
 	c.dataDirsOnce.Do(func() {
-		c.dataDirs = config.NewDataDirs(c.dataDir)
+		c.dataDirs = config.NewDataDirs(c.name, c.dataDir)
+		c.dataDir = c.dataDirs.Root
 	})
 	return c.dataDirs
 }

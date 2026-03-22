@@ -43,7 +43,13 @@ func Setup(cmd *cobra.Command) (*cobra.Command, zerolog.Logger, func()) {
 	applyLogLevel(v)
 
 	dataDir, _ := cmd.Flags().GetString("data")
+	name, _ := cmd.Flags().GetString("name")
 	clean, _ := cmd.Flags().GetBool("clean")
+
+	if dataDir == "" {
+		home, _ := os.UserHomeDir()
+		dataDir = filepath.Join(home, "."+name)
+	}
 
 	if clean {
 		os.RemoveAll(dataDir)

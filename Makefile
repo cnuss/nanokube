@@ -1,4 +1,4 @@
-.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e reset
+.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e
 CRITEST := cri-tools/critest
 
 VERSION_PKG := k8s.io/component-base/version
@@ -32,7 +32,12 @@ build: patch
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 
 clean:
-	rm -f nanokube
+	@rm -f nanokube
+	@pkill -f nanokube 2>/dev/null; true
+	@docker ps -aq | xargs -r docker rm -f 2>/dev/null; true
+	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
+	@docker system prune -f >/dev/null 2>&1; true
+	@rm -rf ~/.nanokube ~/.nanokube-e2e ~/.nanokube-critest
 
 test:
 	go test ./...
@@ -60,37 +65,30 @@ init:
 WHAT ?=
 SUITE ?=
 
-DATA ?= /tmp/nanokube-test
 V ?= 0
 NANOKUBE_OUT = $(if $(filter 1,$(V)),,>/dev/null 2>&1)
 
 # Usage: $(call run-nanokube,<nanokube-args>,<ready-check>,<test-cmd>)
 define run-nanokube
-	@mkdir -p $(DATA); \
-	trap 'kill $$! 2>/dev/null; wait' EXIT; \
-	./nanokube $(1) $(ARGS) --clean --data $(DATA) $(NANOKUBE_OUT) & \
+	@trap 'kill $$! 2>/dev/null; wait' EXIT; \
+	./nanokube $(1) $(ARGS) --clean --name $(NAME) $(NANOKUBE_OUT) & \
 	for i in $$(seq 1 30); do $(2) && break; sleep 1; done; \
 	echo "########################################"; \
-	echo "# NANOKUBE LOG: $(DATA)/log"; \
+	echo "# NANOKUBE LOG: ~/.$(NAME)/log"; \
 	echo "########################################"; \
 	$(3)
 endef
 
+e2e: NAME = nanokube-e2e
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
 		cd tests && make test KIND=false $(if $(SUITE),SUITE=$(SUITE)) $(if $(WHAT),WHAT=$(WHAT)))
 
 # TODO unhardcode docker
+critest: NAME = nanokube-critest
 critest: build $(CRITEST)
 	$(call run-nanokube,--kubelet=false,\
-		[ -S "$(DATA)/docker/cri.sock" ],\
-		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$(DATA)/docker/cri.sock" --image-endpoint "unix://$(DATA)/docker/cri.sock")
+		[ -S "$$HOME/.$(NAME)/docker/cri.sock" ],\
+		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock" --image-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock")
 
-reset:
-	@pkill -f nanokube 2>/dev/null; true
-	@docker ps -aq | xargs -r docker rm -f 2>/dev/null; true
-	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
-	@docker system prune -f >/dev/null 2>&1; true
-	@rm -rf ~/.nanokube
-	@echo "reset complete"

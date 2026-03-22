@@ -20,7 +20,15 @@ type DataDirs struct {
 	PKI                string
 }
 
-func NewDataDirs(dataDir string) DataDirs {
+func DefaultDataDir(name string) string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "."+name)
+}
+
+func NewDataDirs(name, dataDir string) DataDirs {
+	if dataDir == "" {
+		dataDir = DefaultDataDir(name)
+	}
 	dirs := DataDirs{
 		Root:               dataDir,
 		RecommendedHomeDir: filepath.Dir(clientcmd.RecommendedHomeFile),
