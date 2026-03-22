@@ -190,7 +190,7 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 		}
 	}
 
-	netSpec, err := i.driver.Networks().CreateNetwork(ctx, config.Metadata.Uid, nextNet, nil)
+	netSpec, err := i.driver.Networks().CreateNetwork(ctx, config.GetMetadata().GetName(), nextNet, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create network for pod: %w", err)
 	}
@@ -204,23 +204,23 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 }
 
 func (i *IpamImpl) DeallocateNetwork(ctx context.Context, status *runtimeapi.PodSandboxStatus) error {
-	i.log.Info().Str("pod", status.Metadata.Name).Msg("deallocating network for pod")
+	i.log.Info().Str("pod", status.GetMetadata().GetName()).Msg("deallocating network for pod")
 
 	if status.GetAnnotations()["kubernetes.io/config.source"] == "file" {
-		i.log.Info().Str("pod", status.Metadata.Name).Msg("skipping network deallocation for static pod")
+		i.log.Info().Str("pod", status.GetMetadata().GetName()).Msg("skipping network deallocation for static pod")
 		return nil
 	}
 
 	i.networksMu.Lock()
 	defer i.networksMu.Unlock()
 
-	err := i.driver.Networks().RemoveNetwork(ctx, status.Metadata.Uid)
+	err := i.driver.Networks().RemoveNetwork(ctx, status.GetMetadata().GetName())
 	if err != nil {
-		i.log.Warn().Err(err).Str("sandbox", status.Metadata.Name).Msg("failed to remove sandbox network")
+		i.log.Debug().Err(err).Str("sandbox", status.GetMetadata().GetName()).Msg("failed to remove sandbox network")
 	}
 
 	for ip, net := range i.networks {
-		if net.Name == status.Metadata.Uid {
+		if net.Name == status.GetMetadata().GetName() {
 			i.networks[ip] = nil
 			break
 		}

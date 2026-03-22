@@ -34,20 +34,23 @@ func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 		Hostname: hostname,
 	}
 
-	// Read existing certs if they exist and SANs are up to date
-	certPEM, certErr := os.ReadFile(filepath.Join(dataDir, "ca.crt"))
-	keyPEM, keyErr := os.ReadFile(filepath.Join(dataDir, "ca.key"))
-	if certErr == nil && keyErr == nil && certsHaveIPs(certPEM, extraIPs) {
-		c.CertPEM = certPEM
-		c.KeyPEM = keyPEM
-		logger.Info().Msg("certificates loaded from disk")
-		return c
+	// Reuse existing key if available, otherwise generate a new one
+	var key *ecdsa.PrivateKey
+	if keyPEM, err := os.ReadFile(filepath.Join(dataDir, "ca.key")); err == nil {
+		block, _ := pem.Decode(keyPEM)
+		if block != nil {
+			key, _ = x509.ParseECPrivateKey(block.Bytes)
+		}
 	}
-
-	// Generate new certs
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to generate key")
+	if key == nil {
+		var err error
+		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to generate key")
+		}
+		logger.Info().Msg("generated new key")
+	} else {
+		logger.Info().Msg("reusing existing key")
 	}
 
 	template := &x509.Certificate{
@@ -108,30 +111,9 @@ func (c *Certs) CertPath() string {
 
 func (c *Certs) KeyPath() string {
 	keyFile := filepath.Join(c.DataDir, "ca.key")
-	os.WriteFile(keyFile, c.KeyPEM, 0o600)
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		os.WriteFile(keyFile, c.KeyPEM, 0o600)
+	}
 	return keyFile
 }
 
-func certsHaveIPs(certPEM []byte, ips []net.IP) bool {
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return false
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return false
-	}
-	for _, want := range ips {
-		found := false
-		for _, have := range cert.IPAddresses {
-			if have.Equal(want) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}

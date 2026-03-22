@@ -661,9 +661,10 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
+	s.log.Info().Any("req", req).Msg("RunPodSandbox")
 	config := req.GetConfig()
-	s.log.Info().Any("config", config).Msg("RunPodSandbox")
 	meta := config.GetMetadata()
+
 	name, labels, err := s.backend.labels.NewBuilder(config.GetLabels()).
 		WithType(labels.TypeSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUid(meta.GetUid()).
 		WithAnnotations(config.GetAnnotations()).
@@ -673,137 +674,165 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		return nil, component.WrapErr(s.log, err)
 	}
 
-	dockerConfig := &container.Config{
-		Image:      defaultPauseImage,
-		Entrypoint: []string{"tail", "-f", "/dev/null"},
-		Hostname:   config.GetHostname(),
-		Labels:     labels,
-	}
+	var status *runtimeapi.PodSandboxStatus
 
-	networkMode := backend.NetworkBridge
-	if linux := config.GetLinux(); linux != nil {
-		if ns := linux.GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
-			networkMode = backend.NetworkHost
+	existing, _ := s.ListPodSandbox(ctx, &runtimeapi.ListPodSandboxRequest{
+		Filter: &runtimeapi.PodSandboxFilter{
+			LabelSelector: map[string]string{s.backend.labels.UIDKey(): meta.GetUid()},
+		},
+	})
+
+	for _, sb := range existing.GetItems() {
+		if sb.GetAnnotations()["kubernetes.io/config.hash"] == config.GetAnnotations()["kubernetes.io/config.hash"] {
+			s.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("reusing existing sandbox")
+			resp, _ := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: sb.Id})
+			if resp.GetStatus() != nil {
+				status = resp.GetStatus()
+			}
+		} else {
+			s.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing stale sandbox")
+			s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: sb.Id})
 		}
 	}
 
-	// TODO: set DNSNames on the per-sandbox network for Docker DNS discovery
-	hostConfig := &container.HostConfig{
-		IpcMode: container.IpcMode("shareable"),
-	}
+	if status == nil {
+		dockerConfig := &container.Config{
+			Image:      defaultPauseImage,
+			Entrypoint: []string{"tail", "-f", "/dev/null"},
+			Hostname:   config.GetHostname(),
+			Labels:     labels,
+		}
 
-	// Linux namespace options
-	if linux := config.GetLinux(); linux != nil {
-		if sc := linux.GetSecurityContext(); sc != nil {
-			if sc.GetPrivileged() {
-				hostConfig.Privileged = true
+		networkMode := backend.NetworkBridge
+		if linux := config.GetLinux(); linux != nil {
+			if ns := linux.GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
+				networkMode = backend.NetworkHost
 			}
-			if ns := sc.GetNamespaceOptions(); ns != nil {
-				if ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
-					hostConfig.NetworkMode = "host"
+		}
+
+		// TODO: set DNSNames on the per-sandbox network for Docker DNS discovery
+		hostConfig := &container.HostConfig{
+			IpcMode: container.IpcMode("shareable"),
+		}
+
+		// Linux namespace options
+		if linux := config.GetLinux(); linux != nil {
+			if sc := linux.GetSecurityContext(); sc != nil {
+				if sc.GetPrivileged() {
+					hostConfig.Privileged = true
 				}
-				if ns.GetPid() == runtimeapi.NamespaceMode_NODE {
-					hostConfig.PidMode = "host"
-				}
-				if ns.GetIpc() == runtimeapi.NamespaceMode_NODE {
-					hostConfig.IpcMode = "host"
+				if ns := sc.GetNamespaceOptions(); ns != nil {
+					if ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
+						hostConfig.NetworkMode = "host"
+					}
+					if ns.GetPid() == runtimeapi.NamespaceMode_NODE {
+						hostConfig.PidMode = "host"
+					}
+					if ns.GetIpc() == runtimeapi.NamespaceMode_NODE {
+						hostConfig.IpcMode = "host"
+					}
 				}
 			}
 		}
-	}
 
-	// DNS — always pass CRI DNS config to Docker. For host-network, Docker
-	// writes these directly to resolv.conf. For bridge-mode, Docker's embedded
-	// DNS (127.0.0.11) uses them as upstream servers (ExtServers).
-	networkingConfig := &network.NetworkingConfig{}
-	if dns := config.GetDnsConfig(); dns != nil {
-		hostConfig.DNS = dns.GetServers()
-		hostConfig.DNSSearch = dns.GetSearches()
-		hostConfig.DNSOptions = dns.GetOptions()
-	}
+		// DNS — always pass CRI DNS config to Docker. For host-network, Docker
+		// writes these directly to resolv.conf. For bridge-mode, Docker's embedded
+		// DNS (127.0.0.11) uses them as upstream servers (ExtServers).
+		networkingConfig := &network.NetworkingConfig{}
+		if dns := config.GetDnsConfig(); dns != nil {
+			hostConfig.DNS = dns.GetServers()
+			hostConfig.DNSSearch = dns.GetSearches()
+			hostConfig.DNSOptions = dns.GetOptions()
+		}
 
-	extraHosts := s.backend.parent.Hosts().ExtraHosts(ctx, networkMode)
-	for _, extraHost := range s.backend.labels.ExtraHosts(config.GetAnnotations()) {
-		// Host aliases — kubelet injects these as annotations via podAdmitHandler
-		extraHosts = append(extraHosts, extraHost)
-	}
-	slices.Sort(extraHosts)
-	hostConfig.ExtraHosts = slices.Compact(extraHosts)
+		extraHosts := s.backend.parent.Hosts().ExtraHosts(ctx, networkMode)
+		for _, extraHost := range s.backend.labels.ExtraHosts(config.GetAnnotations()) {
+			// Host aliases — kubelet injects these as annotations via podAdmitHandler
+			extraHosts = append(extraHosts, extraHost)
+		}
+		slices.Sort(extraHosts)
+		hostConfig.ExtraHosts = slices.Compact(extraHosts)
 
-	if networkMode != backend.NetworkHost {
-		networkName := "bridge"
+		if networkMode != backend.NetworkHost {
+			networkName := "bridge"
 
-		// DEVNOTE: NOT JUST KUBERNETES! ****critest relies on this as well, change with caution****
-		// Port mappings — if specified, allocate a per-sandbox bridge network and configure port bindings
-		if len(config.GetPortMappings()) > 0 {
-			network, err := s.backend.parent.IPAM().AllocateNetwork(ctx, config)
-			if err != nil {
+			// DEVNOTE: NOT JUST KUBERNETES! ****critest relies on this as well, change with caution****
+			// Port mappings — if specified, allocate a per-sandbox bridge network and configure port bindings
+			if len(config.GetPortMappings()) > 0 {
+				network, err := s.backend.parent.IPAM().AllocateNetwork(ctx, config)
+				if err != nil {
+					return nil, component.WrapErr(s.log, err)
+				}
+				networkName = network.Name
+				dockerConfig.ExposedPorts = nat.PortSet{}
+				hostConfig.PortBindings = nat.PortMap{}
+				for _, pm := range config.GetPortMappings() {
+					containerPort := pm.GetContainerPort()
+					hostPort := pm.GetHostPort()
+					if hostPort == 0 && len(config.Annotations) == 0 {
+						// If host port is not specified and we do not have any annotations, we're in critest
+						s.log.Info().Int32("containerPort", containerPort).Msg("host port not specified, defaulting to container port (critest compatibility)")
+						hostPort = containerPort
+					}
+					port := nat.Port(fmt.Sprintf("%d/%s", containerPort, strings.ToLower(pm.GetProtocol().String())))
+					dockerConfig.ExposedPorts[port] = struct{}{}
+					hostConfig.PortBindings[port] = []nat.PortBinding{
+						{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
+					}
+				}
+			}
+
+			networkingConfig = &network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					networkName: {},
+				},
+			}
+		}
+
+		// Ensure pause image is available
+		imgSpec := &runtimeapi.ImageSpec{Image: dockerConfig.Image}
+		imgReq := &runtimeapi.ImageStatusRequest{Image: imgSpec, Verbose: true}
+		image, _ := s.ImageStatus(ctx, imgReq)
+		if image.Image == nil {
+			if _, err := s.PullImage(ctx, &runtimeapi.PullImageRequest{Image: imgSpec}); err != nil {
 				return nil, component.WrapErr(s.log, err)
 			}
-			networkName = network.Name
-			dockerConfig.ExposedPorts = nat.PortSet{}
-			hostConfig.PortBindings = nat.PortMap{}
-			for _, pm := range config.GetPortMappings() {
-				containerPort := pm.GetContainerPort()
-				hostPort := pm.GetHostPort()
-				if hostPort == 0 && len(config.Annotations) == 0 {
-					// If host port is not specified and we do not have any annotations, we're in critest
-					s.log.Info().Int32("containerPort", containerPort).Msg("host port not specified, defaulting to container port (critest compatibility)")
-					hostPort = containerPort
-				}
-				port := nat.Port(fmt.Sprintf("%d/%s", containerPort, strings.ToLower(pm.GetProtocol().String())))
-				dockerConfig.ExposedPorts[port] = struct{}{}
-				hostConfig.PortBindings[port] = []nat.PortBinding{
-					{HostIP: pm.GetHostIp(), HostPort: strconv.Itoa(int(hostPort))},
-				}
-			}
+			image, _ = s.ImageStatus(ctx, imgReq)
 		}
 
-		networkingConfig = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				networkName: {},
-			},
+		// Platform from image info
+		var platform *ocispec.Platform
+		if image.Info != nil {
+			platform = &ocispec.Platform{OS: image.Info["os"], Architecture: image.Info["architecture"]}
 		}
-	}
 
-	// Ensure pause image is available
-	imgSpec := &runtimeapi.ImageSpec{Image: dockerConfig.Image}
-	imgReq := &runtimeapi.ImageStatusRequest{Image: imgSpec, Verbose: true}
-	status, _ := s.ImageStatus(ctx, imgReq)
-	if status.Image == nil {
-		if _, err := s.PullImage(ctx, &runtimeapi.PullImageRequest{Image: imgSpec}); err != nil {
+		created, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, networkingConfig, platform, name)
+		if err != nil {
 			return nil, component.WrapErr(s.log, err)
 		}
-		status, _ = s.ImageStatus(ctx, imgReq)
-	}
 
-	// Platform from image info
-	var platform *ocispec.Platform
-	if status.Info != nil {
-		platform = &ocispec.Platform{OS: status.Info["os"], Architecture: status.Info["architecture"]}
-	}
-
-	resp, err := s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, networkingConfig, platform, name)
-	if err != nil {
-		if errdefs.IsConflict(err) {
-			s.log.Warn().Str("name", name).Msg("sandbox name conflict, removing old sandbox")
-			s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: name})
-			time.Sleep(time.Second)
-			return s.RunPodSandbox(ctx, req)
+		resp, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: created.ID})
+		if err != nil {
+			return nil, component.WrapErr(s.log, err)
 		}
-		return nil, component.WrapErr(s.log, err)
+
+		status = resp.GetStatus()
 	}
 
-	if err := s.backend.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		s.log.Warn().Err(err).Str("id", resp.ID).Msg("failed to start sandbox container, removing")
-		if _, err := s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: resp.ID}); err != nil {
-			s.log.Warn().Err(err).Str("id", resp.ID).Msg("failed to remove sandbox container after failed start")
+	if status.State != runtimeapi.PodSandboxState_SANDBOX_READY {
+		if err := s.backend.client.ContainerStart(ctx, status.Id, container.StartOptions{}); err != nil {
+			return nil, component.WrapErr(s.log, err)
 		}
-		return nil, component.WrapErr(s.log, err)
+
+		resp, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: status.Id})
+		if err != nil {
+			return nil, component.WrapErr(s.log, err)
+		}
+		status = resp.GetStatus()
 	}
 
-	s.log.Debug().Str("id", resp.ID).Msg("sandbox started")
-	return &runtimeapi.RunPodSandboxResponse{PodSandboxId: resp.ID}, nil
+	s.log.Debug().Str("id", status.Id).Msg("sandbox started")
+	return &runtimeapi.RunPodSandboxResponse{PodSandboxId: status.Id}, nil
 }
 
 // RuntimeConfig implements [v1.RuntimeServiceServer].
