@@ -563,7 +563,7 @@ func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandbo
 		State:     s.backend.Into.PodState(inspect.State.Status),
 		CreatedAt: createdAt,
 		Network: &runtimeapi.PodSandboxNetworkStatus{
-			Ip:            getIPFromInspect(inspect),
+			Ip:            getIPFromInspect(inspect, s.backend.labels),
 			AdditionalIps: getAdditionalIPs(inspect),
 		},
 		Linux: &runtimeapi.LinuxPodSandboxStatus{

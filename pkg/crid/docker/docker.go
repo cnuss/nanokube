@@ -305,7 +305,7 @@ func (b *DockerBackend) PortForward(ctx context.Context, podSandboxID string, po
 		return err
 	}
 
-	ip := getIPFromInspect(inspect)
+	ip := getIPFromInspect(inspect, b.labels)
 	if ip == "" {
 		return fmt.Errorf("no IP address for sandbox %s", podSandboxID)
 	}
@@ -463,20 +463,23 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 }
 
 // getIPFromInspect extracts the container IP from Docker inspect response.
-// Published ports get 127.0.0.1 (Docker Desktop: bridge IPs aren't
-// host-routable, but published ports are). Otherwise return the bridge IP.
-func getIPFromInspect(inspect container.InspectResponse) string {
+// Containers with annotations (managed by kubelet) get their per-sandbox IP.
+// Containers without annotations (critest) fall back to 127.0.0.1 via
+// published ports since bridge IPs aren't host-routable on Docker Desktop.
+func getIPFromInspect(inspect container.InspectResponse, lp labels.LabelProvider) string {
 	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
 		return ""
 	}
 	if inspect.NetworkSettings != nil {
-		// Prefer per-sandbox network IP
-		for name, n := range inspect.NetworkSettings.Networks {
-			if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
-				return n.IPAddress
+		// Containers with annotations have kubelet-managed networking — use per-sandbox IP
+		if len(lp.ExtractAnnotations(inspect.Config.Labels)) > 0 {
+			for name, n := range inspect.NetworkSettings.Networks {
+				if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
+					return n.IPAddress
+				}
 			}
 		}
-		// Fallback: published ports → 127.0.0.1 (Docker Desktop: bridge IPs aren't host-routable)
+		// No annotations (critest) or no per-sandbox network: published ports → 127.0.0.1
 		for _, bindings := range inspect.NetworkSettings.Ports {
 			for _, b := range bindings {
 				if b.HostIP == "" || b.HostIP == "0.0.0.0" {
