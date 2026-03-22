@@ -86,38 +86,6 @@ const (
 // EventAction classifies what happened.
 type EventAction string
 
-const (
-	ActionCreate     EventAction = "create"
-	ActionStart      EventAction = "start"
-	ActionRestart    EventAction = "restart"
-	ActionStop       EventAction = "stop"
-	ActionKill       EventAction = "kill"
-	ActionDie        EventAction = "die"
-	ActionOOM        EventAction = "oom"
-	ActionPause      EventAction = "pause"
-	ActionUnpause    EventAction = "unpause"
-	ActionDestroy    EventAction = "destroy"
-	ActionRemove     EventAction = "remove"
-	ActionPull       EventAction = "pull"
-	ActionPush       EventAction = "push"
-	ActionTag        EventAction = "tag"
-	ActionUntag      EventAction = "untag"
-	ActionDelete     EventAction = "delete"
-	ActionMount      EventAction = "mount"
-	ActionUnmount    EventAction = "unmount"
-	ActionConnect    EventAction = "connect"
-	ActionDisconnect EventAction = "disconnect"
-
-	ActionExecCreate EventAction = "exec_create"
-	ActionExecStart  EventAction = "exec_start"
-	ActionExecDie    EventAction = "exec_die"
-
-	ActionHealthStatus          EventAction = "health_status"
-	ActionHealthStatusRunning   EventAction = "health_status: running"
-	ActionHealthStatusHealthy   EventAction = "health_status: healthy"
-	ActionHealthStatusUnhealthy EventAction = "health_status: unhealthy"
-)
-
 // Event is a generic lifecycle event emitted by a Driver.
 type Event struct {
 	Resource   EventResource
@@ -127,11 +95,18 @@ type Event struct {
 	TimeNano   int64
 }
 
-type Into[State any, Container any] interface {
+// EventStream is a single event channel pair returned by Driver.Events.
+type EventStream struct {
+	Events <-chan Event
+	Errors <-chan error
+}
+
+type Into[State any, Container any, InternalEvent any] interface {
 	Container(Container) *runtimeapi.Container
 	PodSandbox(Container) *runtimeapi.PodSandbox
 	ContainerState(State) runtimeapi.ContainerState
 	PodState(State) runtimeapi.PodSandboxState
+	Event(InternalEvent) *Event
 }
 
 // Driver is what docker/podman implement
@@ -149,7 +124,7 @@ type Driver interface {
 	Networks() NetworkProvider
 
 	Run(img string, cmd []string, binds []string, host bool, cb func(string) error) error
-	Events(ctx context.Context) (<-chan Event, <-chan error)
+	Events(ctx context.Context) *EventStream
 }
 
 // Backend is the full interface consumers use
@@ -234,8 +209,10 @@ type BackendImpl struct {
 	ipamOnce sync.Once
 
 	// events
-	broadcaster record.EventBroadcaster
-	subscribers []chan Event
+	broadcaster   record.EventBroadcaster
+	subscribers   []chan Event
+	subscribersMu sync.Mutex
+	streamOnce    sync.Once
 
 	// node lifecycle
 	nodeReady     chan struct{}
@@ -301,40 +278,6 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 		}
 	}()
 
-	// Start consuming driver events and fan out to subscribers
-	eventCh, errCh := b.Driver.Events(ctx)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case err := <-errCh:
-				if ctx.Err() != nil {
-					return
-				}
-				b.log.Error().Err(err).Msg("driver event stream error")
-				return
-			case ev, ok := <-eventCh:
-				if !ok {
-					return
-				}
-				b.log.Debug().
-					Str("resource", string(ev.Resource)).
-					Str("action", string(ev.Action)).
-					Str("id", ev.ID).
-					Msg("event")
-				b.mu.Lock()
-				for _, sub := range b.subscribers {
-					select {
-					case sub <- ev:
-					default:
-					}
-				}
-				b.mu.Unlock()
-			}
-		}
-	}()
-
 	// Start CSI driver — endpoint starts now, registration deferred until node ready
 	if err := b.CSI().Start(ctx, pluginsDir, registrationDir); err != nil {
 		return component.WrapErr(b.log, err)
@@ -380,9 +323,48 @@ func (b *BackendImpl) SignalNodeReady() {
 }
 
 func (b *BackendImpl) Subscribe() <-chan Event {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	ch := make(chan Event, 64)
+	b.streamOnce.Do(func() {
+		stream := b.Driver.Events(b.ctx)
+		go func() {
+			for {
+				select {
+				case <-b.ctx.Done():
+					return
+				case err := <-stream.Errors:
+					if b.ctx.Err() != nil {
+						return
+					}
+					b.log.Error().Err(err).Msg("driver event stream error")
+					b.subscribersMu.Lock()
+					for _, sub := range b.subscribers {
+						close(sub)
+					}
+					b.subscribers = nil
+					b.subscribersMu.Unlock()
+					return
+				case ev, ok := <-stream.Events:
+					if !ok {
+						return
+					}
+					if ev.Resource == ResourceContainer && !b.Labels().IsManaged(ev.Attributes) {
+						continue
+					}
+					b.subscribersMu.Lock()
+					for _, sub := range b.subscribers {
+						select {
+						case sub <- ev:
+						default:
+						}
+					}
+					b.subscribersMu.Unlock()
+				}
+			}
+		}()
+	})
+
+	b.subscribersMu.Lock()
+	defer b.subscribersMu.Unlock()
+	ch := make(chan Event)
 	b.subscribers = append(b.subscribers, ch)
 	return ch
 }

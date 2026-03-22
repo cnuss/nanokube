@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid/labels"
@@ -31,7 +32,6 @@ func NewContainerManager(backend Backend) cm.ContainerManager {
 	return &ContainerManagerImpl{
 		backend: backend,
 		log:     component.NewLogger("container-manager"),
-		updates: make(chan resourceupdates.Update, 64),
 	}
 }
 
@@ -46,7 +46,7 @@ type ContainerManagerImpl struct {
 	podStatusProvider status.PodStatusProvider
 	runtimeService    internalapi.RuntimeService
 	updates           chan resourceupdates.Update
-	events            <-chan Event
+	updatesOnce       sync.Once
 }
 
 func (m *ContainerManagerImpl) Start(ctx context.Context, node *v1.Node, activePods cm.ActivePodsFunc, getNode cm.GetNodeFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, runtimeService internalapi.RuntimeService, localStorageCapacityIsolation bool) error {
@@ -63,44 +63,7 @@ func (m *ContainerManagerImpl) Start(ctx context.Context, node *v1.Node, activeP
 	}
 
 	m.log.Info().Str("node", node.Name).Msg("container manager started")
-
-	if m.backend != nil {
-		m.events = m.backend.Subscribe()
-		go m.streamContainerEvents(ctx)
-	}
-
 	return nil
-}
-
-func (m *ContainerManagerImpl) streamContainerEvents(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, ok := <-m.events:
-			if !ok {
-				return
-			}
-			if ev.Resource != ResourceContainer {
-				continue
-			}
-			uid := m.backend.Labels().UID(ev.Attributes)
-			if uid == "" {
-				continue
-			}
-			m.log.Info().
-				Str("pod", uid).
-				Str("id", ev.ID[:min(12, len(ev.ID))]).
-				Str("action", string(ev.Action)).
-				Msg("container event")
-
-			select {
-			case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}
 }
 
 func (m *ContainerManagerImpl) SystemCgroupsLimit() v1.ResourceList {
@@ -242,6 +205,35 @@ func (m *ContainerManagerImpl) UpdateAllocatedResourcesStatus(pod *v1.Pod, statu
 }
 
 func (m *ContainerManagerImpl) Updates() <-chan resourceupdates.Update {
+	m.updatesOnce.Do(func() {
+		m.updates = make(chan resourceupdates.Update)
+		events := m.backend.Subscribe()
+		go func() {
+			for {
+				select {
+				case <-m.ctx.Done():
+					return
+				case ev, ok := <-events:
+					if !ok {
+						return
+					}
+					if ev.Resource != ResourceContainer {
+						continue
+					}
+					uid := m.backend.Labels().UID(ev.Attributes)
+					if uid == "" {
+						continue
+					}
+					m.log.Info().Str("action", string(ev.Action)).Str("id", ev.ID[:min(12, len(ev.ID))]).Str("pod", uid).Msg("update event")
+					select {
+					case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
+					case <-m.ctx.Done():
+						return
+					}
+				}
+			}
+		}()
+	})
 	return m.updates
 }
 

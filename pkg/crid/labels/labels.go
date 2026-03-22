@@ -58,6 +58,7 @@ type LabelProvider interface {
 	SecurityContext(annotations map[string]string) string
 
 	// Filters
+	IsManaged(labels map[string]string) bool
 	ManagedByFilter() string
 	TypeFilter(t string) string
 	ParentUIDFilter(id string) string
@@ -157,6 +158,10 @@ func (l *LabelProviderImpl) ExtraHosts(annotations map[string]string) []string {
 
 func (l *LabelProviderImpl) SecurityContext(annotations map[string]string) string {
 	return annotations[l.Prefix(SecurityContextKey)]
+}
+
+func (l *LabelProviderImpl) IsManaged(labels map[string]string) bool {
+	return labels[l.Prefix(managedByKey)] == l.name
 }
 
 func (l *LabelProviderImpl) ManagedByFilter() string {
