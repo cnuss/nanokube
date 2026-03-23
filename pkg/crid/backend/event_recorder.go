@@ -28,21 +28,6 @@ type EventRecorderImpl struct {
 func (e *EventRecorderImpl) Recorder() record.EventRecorder {
 	e.recorderOnce.Do(func() {
 		e.recorder = e.backend.EventBroadcaster().NewRecorder(legacyscheme.Scheme, v1.EventSource{Component: string(e.backend.Name()), Host: e.backend.Hosts().Hostname()})
-
-		events := e.backend.Subscribe()
-		go func() {
-			for {
-				select {
-				case <-e.backend.ctx.Done():
-					return
-				case ev, ok := <-events:
-					if !ok {
-						return
-					}
-					e.log.Info().Str("resource", string(ev.Resource)).Str("action", string(ev.Action)).Str("id", ev.ID[:min(12, len(ev.ID))]).Msg("backend event")
-				}
-			}
-		}()
 	})
 	return e.recorder
 }
