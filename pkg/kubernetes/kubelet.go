@@ -19,6 +19,11 @@ import (
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
+type Clients struct {
+	Standard  *clientset.Clientset
+	Heartbeat *clientset.Clientset
+}
+
 type Kubelet struct {
 	ctx          context.Context
 	crid         *crid.CRID
@@ -31,10 +36,8 @@ type Kubelet struct {
 	config     *kubeletconfig.KubeletConfiguration
 	configOnce sync.Once
 
-	client        *clientset.Clientset
-	clientOnce    sync.Once
-	heartbeat     *clientset.Clientset
-	heartbeatOnce sync.Once
+	clients     Clients
+	clientsOnce sync.Once
 
 	deps *kubelet.Dependencies
 }
@@ -46,7 +49,7 @@ func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
 		featureGates: featureGates,
 		log:          component.NewLogger("kubelet"),
 	}
-	go k.KubeClient()
+	go k.Clients()
 	return k
 }
 
@@ -119,57 +122,58 @@ func (k *Kubelet) Config() *kubeletconfig.KubeletConfiguration {
 	return k.config
 }
 
-// KubeClient blocks until the API server is reachable, then connects
-// CRID (event sink, CSI provisioner). Safe to call from a goroutine.
-// Returns the client for convenience.
-func (k *Kubelet) KubeClient() *clientset.Clientset {
-	k.clientOnce.Do(func() {
-		k.log.Info().Msg("initializing kube client")
-		for {
-			restConfig, err := clientcmd.BuildConfigFromFlags("", k.crid.Files().Kubeconfig)
-			if err != nil {
-				k.log.Debug().Err(err).Msg("kubeconfig not ready")
-			} else if client, err := clientset.NewForConfig(restConfig); err != nil {
-				k.log.Debug().Err(err).Msg("kube client not ready")
-			} else {
-				k.log.Info().Msg("kube client ready")
-				k.client = client
-				k.crid.WithKubeClient(client)
-				return
-			}
-			select {
-			case <-k.ctx.Done():
-				return
-			case <-time.After(1 * time.Second):
-			}
-		}
-	})
-	return k.client
-}
+// Clients blocks until the kubeconfig is written, then builds
+// both the standard and heartbeat clients. Safe to call from a goroutine.
+func (k *Kubelet) Clients() Clients {
+	k.clientsOnce.Do(func() {
+		k.log.Info().Msg("initializing kube clients")
+		kubeconfigPath := k.crid.Kubeconfig()
 
-func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
-	k.heartbeatOnce.Do(func() {
-		k.log.Info().Msg("initializing heartbeat client")
-		config := k.Config()
-		restConfig, err := clientcmd.BuildConfigFromFlags("", k.crid.Files().Kubeconfig)
+		// Standard client
+		restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			k.log.Error().Err(err).Msg("kubeconfig failed")
+			return
+		}
+		client, err := clientset.NewForConfig(restConfig)
+		if err != nil {
+			k.log.Error().Err(err).Msg("kube client failed")
+			return
+		}
+		k.log.Info().Msg("kube client ready")
+		k.clients.Standard = client
+		k.crid.WithKubeClient(client)
+
+		// Heartbeat client — lower timeout, unlimited QPS
+		cfg := k.Config()
+		hbConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
 			k.log.Error().Err(err).Msg("heartbeat kubeconfig failed")
 			return
 		}
-		restConfig.Timeout = config.NodeStatusUpdateFrequency.Duration
-		leaseTimeout := time.Duration(config.NodeLeaseDurationSeconds) * time.Second
-		if restConfig.Timeout > leaseTimeout {
-			restConfig.Timeout = leaseTimeout
+		hbConfig.Timeout = cfg.NodeStatusUpdateFrequency.Duration
+		leaseTimeout := time.Duration(cfg.NodeLeaseDurationSeconds) * time.Second
+		if hbConfig.Timeout > leaseTimeout {
+			hbConfig.Timeout = leaseTimeout
 		}
-		restConfig.QPS = float32(-1)
-		client, err := clientset.NewForConfig(restConfig)
+		hbConfig.QPS = float32(-1)
+		hbClient, err := clientset.NewForConfig(hbConfig)
 		if err != nil {
 			k.log.Error().Err(err).Msg("heartbeat client failed")
 			return
 		}
-		k.heartbeat = client
+		k.clients.Heartbeat = hbClient
+		k.log.Info().Msg("heartbeat client ready")
 	})
-	return k.heartbeat
+	return k.clients
+}
+
+func (k *Kubelet) KubeClient() *clientset.Clientset {
+	return k.Clients().Standard
+}
+
+func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
+	return k.Clients().Heartbeat
 }
 
 func (k *Kubelet) Stop() component.Stopped {

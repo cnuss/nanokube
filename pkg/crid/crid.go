@@ -16,6 +16,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 )
@@ -38,8 +40,8 @@ type CRID struct {
 	hosts     backend.Hosts
 	hostsOnce sync.Once
 
-	files     *config.Files
-	filesOnce sync.Once
+	kubeconfig     string
+	kubeconfigOnce sync.Once
 
 	certs     *config.Certs
 	certsOnce sync.Once
@@ -152,11 +154,53 @@ func (c *CRID) DataDirs() config.DataDirs {
 	return c.dataDirs
 }
 
-func (c *CRID) Files() *config.Files {
-	c.filesOnce.Do(func() {
-		c.files = config.NewFiles(c.dataDir)
+func (c *CRID) Kubeconfig() string {
+	c.kubeconfigOnce.Do(func() {
+		hostname := c.Hosts().Hostname()
+		c.kubeconfig = filepath.Join(c.dataDir, "kubeconfig")
+
+		cfg := clientcmdapi.Config{
+			Clusters: map[string]*clientcmdapi.Cluster{
+				c.name: {
+					Server:                   fmt.Sprintf("https://%s:443", hostname),
+					CertificateAuthorityData: c.Certs().Cert(),
+				},
+			},
+			AuthInfos: map[string]*clientcmdapi.AuthInfo{
+				c.name: {
+					ClientCertificateData: c.Certs().Cert(),
+					ClientKeyData:         c.Certs().Key(),
+				},
+			},
+			Contexts: map[string]*clientcmdapi.Context{
+				c.name: {
+					Cluster:  c.name,
+					AuthInfo: c.name,
+				},
+			},
+			CurrentContext: c.name,
+		}
+
+		c.log.Info().Str("path", c.kubeconfig).Msg("writing kubeconfig")
+		clientcmd.WriteToFile(cfg, c.kubeconfig)
+
+		// Merge into ~/.kube/config
+		recommendedPath := clientcmd.RecommendedHomeFile
+		dst, err := clientcmd.LoadFromFile(recommendedPath)
+		if err != nil {
+			dst = clientcmdapi.NewConfig()
+		}
+		dst.Clusters[c.name] = cfg.Clusters[c.name]
+		dst.AuthInfos[c.name] = cfg.AuthInfos[c.name]
+		dst.Contexts[c.name] = cfg.Contexts[c.name]
+		dst.CurrentContext = c.name
+		if err := clientcmd.WriteToFile(*dst, recommendedPath); err != nil {
+			c.log.Warn().Err(err).Str("path", recommendedPath).Msg("failed to merge ~/.kube/config")
+		} else {
+			c.log.Info().Str("path", recommendedPath).Str("context", c.name).Msg("merged kubeconfig")
+		}
 	})
-	return c.files
+	return c.kubeconfig
 }
 
 func (c *CRID) Certs() *config.Certs {

@@ -13,8 +13,6 @@ import (
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	versionutil "k8s.io/component-base/version"
 	sigyaml "sigs.k8s.io/yaml"
 )
@@ -22,79 +20,22 @@ import (
 //go:embed kube-system.yaml
 var kubeSystemManifest string
 
-var manifestsLog = newLogger("manifests")
-
 type Manifests struct {
+	log  component.Logger
 	crid *crid.CRID
 	cmd  *cobra.Command
 }
 
 func NewManifests(crid *crid.CRID) *Manifests {
 	return &Manifests{
+		log:  component.NewLogger("manifests"),
 		crid: crid,
-	}
-}
-
-func (m *Manifests) kubeconfig(hostname string) clientcmdapi.Config {
-	return clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{
-			m.crid.Name(): {
-				Server:                   fmt.Sprintf("https://%s:443", hostname),
-				CertificateAuthorityData: m.crid.Certs().Cert(),
-			},
-		},
-		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			m.crid.Name(): {
-				ClientCertificateData: m.crid.Certs().Cert(),
-				ClientKeyData:         m.crid.Certs().Key(),
-			},
-		},
-		Contexts: map[string]*clientcmdapi.Context{
-			m.crid.Name(): {
-				Cluster:  m.crid.Name(),
-				AuthInfo: m.crid.Name(),
-			},
-		},
-		CurrentContext: m.crid.Name(),
-	}
-}
-
-// writeKubeconfig writes the cluster kubeconfig to the data directory
-// and merges it into ~/.kube/config so kubectl works without --kubeconfig.
-func (m *Manifests) writeKubeconfig(hostname string) {
-	config := m.kubeconfig(hostname)
-	kubeconfigPath := m.crid.Files().Kubeconfig
-
-	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {
-		manifestsLog.Info().Str("path", kubeconfigPath).Msg("writing kubeconfig")
-		clientcmd.WriteToFile(config, kubeconfigPath)
-	} else {
-		manifestsLog.Info().Str("path", kubeconfigPath).Msg("kubeconfig already exists, skipping")
-	}
-
-	// Merge into ~/.kube/config
-	recommendedPath := m.crid.Files().RecommendedHomeFile
-	dst, err := clientcmd.LoadFromFile(recommendedPath)
-	if err != nil {
-		manifestsLog.Info().Str("path", recommendedPath).Msg("creating ~/.kube/config")
-		dst = clientcmdapi.NewConfig()
-	}
-	dst.Clusters[m.crid.Name()] = config.Clusters[m.crid.Name()]
-	dst.AuthInfos[m.crid.Name()] = config.AuthInfos[m.crid.Name()]
-	dst.Contexts[m.crid.Name()] = config.Contexts[m.crid.Name()]
-	dst.CurrentContext = m.crid.Name()
-	if err := clientcmd.WriteToFile(*dst, recommendedPath); err != nil {
-		manifestsLog.Warn().Err(err).Str("path", recommendedPath).Msg("failed to write ~/.kube/config")
-	} else {
-		manifestsLog.Info().Str("path", recommendedPath).Str("context", m.crid.Name()).Msg("merged kubeconfig")
 	}
 }
 
 func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	version := strings.SplitN(versionutil.Get().GitVersion, "-", 2)[0]
-	manifestsLog.Info().Str("version", version).Msg("starting manifests")
-
-	m.writeKubeconfig(m.crid.Hosts().Hostname())
+	m.log.Info().Str("version", version).Msg("starting manifests")
 
 	pod := &v1.Pod{}
 	if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(kubeSystemManifest), 4096).Decode(pod); err != nil {

@@ -6,23 +6,11 @@ metadata:
   namespace: kube-system
 spec:
   containers:
-    - name: debug
-      image: alpine/k8s:1.35.0
-      command: ["sleep", "infinity"]
-      env:
-        - name: KUBECONFIG
-          value: /etc/kubernetes/kubeconfig
-      volumeMounts:
-        - name: etc-kubernetes
-          mountPath: /etc/kubernetes
-          readOnly: true
-        - name: var-lib-etcd
-          mountPath: /var/lib/etcd
     - name: etcd
       image: quay.io/coreos/etcd:v3.6.6
       command:
         - etcd
-        - --data-dir=/var/lib/etcd
+        - --data-dir=/etc/kubernetes/data
         - --listen-client-urls=https://0.0.0.0:2379
         - --advertise-client-urls=https://127.0.0.1:2379
         - --listen-peer-urls=https://0.0.0.0:2380
@@ -40,9 +28,6 @@ spec:
       volumeMounts:
         - name: etc-kubernetes
           mountPath: /etc/kubernetes
-          readOnly: true
-        - name: var-lib-etcd
-          mountPath: /var/lib/etcd
     - name: api
       image: registry.k8s.io/kube-apiserver
       ports:
@@ -130,8 +115,4 @@ spec:
     - name: etc-kubernetes
       hostPath:
         path: /etc/kubernetes
-        type: Directory
-    - name: var-lib-etcd
-      hostPath:
-        path: /var/lib/etcd
         type: Directory
