@@ -14,7 +14,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/etcd/client/pkg/v3 v3.6.8
 	go.etcd.io/etcd/client/v3 v3.6.8
-	go.etcd.io/etcd/server/v3 v3.6.5
+	go.etcd.io/etcd/server/v3 v3.6.8
 	go.opentelemetry.io/otel/trace v1.36.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.72.2
@@ -174,11 +174,6 @@ require (
 )
 
 replace (
-	go.etcd.io/etcd/api/v3 => ./etcd/api
-	go.etcd.io/etcd/pkg/v3 => ./etcd/pkg
-	go.etcd.io/etcd/server/v3 => ./etcd/server
-
-	k8s.io/kubernetes => ./kubernetes
 
 	k8s.io/api => ./kubernetes/staging/src/k8s.io/api
 	k8s.io/apiextensions-apiserver => ./kubernetes/staging/src/k8s.io/apiextensions-apiserver
@@ -197,5 +192,6 @@ replace (
 	k8s.io/kube-scheduler => ./kubernetes/staging/src/k8s.io/kube-scheduler
 	k8s.io/kubectl => ./kubernetes/staging/src/k8s.io/kubectl
 	k8s.io/kubelet => ./kubernetes/staging/src/k8s.io/kubelet
+	k8s.io/kubernetes => ./kubernetes
 	k8s.io/mount-utils => ./kubernetes/staging/src/k8s.io/mount-utils
 )
