@@ -20,7 +20,7 @@ type Stopped <-chan struct{}
 // Component is the lifecycle interface for nanokube subsystems.
 type Component interface {
 	Start(ctx context.Context) (Started, error)
-	Stop() Stopped
+	Stop(ctx context.Context) Stopped
 }
 
 // HostnameProvider returns the node hostname for this runtime.

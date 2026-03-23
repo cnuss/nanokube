@@ -8,9 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
@@ -176,7 +180,39 @@ func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
 	return k.Clients().Heartbeat
 }
 
-func (k *Kubelet) Stop() component.Stopped {
+func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
+	// Mark node NotReady before shutdown so the next startup emits a
+	// NodeReady event, which triggers CSI driver registration.
+	if client := k.clients.Standard; client != nil {
+		nodeName := k.crid.Hosts().Hostname()
+		k.log.Info().Str("node", nodeName).Msg("marking node not ready")
+
+		node := &v1.Node{
+			Spec: v1.NodeSpec{
+				Taints: []v1.Taint{{
+					Key:    "node.kubernetes.io/not-ready",
+					Effect: v1.TaintEffectNoSchedule,
+				}},
+			},
+			Status: v1.NodeStatus{
+				Conditions: []v1.NodeCondition{{
+					Type:    v1.NodeReady,
+					Status:  v1.ConditionFalse,
+					Reason:  "NodeShutdown",
+					Message: "Node is shutting down",
+				}},
+			},
+		}
+		if data, err := json.Marshal(node); err == nil {
+			if _, err := client.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, data, metav1.PatchOptions{}, "status"); err != nil {
+				k.log.Warn().Err(err).Msg("failed to patch node status")
+			}
+			if _, err := client.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
+				k.log.Warn().Err(err).Msg("failed to taint node")
+			}
+		}
+	}
+
 	if k.deps != nil && k.deps.PodConfig != nil {
 		k.log.Info().Msg("closing pod config updates channel")
 		k.deps.PodConfig.Close()

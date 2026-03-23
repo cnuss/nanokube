@@ -88,19 +88,7 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	return component.Ready(), nil
 }
 
-func (m *Manifests) Stop() component.Stopped {
+func (m *Manifests) Stop(ctx context.Context) component.Stopped {
 	return component.NotReady(func() {})
 	// return component.Closed("tcp", "127.0.0.1:10259", nil)
-}
-
-func kubeArgs(featureGates map[string]bool, verbosity int) []string {
-	gates := make([]string, 0, len(featureGates))
-	for k, v := range featureGates {
-		gates = append(gates, fmt.Sprintf("%s=%t", k, v))
-	}
-	args := []string{
-		"--feature-gates=" + strings.Join(gates, ","),
-	}
-	args = append(args, fmt.Sprintf("--v=%d", verbosity*2))
-	return args
 }

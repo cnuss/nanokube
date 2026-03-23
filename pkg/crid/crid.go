@@ -77,13 +77,10 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 	return component.Ready(), nil
 }
 
-func (c *CRID) Stop() component.Stopped {
+func (c *CRID) Stop(ctx context.Context) component.Stopped {
 	c.log.Info().Msg("stopping")
 
 	return component.NotReady(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
 		// Stop backends — shuts down gRPC/CRI, preventing the kubelet
 		// from creating new containers during final cleanup.
 		for name, backend := range c.Backends() {

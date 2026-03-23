@@ -151,12 +151,12 @@ func (c *CSIImpl) StartProvisioner(ctx context.Context, client clientset.Interfa
 func (c *CSIImpl) Stop() {
 	c.log.Warn().Msg("Stop")
 	if c.csiSrv != nil {
+		c.csiSrv.Stop()
 		os.Remove(c.csiEndpoint)
-		c.csiSrv.GracefulStop()
 	}
 	if c.regSrv != nil {
+		c.regSrv.Stop()
 		os.Remove(c.regEndpoint)
-		c.regSrv.GracefulStop()
 	}
 }
 

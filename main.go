@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
@@ -100,6 +101,9 @@ var rootCmd = &cobra.Command{
 		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════╝")
 		fmt.Fprintln(os.Stderr, "")
 
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+
 		names := make([]string, len(components))
 		for i, c := range components {
 			names[i] = fmt.Sprintf("%T", c)
@@ -107,7 +111,7 @@ var rootCmd = &cobra.Command{
 		for i := started - 1; i >= 0; i-- {
 			log.Info().Str("component", names[i]).Msg("stopping")
 			cancels[i]()
-			<-components[i].Stop()
+			<-components[i].Stop(shutdownCtx)
 			log.Info().Str("component", names[i]).Msg("stopped")
 		}
 		return nil

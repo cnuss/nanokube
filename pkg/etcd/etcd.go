@@ -127,7 +127,7 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 	}
 }
 
-func (e *Etcd) Stop() component.Stopped {
+func (e *Etcd) Stop(ctx context.Context) component.Stopped {
 	// Don't call e.server.Close() — etcd runs in-process and exits with us.
 	// Closing it before K8s gRPC clients fully drain causes a flood of
 	// "connection refused" retries from orphaned channels.
