@@ -14,6 +14,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/cmd/kubelet/app/options"
+	"k8s.io/kubernetes/pkg/kubelet"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
@@ -34,6 +35,8 @@ type Kubelet struct {
 	clientOnce    sync.Once
 	heartbeat     *clientset.Clientset
 	heartbeatOnce sync.Once
+
+	deps *kubelet.Dependencies
 }
 
 func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
@@ -170,6 +173,10 @@ func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
 }
 
 func (k *Kubelet) Stop() component.Stopped {
+	if k.deps != nil && k.deps.PodConfig != nil {
+		k.log.Info().Msg("closing pod config updates channel")
+		k.deps.PodConfig.Close()
+	}
 	return component.Closed("tcp", "127.0.0.1:10250", nil)
 }
 
@@ -194,6 +201,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	hk.KubeletDeps.Recorder = k.crid.DefaultBackend().EventRecorder()
 	hk.KubeletDeps.ProbeManager = k.crid.DefaultBackend().Prober()
 	hk.KubeletDeps.TLSOptions = k.crid.TLSOptions()
+	k.deps = hk.KubeletDeps
 	exited := make(chan error, 1)
 	go func() {
 		k.log.Info().Msg("hollow kubelet goroutine starting")

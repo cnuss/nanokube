@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
 
@@ -89,7 +91,14 @@ var rootCmd = &cobra.Command{
 
 		<-sigCtx.Done()
 	shutdown:
-		log.Info().Msg("shutting down")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════╗")
+		fmt.Fprintln(os.Stderr, "║          SIGNAL RECEIVED — SHUTTING DOWN         ║")
+		fmt.Fprintln(os.Stderr, "║                                                  ║")
+		fmt.Fprintln(os.Stderr, "║  Initiating graceful shutdown sequence...        ║")
+		fmt.Fprintln(os.Stderr, "║  Components will be stopped in reverse order.    ║")
+		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════╝")
+		fmt.Fprintln(os.Stderr, "")
 
 		names := make([]string, len(components))
 		for i, c := range components {
@@ -122,6 +131,15 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+
+	// Replace wait.NeverStop so all k8s wait.Until/JitterUntil loops
+	// (kubelet syncLoop, node status, lease controller, etc.) exit on shutdown.
+	stopCh := make(chan struct{})
+	wait.NeverStop = stopCh
+	go func() {
+		<-ctx.Done()
+		close(stopCh)
+	}()
 
 	rootCmd, logger, cleanup := component.Setup(rootCmd)
 	rootCmd.SetContext(ctx)

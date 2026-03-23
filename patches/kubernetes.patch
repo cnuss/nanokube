@@ -109,6 +109,22 @@ index 834213e337f..89fcd5271ff 100644
  				}
  			},
  		}
+diff --git a/pkg/kubelet/config/config.go b/pkg/kubelet/config/config.go
+index dc0728c8f36..de8823830d6 100644
+--- a/pkg/kubelet/config/config.go
++++ b/pkg/kubelet/config/config.go
+@@ -113,6 +113,11 @@ func (c *PodConfig) Updates() <-chan kubetypes.PodUpdate {
+ 	return c.updates
+ }
+ 
++// Close closes the updates channel, causing the syncLoop to exit.
++func (c *PodConfig) Close() {
++	close(c.updates)
++}
++
+ // Sync requests the full configuration be delivered to the update channel.
+ func (c *PodConfig) Sync() {
+ 	c.pods.sync()
 diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
 index b8b7cfd84e9..2b00c82806d 100644
 --- a/pkg/kubelet/kubelet.go
