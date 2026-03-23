@@ -1,20 +1,16 @@
-.PHONY: build clean test submodules run run-clean fmt patch-save critest init e2e
+.PHONY: build clean test submodules run run-clean fmt critest init e2e
 CRITEST := cri-tools/critest
 
+KUBE_VERSION := $(shell grep 'k8s.io/kubernetes v' go.mod | head -1 | awk '{print $$2}')
+KUBE_MAJOR := $(word 1,$(subst ., ,$(KUBE_VERSION:v%=%)))
+KUBE_MINOR := $(word 2,$(subst ., ,$(KUBE_VERSION:v%=%)))
 VERSION_PKG := k8s.io/component-base/version
-KUBE_GIT_VERSION := $(shell cd kubernetes && git describe --tags --match='v*' 2>/dev/null | sed 's/-g/-/')
-KUBE_GIT_COMMIT := $(shell cd kubernetes && git rev-parse HEAD)
-KUBE_GIT_TREE_STATE := $(shell cd kubernetes && if git diff --quiet 2>/dev/null; then echo clean; else echo dirty; fi)
-KUBE_GIT_MAJOR := $(shell echo "$(KUBE_GIT_VERSION)" | sed 's/^v//' | cut -d. -f1)
-KUBE_GIT_MINOR := $(shell echo "$(KUBE_GIT_VERSION)" | sed 's/^v//' | cut -d. -f2)
 BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 
 VERSION_LDFLAGS := \
-	-X $(VERSION_PKG).gitVersion=$(KUBE_GIT_VERSION) \
-	-X $(VERSION_PKG).gitCommit=$(KUBE_GIT_COMMIT) \
-	-X $(VERSION_PKG).gitTreeState=$(KUBE_GIT_TREE_STATE) \
-	-X $(VERSION_PKG).gitMajor=$(KUBE_GIT_MAJOR) \
-	-X $(VERSION_PKG).gitMinor=$(KUBE_GIT_MINOR) \
+	-X $(VERSION_PKG).gitVersion=$(KUBE_VERSION) \
+	-X $(VERSION_PKG).gitMajor=$(KUBE_MAJOR) \
+	-X $(VERSION_PKG).gitMinor=$(KUBE_MINOR) \
 	-X $(VERSION_PKG).buildDate=$(BUILD_DATE)
 
 build:

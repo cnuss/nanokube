@@ -1,7 +1,3 @@
-[submodule "kubernetes"]
-	path = kubernetes
-	url = https://github.com/kubernetes/kubernetes.git
-	branch = release-1.35
 [submodule "cri-tools"]
 	path = cri-tools
 	url = https://github.com/kubernetes-sigs/cri-tools.git
