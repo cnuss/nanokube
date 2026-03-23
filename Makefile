@@ -17,17 +17,7 @@ VERSION_LDFLAGS := \
 	-X $(VERSION_PKG).gitMinor=$(KUBE_GIT_MINOR) \
 	-X $(VERSION_PKG).buildDate=$(BUILD_DATE)
 
-patch-kubernetes:
-	@cd kubernetes && git reset --hard
-	@cd kubernetes && git apply ../patches/kubernetes.patch
-
-patch-save:
-	@cd kubernetes && git diff > ../patches/kubernetes.patch
-	@echo "Patch saved to patches/kubernetes.patch"
-
-patch: patch-kubernetes
-
-build: patch
+build:
 	CGO_ENABLED=0 go build -ldflags="-s -w $(VERSION_LDFLAGS)" -o nanokube .
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 

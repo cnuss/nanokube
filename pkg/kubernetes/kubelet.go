@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"encoding/json"
+	"reflect"
+	"unsafe"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/crid"
@@ -215,7 +217,18 @@ func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
 
 	if k.deps != nil && k.deps.PodConfig != nil {
 		k.log.Info().Msg("closing pod config updates channel")
-		k.deps.PodConfig.Close()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					k.log.Warn().Interface("recover", r).Msg("failed to close pod config updates channel")
+					return
+				}
+				k.log.Info().Msg("pod config updates channel closed")
+			}()
+			field := reflect.ValueOf(k.deps.PodConfig).Elem().FieldByName("updates")
+			ch := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
+			ch.Close()
+		}()
 	}
 	return component.Closed("tcp", "127.0.0.1:10250", nil)
 }
