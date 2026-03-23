@@ -11,19 +11,42 @@
     },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
-      "helm": "latest",
+      "helm": "none",
       "kubectl": "latest",
       "minikube": "none"
     },
     "ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
-    "ghcr.io/devcontainers/features/copilot-cli:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/rio/features/k9s:1": {}
   },
-  "postCreateCommand": "make submodules",
+  "containerEnv": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "postCreateCommand": {
+    "submodules": "git submodule update --init --recursive",
+    "chainsaw": "cd tests && make install-chainsaw"
+  },
   "customizations": {
+    "codespaces": {
+      "repositories": {
+        "cnuss/.claude": {
+          "permissions": {
+            "contents": "write"
+          }
+        },
+        "cnuss/chainsaw-kube": {
+          "permissions": {
+            "contents": "write"
+          }
+        }
+      }
+    },
     "vscode": {
       "extensions": [
-        "ms-vscode.makefile-tools"
+        "golang.go",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "ms-vscode.makefile-tools",
+        "anthropic.claude-code"
       ]
     }
   }

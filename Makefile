@@ -1,4 +1,21 @@
-.PHONY: build clean test submodules run run-clean fmt critest init e2e
+DEVCONTAINER ?=
+
+ifeq ($(DEVCONTAINER),true)
+# Re-invoke any target inside the devcontainer
+DEVCONTAINER_CLI := npx -y @devcontainers/cli
+
+.PHONY: devcontainer-up
+devcontainer-up:
+	@$(DEVCONTAINER_CLI) up --workspace-folder .
+
+Makefile: ;
+
+%: devcontainer-up
+	@$(DEVCONTAINER_CLI) exec --workspace-folder . make $@ $(filter-out DEVCONTAINER=true,$(MAKEOVERRIDES))
+
+else
+
+.PHONY: build clean test submodules run run-clean fmt critest init e2e patch patch-save
 CRITEST := cri-tools/critest
 
 KUBE_VERSION := $(shell grep 'k8s.io/kubernetes v' go.mod | head -1 | awk '{print $$2}')
@@ -13,7 +30,15 @@ VERSION_LDFLAGS := \
 	-X $(VERSION_PKG).gitMinor=$(KUBE_MINOR) \
 	-X $(VERSION_PKG).buildDate=$(BUILD_DATE)
 
-build:
+patch:
+	@cd kubernetes && git reset --hard HEAD
+	@cd kubernetes && git apply ../patches/kubernetes.patch
+
+patch-save:
+	@cd kubernetes && git diff > ../patches/kubernetes.patch
+	@echo "Patch saved to patches/kubernetes.patch"
+
+build: patch
 	CGO_ENABLED=0 go build -ldflags="-s -w $(VERSION_LDFLAGS)" -o nanokube .
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 
@@ -78,3 +103,4 @@ critest: build $(CRITEST)
 		[ -S "$$HOME/.$(NAME)/docker/cri.sock" ],\
 		$(CRITEST) --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock" --image-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock")
 
+endif

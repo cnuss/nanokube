@@ -1,0 +1,14 @@
+diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
+index b8b7cfd84e9..08f79a46376 100644
+--- a/pkg/kubelet/kubelet.go
++++ b/pkg/kubelet/kubelet.go
+@@ -569,7 +569,8 @@ func NewMainKubelet(ctx context.Context,
+ 				return nil, err
+ 			}
+ 		} else {
+-			return nil, err
++			klog.V(2).InfoS("Failed to create an oomWatcher (ignoring)", "err", err)
++			oomWatcher = nil
+ 		}
+ 	}
+ 

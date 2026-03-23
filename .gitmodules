@@ -4,3 +4,6 @@
 [submodule "tests"]
 	path = tests
 	url = https://github.com/cnuss/chainsaw-kube.git
+[submodule "kubernetes"]
+	path = kubernetes
+	url = https://github.com/kubernetes/kubernetes.git

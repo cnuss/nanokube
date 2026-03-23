@@ -178,5 +178,5 @@ replace (
 	k8s.io/csi-translation-lib => github.com/kubernetes/csi-translation-lib v0.35.3
 	k8s.io/kube-scheduler => github.com/kubernetes/kube-scheduler v0.35.3
 	k8s.io/kubectl => github.com/kubernetes/kubectl v0.35.3
-	k8s.io/kubernetes v1.35.3 => github.com/kubernetes/kubernetes v1.35.3
+	k8s.io/kubernetes => ./kubernetes
 )
