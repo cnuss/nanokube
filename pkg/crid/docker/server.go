@@ -181,31 +181,32 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 // CreateContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
+	s.log.Info().Any("req", req).Msg("CreateContainer")
 	config := req.GetConfig()
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
 
 	// Inspect sandbox directly to get both CRI labels and internal labels (log directory)
-	sandboxInspect, err := s.backend.client.ContainerInspect(ctx, sandboxID)
+	sandbox, err := s.backend.client.ContainerInspect(ctx, sandboxID)
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
-	sandboxLabels := s.backend.labels.ExtractLabels(sandboxInspect.Config.Labels)
-	sandboxAnnotations := s.backend.labels.ExtractAnnotations(sandboxInspect.Config.Labels)
+	sandboxLabels := s.backend.labels.ExtractLabels(sandbox.Config.Labels)
+	sandboxAnnotations := s.backend.labels.ExtractAnnotations(sandbox.Config.Labels)
 
 	// Labels: start from sandbox, layer container labels on top
-	labelBuilder := s.backend.labels.NewBuilder(sandboxInspect.Config.Labels).WithLabels(sandboxLabels).
+	labelBuilder := s.backend.labels.NewBuilder(sandbox.Config.Labels).WithLabels(sandboxLabels).
 		WithLabels(config.GetLabels()).
 		WithType(labels.TypeContainer).
 		WithName(meta.GetName()).
-		WithNamespace(s.backend.labels.Namespace(sandboxInspect.Config.Labels)).
+		WithNamespace(s.backend.labels.Namespace(sandbox.Config.Labels)).
 		WithParentUid(sandboxID).
 		WithAttempt(meta.GetAttempt()).
 		WithAnnotations(sandboxAnnotations).
 		WithAnnotations(config.GetAnnotations()).
-		WithLogDirectory(s.backend.labels.LogDirectory(sandboxInspect.Config.Labels)).
+		WithLogDirectory(s.backend.labels.LogDirectory(sandbox.Config.Labels)).
 		WithLogPath(config.GetLogPath()).
-		WithUid(s.backend.labels.UID(sandboxInspect.Config.Labels))
+		WithUid(s.backend.labels.UID(sandbox.Config.Labels))
 
 	name, labels, err := labelBuilder.Build()
 	if err != nil {
@@ -297,6 +298,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		s.log.Info().Str("name", name).Msg("container name conflict, retrying")
 		resp, err = s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	}
+
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}

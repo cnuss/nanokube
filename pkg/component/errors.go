@@ -14,7 +14,7 @@ func WrapErr(log Logger, err error, args ...any) error {
 	if idx := strings.LastIndex(name, "."); idx >= 0 {
 		name = name[idx+1:]
 	}
-	ev := log.Error().Err(err)
+	ev := log.Warn().Err(err)
 	for i, arg := range args {
 		ev = ev.Any(fmt.Sprintf("arg%d", i), arg)
 	}

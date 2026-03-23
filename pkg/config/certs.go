@@ -116,4 +116,3 @@ func (c *Certs) KeyPath() string {
 	}
 	return keyFile
 }
-
