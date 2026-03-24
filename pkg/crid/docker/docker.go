@@ -468,7 +468,7 @@ func proxyStreams(tty bool, stdin io.Reader, stdout, stderr io.WriteCloser, resp
 // published ports since bridge IPs aren't host-routable on Docker Desktop.
 func getIPFromInspect(inspect container.InspectResponse, lp labels.LabelProvider) string {
 	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
-		return ""
+		return "127.0.0.1"
 	}
 	if inspect.NetworkSettings != nil {
 		// Containers with annotations have kubelet-managed networking — use per-sandbox IP

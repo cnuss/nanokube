@@ -332,6 +332,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	hostConfig.Resources = container.Resources{}
 	hostConfig.Resources.CPUShares = config.GetLinux().GetResources().GetCpuShares()
 	hostConfig.Resources.Memory = config.GetLinux().GetResources().GetMemoryLimitInBytes()
+	hostConfig.Resources.MemorySwap = config.GetLinux().GetResources().GetMemorySwapLimitInBytes()
 	hostConfig.Resources.CPUQuota = config.GetLinux().GetResources().GetCpuQuota()
 	hostConfig.Resources.CPUPeriod = config.GetLinux().GetResources().GetCpuPeriod()
 	hostConfig.Privileged = config.GetLinux().GetSecurityContext().GetPrivileged()
