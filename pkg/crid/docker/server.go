@@ -33,14 +33,67 @@ import (
 
 const defaultPauseImage = "busybox:latest"
 
-// seccompSecurityOpts translates a CRI seccomp profile to Docker SecurityOpt entries.
-func (s *Server) seccompSecurityOpts(seccomp *runtimeapi.SecurityProfile) ([]string, error) {
+type securityContext interface {
+	GetPrivileged() bool
+	GetSeccomp() *runtimeapi.SecurityProfile
+}
+
+// env translates CRI KeyValue envs to Docker env strings.
+func (s *Server) env(criEnvs []*runtimeapi.KeyValue) []string {
+	envs := make([]string, 0, len(criEnvs))
+	for _, kv := range criEnvs {
+		envs = append(envs, kv.GetKey()+"="+kv.GetValue())
+	}
+	return envs
+}
+
+// binds translates CRI mounts to Docker bind mount strings.
+func (s *Server) binds(current []string, mounts []*runtimeapi.Mount) []string {
+	for _, m := range mounts {
+		bind := m.GetHostPath() + ":" + m.GetContainerPath()
+		if m.GetReadonly() {
+			bind += ":ro"
+		}
+		current = append(current, bind)
+	}
+	return current
+}
+
+// user resolves the container user from CRI security context, falling back to sandbox annotations.
+func (s *Server) user(sandboxConfig *container.Config, sc *runtimeapi.LinuxContainerSecurityContext) string {
+	if sc.GetRunAsGroup() != nil && sc.GetRunAsUser() == nil {
+		s.log.Warn().Msg("RunAsGroup set without RunAsUser")
+		return ""
+	}
+	var user string
+	if uid := sc.GetRunAsUser(); uid != nil {
+		user = strconv.FormatInt(uid.GetValue(), 10)
+	}
+	if gid := sc.GetRunAsGroup(); gid != nil {
+		user += ":" + strconv.FormatInt(gid.GetValue(), 10)
+	}
+	if username := sc.GetRunAsUsername(); username != "" {
+		user = username
+	}
+	if user == "" {
+		annotations := s.backend.labels.ExtractAnnotations(sandboxConfig.Labels)
+		user = s.backend.labels.SecurityContext(annotations)
+	}
+	return user
+}
+
+// securityOpts translates CRI security context to Docker SecurityOpt entries.
+func (s *Server) securityOpts(current []string, sc securityContext) []string {
+	if sc == nil || sc.GetPrivileged() {
+		return current
+	}
+	seccomp := sc.GetSeccomp()
 	if seccomp == nil {
-		return nil, nil
+		return current
 	}
 	switch seccomp.GetProfileType() {
 	case runtimeapi.SecurityProfile_Unconfined:
-		return []string{"seccomp=unconfined"}, nil
+		return append(current, "seccomp=unconfined")
 	case runtimeapi.SecurityProfile_Localhost:
 		ref := seccomp.GetLocalhostRef()
 		var data string
@@ -49,11 +102,12 @@ func (s *Server) seccompSecurityOpts(seccomp *runtimeapi.SecurityProfile) ([]str
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to read seccomp profile %s: %w", ref, err)
+			s.log.Warn().Err(err).Str("ref", ref).Msg("failed to read seccomp profile")
+			return current
 		}
-		return []string{"seccomp=" + data}, nil
+		return append(current, "seccomp="+data)
 	default:
-		return nil, nil
+		return current
 	}
 }
 
@@ -215,116 +269,67 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
-	sandboxLabels := s.backend.labels.ExtractLabels(sandbox.Config.Labels)
-	sandboxAnnotations := s.backend.labels.ExtractAnnotations(sandbox.Config.Labels)
 
-	// Labels: start from sandbox, layer container labels on top
-	labelBuilder := s.backend.labels.NewBuilder(sandbox.Config.Labels).WithLabels(sandboxLabels).
-		WithLabels(config.GetLabels()).
+	// Labels: inherit sandbox labels, overlay container-specific fields
+	labelBuilder := s.backend.labels.NewBuilder(sandbox.Config.Labels).
 		WithType(labels.TypeContainer).
 		WithName(meta.GetName()).
-		WithNamespace(s.backend.labels.Namespace(sandbox.Config.Labels)).
 		WithParentUid(sandboxID).
 		WithAttempt(meta.GetAttempt()).
-		WithAnnotations(sandboxAnnotations).
+		WithLabels(config.GetLabels()).
 		WithAnnotations(config.GetAnnotations()).
 		WithLogDirectory(s.backend.labels.LogDirectory(sandbox.Config.Labels)).
-		WithLogPath(config.GetLogPath()).
-		WithUid(s.backend.labels.UID(sandbox.Config.Labels))
+		WithLogPath(config.GetLogPath())
 
 	name, labels, err := labelBuilder.Build()
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
 	}
 
-	// Build Docker config from CRI container config
-	envs := make([]string, 0, len(config.GetEnvs()))
-	for _, kv := range config.GetEnvs() {
-		envs = append(envs, kv.GetKey()+"="+kv.GetValue())
+	// Deep copy sandbox configs so mutations don't affect the inspect result
+	dockerConfig := new(container.Config)
+	if b, err := json.Marshal(sandbox.Config); err == nil {
+		json.Unmarshal(b, dockerConfig)
 	}
-
-	dockerConfig := &container.Config{
-		Image:      config.GetImage().GetImage(),
-		Entrypoint: config.GetCommand(),
-		Cmd:        config.GetArgs(),
-		Env:        envs,
-		WorkingDir: config.GetWorkingDir(),
-		Labels:     labels,
-		StdinOnce:  config.GetStdinOnce(),
-		OpenStdin:  config.GetStdin(),
-		Tty:        config.GetTty(),
+	hostConfig := new(container.HostConfig)
+	if b, err := json.Marshal(sandbox.HostConfig); err == nil {
+		json.Unmarshal(b, hostConfig)
 	}
+	dockerConfig.Image = config.GetImage().GetImage()
+	dockerConfig.Entrypoint = config.GetCommand()
+	dockerConfig.Cmd = config.GetArgs()
+	dockerConfig.Env = s.env(config.GetEnvs())
+	dockerConfig.WorkingDir = config.GetWorkingDir()
+	dockerConfig.Labels = labels
+	dockerConfig.StdinOnce = config.GetStdinOnce()
+	dockerConfig.OpenStdin = config.GetStdin()
+	dockerConfig.Tty = config.GetTty()
+	dockerConfig.Hostname = ""
+	dockerConfig.ExposedPorts = nil
+	dockerConfig.User = s.user(sandbox.Config, config.GetLinux().GetSecurityContext())
 
-	// Host config: share sandbox namespaces
-	hostConfig := &container.HostConfig{
-		NetworkMode: container.NetworkMode("container:" + sandboxID),
-		IpcMode:     container.IpcMode("container:" + sandboxID),
-		PidMode:     container.PidMode("container:" + sandboxID),
-	}
+	hostConfig.NetworkMode = container.NetworkMode("container:" + sandboxID)
+	hostConfig.IpcMode = container.IpcMode("container:" + sandboxID)
+	hostConfig.PidMode = container.PidMode("container:" + sandboxID)
+	hostConfig.Binds = nil
+	hostConfig.PortBindings = nil
+	hostConfig.ExtraHosts = nil
+	hostConfig.DNS = nil
+	hostConfig.DNSSearch = nil
+	hostConfig.DNSOptions = nil
+	hostConfig.LogConfig = container.LogConfig{}
+	hostConfig.Resources = container.Resources{}
+	hostConfig.Resources.CPUShares = config.GetLinux().GetResources().GetCpuShares()
+	hostConfig.Resources.Memory = config.GetLinux().GetResources().GetMemoryLimitInBytes()
+	hostConfig.Resources.CPUQuota = config.GetLinux().GetResources().GetCpuQuota()
+	hostConfig.Resources.CPUPeriod = config.GetLinux().GetResources().GetCpuPeriod()
+	hostConfig.Privileged = config.GetLinux().GetSecurityContext().GetPrivileged()
+	hostConfig.ReadonlyRootfs = config.GetLinux().GetSecurityContext().GetReadonlyRootfs()
+	hostConfig.CapAdd = append(hostConfig.CapAdd, config.GetLinux().GetSecurityContext().GetCapabilities().GetAddCapabilities()...)
+	hostConfig.CapDrop = append(hostConfig.CapDrop, config.GetLinux().GetSecurityContext().GetCapabilities().GetDropCapabilities()...)
+	hostConfig.SecurityOpt = s.securityOpts(hostConfig.SecurityOpt, config.GetLinux().GetSecurityContext())
+	hostConfig.Binds = s.binds(hostConfig.Binds, config.GetMounts())
 
-	// Mounts
-	for _, m := range config.GetMounts() {
-		bind := m.GetHostPath() + ":" + m.GetContainerPath()
-		if m.GetReadonly() {
-			bind += ":ro"
-		}
-		hostConfig.Binds = append(hostConfig.Binds, bind)
-	}
-
-	// Linux resources + security context
-	if linux := config.GetLinux(); linux != nil {
-		if res := linux.GetResources(); res != nil {
-			hostConfig.Resources.CPUShares = res.GetCpuShares()
-			hostConfig.Resources.Memory = res.GetMemoryLimitInBytes()
-			hostConfig.Resources.CPUQuota = res.GetCpuQuota()
-			hostConfig.Resources.CPUPeriod = res.GetCpuPeriod()
-		}
-		if sc := linux.GetSecurityContext(); sc != nil {
-			if sc.GetPrivileged() {
-				hostConfig.Privileged = true
-			}
-			if sc.GetReadonlyRootfs() {
-				hostConfig.ReadonlyRootfs = true
-			}
-			if caps := sc.GetCapabilities(); caps != nil {
-				for _, c := range caps.GetAddCapabilities() {
-					hostConfig.CapAdd = append(hostConfig.CapAdd, c)
-				}
-				for _, c := range caps.GetDropCapabilities() {
-					hostConfig.CapDrop = append(hostConfig.CapDrop, c)
-				}
-			}
-			if !sc.GetPrivileged() {
-				if opts, err := s.seccompSecurityOpts(sc.GetSeccomp()); err != nil {
-					return nil, component.WrapErr(s.log, err)
-				} else {
-					hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, opts...)
-				}
-			}
-			if sc.GetRunAsGroup() != nil && sc.GetRunAsUser() == nil {
-				return nil, status.Errorf(codes.InvalidArgument, "RunAsGroup requires RunAsUser")
-			}
-			if uid := sc.GetRunAsUser(); uid != nil {
-				dockerConfig.User = strconv.FormatInt(uid.GetValue(), 10)
-			}
-			if gid := sc.GetRunAsGroup(); gid != nil {
-				dockerConfig.User += ":" + strconv.FormatInt(gid.GetValue(), 10)
-			}
-			if username := sc.GetRunAsUsername(); username != "" {
-				dockerConfig.User = username
-			}
-		}
-	}
-
-	// Fallback: pick up security context from annotation when kubelet doesn't
-	// populate LinuxContainerConfig (e.g. macOS/darwin).
-	if dockerConfig.User == "" {
-		if user := s.backend.labels.SecurityContext(sandboxAnnotations); user != "" {
-			dockerConfig.User = user
-		}
-	}
-
-	// Log config
 	if config.GetLogPath() != "" {
 		hostConfig.LogConfig = container.LogConfig{
 			Type:   "json-file",
@@ -762,16 +767,8 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		// Linux namespace options
 		if linux := config.GetLinux(); linux != nil {
 			if sc := linux.GetSecurityContext(); sc != nil {
-				if sc.GetPrivileged() {
-					hostConfig.Privileged = true
-				}
-				if !sc.GetPrivileged() {
-					if opts, err := s.seccompSecurityOpts(sc.GetSeccomp()); err != nil {
-						return nil, component.WrapErr(s.log, err)
-					} else {
-						hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, opts...)
-					}
-				}
+				hostConfig.Privileged = sc.GetPrivileged()
+				hostConfig.SecurityOpt = s.securityOpts(hostConfig.SecurityOpt, sc)
 				if ns := sc.GetNamespaceOptions(); ns != nil {
 					if ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
 						hostConfig.NetworkMode = "host"
