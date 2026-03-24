@@ -270,6 +270,9 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 					hostConfig.CapDrop = append(hostConfig.CapDrop, c)
 				}
 			}
+			if sc.GetRunAsGroup() != nil && sc.GetRunAsUser() == nil {
+				return nil, status.Errorf(codes.InvalidArgument, "RunAsGroup requires RunAsUser")
+			}
 			if uid := sc.GetRunAsUser(); uid != nil {
 				dockerConfig.User = strconv.FormatInt(uid.GetValue(), 10)
 			}
