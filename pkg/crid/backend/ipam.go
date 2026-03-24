@@ -15,7 +15,7 @@ var (
 	// SubnetSize is the CIDR prefix length for per-pod networks.
 	SubnetSize = 30
 	// StaticSubnetSize is the CIDR prefix length for the static service network.
-	StaticSubnetSize = 24
+	StaticSubnetSize = 28
 )
 
 type ServiceConfig struct {
