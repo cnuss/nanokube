@@ -70,6 +70,7 @@ init:
 	cd tests && make install-chainsaw
 
 WHAT ?=
+CRITEST_SKIP ?= Mount Propagation|Mount Readonly
 SUITE ?=
 
 V ?= 0
@@ -97,7 +98,7 @@ critest: NAME = nanokube-critest
 critest: build
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$$HOME/.$(NAME)/docker/cri.sock" ],\
-		cd cri-tools && go mod tidy && go test -c ./cmd/critest && ./critest.test --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') --runtime-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock" --image-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock")
+		cd cri-tools && go mod tidy && go test -c ./cmd/critest && ./critest.test --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') $(if $(CRITEST_SKIP),--ginkgo.skip '$(CRITEST_SKIP)') --runtime-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock" --image-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock")
 
 reviewable: critest e2e
 

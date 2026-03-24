@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,9 +49,14 @@ func (s *Server) env(criEnvs []*runtimeapi.KeyValue) []string {
 }
 
 // binds translates CRI mounts to Docker bind mount strings.
+// Symlinks are resolved so Docker doesn't fail trying to mkdir over them.
 func (s *Server) binds(current []string, mounts []*runtimeapi.Mount) []string {
 	for _, m := range mounts {
-		bind := m.GetHostPath() + ":" + m.GetContainerPath()
+		hostPath := m.GetHostPath()
+		if resolved, err := filepath.EvalSymlinks(hostPath); err == nil {
+			hostPath = resolved
+		}
+		bind := hostPath + ":" + m.GetContainerPath()
 		if m.GetReadonly() {
 			bind += ":ro"
 		}
@@ -60,10 +66,9 @@ func (s *Server) binds(current []string, mounts []*runtimeapi.Mount) []string {
 }
 
 // user resolves the container user from CRI security context, falling back to sandbox annotations.
-func (s *Server) user(sandboxConfig *container.Config, sc *runtimeapi.LinuxContainerSecurityContext) string {
+func (s *Server) user(sandboxConfig *container.Config, sc *runtimeapi.LinuxContainerSecurityContext) (string, error) {
 	if sc.GetRunAsGroup() != nil && sc.GetRunAsUser() == nil {
-		s.log.Warn().Msg("RunAsGroup set without RunAsUser")
-		return ""
+		return "", status.Errorf(codes.InvalidArgument, "RunAsGroup requires RunAsUser")
 	}
 	var user string
 	if uid := sc.GetRunAsUser(); uid != nil {
@@ -79,7 +84,7 @@ func (s *Server) user(sandboxConfig *container.Config, sc *runtimeapi.LinuxConta
 		annotations := s.backend.labels.ExtractAnnotations(sandboxConfig.Labels)
 		user = s.backend.labels.SecurityContext(annotations)
 	}
-	return user
+	return user, nil
 }
 
 // securityOpts translates CRI security context to Docker SecurityOpt entries.
@@ -89,7 +94,7 @@ func (s *Server) securityOpts(current []string, sc securityContext) []string {
 	}
 	seccomp := sc.GetSeccomp()
 	if seccomp == nil {
-		return current
+		return append(current, "seccomp=unconfined")
 	}
 	switch seccomp.GetProfileType() {
 	case runtimeapi.SecurityProfile_Unconfined:
@@ -306,11 +311,17 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	dockerConfig.Tty = config.GetTty()
 	dockerConfig.Hostname = ""
 	dockerConfig.ExposedPorts = nil
-	dockerConfig.User = s.user(sandbox.Config, config.GetLinux().GetSecurityContext())
+	if dockerConfig.User, err = s.user(sandbox.Config, config.GetLinux().GetSecurityContext()); err != nil {
+		return nil, err
+	}
 
 	hostConfig.NetworkMode = container.NetworkMode("container:" + sandboxID)
 	hostConfig.IpcMode = container.IpcMode("container:" + sandboxID)
-	hostConfig.PidMode = container.PidMode("container:" + sandboxID)
+	if config.GetLinux().GetSecurityContext().GetNamespaceOptions().GetPid() == runtimeapi.NamespaceMode_CONTAINER {
+		hostConfig.PidMode = ""
+	} else {
+		hostConfig.PidMode = container.PidMode("container:" + sandboxID)
+	}
 	hostConfig.Binds = nil
 	hostConfig.PortBindings = nil
 	hostConfig.ExtraHosts = nil
@@ -325,9 +336,17 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 	hostConfig.Resources.CPUPeriod = config.GetLinux().GetResources().GetCpuPeriod()
 	hostConfig.Privileged = config.GetLinux().GetSecurityContext().GetPrivileged()
 	hostConfig.ReadonlyRootfs = config.GetLinux().GetSecurityContext().GetReadonlyRootfs()
+	hostConfig.ReadonlyPaths = config.GetLinux().GetSecurityContext().GetReadonlyPaths()
+	hostConfig.MaskedPaths = config.GetLinux().GetSecurityContext().GetMaskedPaths()
+	for _, gid := range config.GetLinux().GetSecurityContext().GetSupplementalGroups() {
+		hostConfig.GroupAdd = append(hostConfig.GroupAdd, strconv.FormatInt(gid, 10))
+	}
 	hostConfig.CapAdd = append(hostConfig.CapAdd, config.GetLinux().GetSecurityContext().GetCapabilities().GetAddCapabilities()...)
 	hostConfig.CapDrop = append(hostConfig.CapDrop, config.GetLinux().GetSecurityContext().GetCapabilities().GetDropCapabilities()...)
 	hostConfig.SecurityOpt = s.securityOpts(hostConfig.SecurityOpt, config.GetLinux().GetSecurityContext())
+	if config.GetLinux().GetSecurityContext().GetNoNewPrivs() {
+		hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, "no-new-privileges")
+	}
 	hostConfig.Binds = s.binds(hostConfig.Binds, config.GetMounts())
 
 	if config.GetLogPath() != "" {
@@ -781,6 +800,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 					}
 				}
 			}
+			hostConfig.Sysctls = linux.GetSysctls()
 		}
 
 		// DNS — always pass CRI DNS config to Docker. For host-network, Docker
