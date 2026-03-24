@@ -756,8 +756,9 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		hostConfig.ExtraHosts = slices.Compact(extraHosts)
 
 		if networkMode != backend.NetworkHost {
-			networkName := "bridge"
+			var networks []string = []string{"bridge"}
 
+			// TODO: make this logic generic across backends, we should probably have an Into() for these
 			// DEVNOTE: NOT JUST KUBERNETES! ****critest relies on this as well, change with caution****
 			// Port mappings — if specified, allocate a per-sandbox bridge network and configure port bindings
 			if len(config.GetPortMappings()) > 0 {
@@ -765,7 +766,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 				if err != nil {
 					return nil, component.WrapErr(s.log, err)
 				}
-				networkName = network.Name
+				networks = []string{network.Name}
 				dockerConfig.ExposedPorts = nat.PortSet{}
 				hostConfig.PortBindings = nat.PortMap{}
 				for _, pm := range config.GetPortMappings() {
@@ -784,10 +785,9 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 				}
 			}
 
-			networkingConfig = &network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					networkName: {},
-				},
+			networkingConfig.EndpointsConfig = map[string]*network.EndpointSettings{}
+			for _, networkName := range networks {
+				networkingConfig.EndpointsConfig[networkName] = &network.EndpointSettings{}
 			}
 		}
 
@@ -1404,9 +1404,13 @@ func (s *Server) CreateNetwork(ctx context.Context, name string, net *net.IPNet,
 		Driver: "bridge",
 		Labels: netLabels,
 		Options: map[string]string{
+			// DEVNOTE: Docker 29 added network isolation by default.
+			//          Disabling it with nat-unprotected.
+			//          Ref: https://github.com/moby/moby/pull/48597
 			"com.docker.network.bridge.enable_icc":           "true",
 			"com.docker.network.bridge.enable_ip_masquerade": "true",
 			"com.docker.network.bridge.host_binding_ipv4":    "0.0.0.0",
+			"com.docker.network.bridge.gateway_mode_ipv4":    "nat-unprotected",
 			"com.docker.network.driver.mtu":                  "65535",
 		},
 	}

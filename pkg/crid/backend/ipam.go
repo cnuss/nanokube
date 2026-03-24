@@ -5,19 +5,23 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sort"
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
-// SubnetSize is the CIDR prefix length for per-pod networks.
-var SubnetSize = 30
+var (
+	// SubnetSize is the CIDR prefix length for per-pod networks.
+	SubnetSize = 30
+	// StaticSubnetSize is the CIDR prefix length for the static service network.
+	StaticSubnetSize = 24
+)
 
 type ServiceConfig struct {
-	IP  net.IP
-	Net *net.IPNet
+	IP           net.IP
+	Net          *net.IPNet
+	StaticPodNet *NetworkSpec
 }
 
 type Ipam interface {
@@ -26,6 +30,7 @@ type Ipam interface {
 	ServiceNet() *net.IPNet
 	AllocateNetwork(ctx context.Context, config *runtimeapi.PodSandboxConfig) (*NetworkSpec, error)
 	DeallocateNetwork(ctx context.Context, status *runtimeapi.PodSandboxStatus) error
+	staticPodNet() *NetworkSpec
 }
 
 type IpamImpl struct {
@@ -60,6 +65,10 @@ func (i *IpamImpl) ServiceNet() *net.IPNet {
 	return i.Service().Net
 }
 
+func (i *IpamImpl) staticPodNet() *NetworkSpec {
+	return i.Service().StaticPodNet
+}
+
 func (i *IpamImpl) initService() {
 	i.serviceOnce.Do(func() {
 		ctx := context.Background()
@@ -81,7 +90,7 @@ func (i *IpamImpl) initService() {
 
 		// Create static network with gateway pinned high so container gets first usable IP
 		ipNet := reservedNet.Network
-		ipNet.Mask = net.CIDRMask(SubnetSize, 32)
+		ipNet.Mask = net.CIDRMask(StaticSubnetSize, 32)
 		gateway := make(net.IP, len(ipNet.IP))
 		copy(gateway, ipNet.IP)
 		for j := range gateway {
@@ -95,15 +104,15 @@ func (i *IpamImpl) initService() {
 			}
 		}
 
-		staticNet, err := i.driver.Networks().CreateNetwork(ctx, "static", &ipNet, &gateway)
+		staticPodNet, err := i.driver.Networks().CreateNetwork(ctx, "static-pods", &ipNet, &gateway)
 		if err != nil {
-			i.log.Warn().Err(err).Msg("failed to create static network")
+			i.log.Warn().Err(err).Msg("failed to create static pods network")
 			return
 		}
 
 		// Container gets the first usable IP (network base + 1), gateway is pinned high
-		serviceIp := make(net.IP, len(staticNet.Network.IP))
-		copy(serviceIp, staticNet.Network.IP)
+		serviceIp := make(net.IP, len(staticPodNet.Network.IP))
+		copy(serviceIp, staticPodNet.Network.IP)
 		for j := len(serviceIp) - 1; j >= 0; j-- {
 			serviceIp[j]++
 			if serviceIp[j] != 0 {
@@ -113,20 +122,22 @@ func (i *IpamImpl) initService() {
 
 		// Service CIDR uses the static network's base IP with the default /16 mask
 		serviceNet := net.IPNet{
-			IP:   staticNet.Network.IP,
+			IP:   staticPodNet.Network.IP,
 			Mask: reservedNet.Network.Mask,
 		}
 		i.service = &ServiceConfig{
-			IP:  serviceIp,
-			Net: &serviceNet,
+			IP:           serviceIp,
+			Net:          &serviceNet,
+			StaticPodNet: &staticPodNet,
 		}
-		i.networks[&staticNet.Network.IP] = &staticNet
+		i.networks[&staticPodNet.Network.IP] = &staticPodNet
 
 		i.log.Info().
 			Str("defaultNetwork", defaultNet.Name).
 			Str("defaultSubnet", defaultNet.Network.String()).
 			Str("reservedSubnet", reservedNet.Network.String()).
 			Str("serviceIP", serviceIp.String()).
+			Str("staticPodNetwork", staticPodNet.Name).
 			Msg("IPAM initialized")
 	})
 }
@@ -135,12 +146,9 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 	i.initService()
 	i.log.Info().Str("pod", config.Metadata.Name).Msg("allocating network for pod")
 
-	if config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
+	if config != nil && config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
 		i.log.Info().Str("pod", config.Metadata.Name).Msg("skipping network allocation for static pod")
-		for _, net := range i.networks {
-			return net, nil
-		}
-		return nil, fmt.Errorf("no static network available")
+		return i.staticPodNet(), nil
 	}
 
 	i.networksMu.Lock()
@@ -159,34 +167,34 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 
 	if nextNet == nil {
 		// No released slots — compute the next subnet after the highest allocated one.
-		var allocated []*NetworkSpec
+		// Each network may have a different prefix length (e.g., /24 static vs /30 pod),
+		// so compute the end of each network using its own mask to find the true max.
+		var maxEnd net.IP
 		for _, existing := range i.networks {
-			if existing != nil {
-				allocated = append(allocated, existing)
+			if existing == nil {
+				continue
+			}
+			ones, _ := existing.Network.Mask.Size()
+			end := make(net.IP, len(existing.Network.IP))
+			copy(end, existing.Network.IP)
+			carry := uint32(1) << uint(32-ones)
+			for j := len(end) - 1; j >= 0 && carry > 0; j-- {
+				sum := uint32(end[j]) + carry
+				end[j] = byte(sum)
+				carry = sum >> 8
+			}
+			if maxEnd == nil || bytes.Compare(end, maxEnd) > 0 {
+				maxEnd = end
 			}
 		}
-		sort.Slice(allocated, func(a, b int) bool {
-			return bytes.Compare(allocated[a].Network.IP, allocated[b].Network.IP) < 0
-		})
 
-		var last *NetworkSpec
-		if len(allocated) > 0 {
-			last = allocated[len(allocated)-1]
-		}
-		if last == nil {
+		if maxEnd == nil {
 			return nil, fmt.Errorf("no networks allocated yet")
 		}
 
 		nextNet = &net.IPNet{
-			IP:   make(net.IP, len(last.Network.IP)),
+			IP:   maxEnd,
 			Mask: net.CIDRMask(SubnetSize, 32),
-		}
-		copy(nextNet.IP, last.Network.IP)
-		carry := uint16(1) << uint(32-SubnetSize) // size of subnet
-		for j := len(nextNet.IP) - 1; j >= 0 && carry > 0; j-- {
-			sum := uint16(nextNet.IP[j]) + carry
-			nextNet.IP[j] = byte(sum)
-			carry = sum >> 8
 		}
 	}
 
