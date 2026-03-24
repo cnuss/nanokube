@@ -262,6 +262,14 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 			if sc.GetReadonlyRootfs() {
 				hostConfig.ReadonlyRootfs = true
 			}
+			if caps := sc.GetCapabilities(); caps != nil {
+				for _, c := range caps.GetAddCapabilities() {
+					hostConfig.CapAdd = append(hostConfig.CapAdd, c)
+				}
+				for _, c := range caps.GetDropCapabilities() {
+					hostConfig.CapDrop = append(hostConfig.CapDrop, c)
+				}
+			}
 			if uid := sc.GetRunAsUser(); uid != nil {
 				dockerConfig.User = strconv.FormatInt(uid.GetValue(), 10)
 			}
