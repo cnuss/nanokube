@@ -33,6 +33,30 @@ import (
 
 const defaultPauseImage = "busybox:latest"
 
+// seccompSecurityOpts translates a CRI seccomp profile to Docker SecurityOpt entries.
+func (s *Server) seccompSecurityOpts(seccomp *runtimeapi.SecurityProfile) ([]string, error) {
+	if seccomp == nil {
+		return nil, nil
+	}
+	switch seccomp.GetProfileType() {
+	case runtimeapi.SecurityProfile_Unconfined:
+		return []string{"seccomp=unconfined"}, nil
+	case runtimeapi.SecurityProfile_Localhost:
+		ref := seccomp.GetLocalhostRef()
+		var data string
+		err := s.backend.Run("busybox", []string{"cat", ref}, []string{ref + ":" + ref + ":ro"}, false, func(out string) error {
+			data = out
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to read seccomp profile %s: %w", ref, err)
+		}
+		return []string{"seccomp=" + data}, nil
+	default:
+		return nil, nil
+	}
+}
+
 func NewServer(b *DockerBackend, parent backend.Backend) *Server {
 	return &Server{
 		backend: b,
@@ -268,6 +292,13 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 				}
 				for _, c := range caps.GetDropCapabilities() {
 					hostConfig.CapDrop = append(hostConfig.CapDrop, c)
+				}
+			}
+			if !sc.GetPrivileged() {
+				if opts, err := s.seccompSecurityOpts(sc.GetSeccomp()); err != nil {
+					return nil, component.WrapErr(s.log, err)
+				} else {
+					hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, opts...)
 				}
 			}
 			if sc.GetRunAsGroup() != nil && sc.GetRunAsUser() == nil {
@@ -733,6 +764,13 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 			if sc := linux.GetSecurityContext(); sc != nil {
 				if sc.GetPrivileged() {
 					hostConfig.Privileged = true
+				}
+				if !sc.GetPrivileged() {
+					if opts, err := s.seccompSecurityOpts(sc.GetSeccomp()); err != nil {
+						return nil, component.WrapErr(s.log, err)
+					} else {
+						hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, opts...)
+					}
 				}
 				if ns := sc.GetNamespaceOptions(); ns != nil {
 					if ns.GetNetwork() == runtimeapi.NamespaceMode_NODE {
