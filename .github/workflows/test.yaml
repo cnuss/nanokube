@@ -1,10 +1,11 @@
-name: test
+name: Run Tests
 
 on:
   push:
-    branches: [main, "1.35"]
+    branches: ["1.35"]
   pull_request:
-    branches: [main, "1.35"]
+    branches: ["1.35"]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,11 +13,12 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
         suite: [critest, e2e]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,8 +33,8 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/go/bin
-          key: go-bin-${{ runner.os }}-critest-v1.35.0-kuttl-0.25.0
+          key: go-bin-${{ matrix.os }}-${{ hashFiles('**/go.sum') }}
 
-      - run: cd kubernetes && git fetch --tags
       - run: make init
+
       - run: make ${{ matrix.suite }}

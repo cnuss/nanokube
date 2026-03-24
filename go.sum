@@ -156,8 +156,6 @@ github.com/kubernetes/kube-scheduler v0.35.3 h1:HQBL5SvCNe4kXeYKS5J+Koy29ncJDgTe
 github.com/kubernetes/kube-scheduler v0.35.3/go.mod h1:Z4hn+Uo1EFI5D0ijg8iyBWSEZcluH+Ol8UTt4+BDiD4=
 github.com/kubernetes/kubectl v0.35.3 h1:NXAKJ4/D3x5hAT9MVNE5+p5a31Bu345iXO3fhnK7d9Q=
 github.com/kubernetes/kubectl v0.35.3/go.mod h1:GPHxZqRe+u/i3gTBoVQHeIyq2NilfNPj9hDWeuN3x5s=
-github.com/kubernetes/kubernetes v1.35.3 h1:7UUfyYAkUALPHM4FSArtD39yspW182BnWN2b/Zu6fgI=
-github.com/kubernetes/kubernetes v1.35.3/go.mod h1:AaPpCpiS8oAqRbEwpY5r3RitLpwpVp5lVXKFkJril58=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/libopenstorage/openstorage v1.0.0 h1:GLPam7/0mpdP8ZZtKjbfcXJBTIA/T1O6CBErVEFEyIM=
