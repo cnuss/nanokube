@@ -823,15 +823,15 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		hostConfig.ExtraHosts = slices.Compact(extraHosts)
 
 		if networkMode != backend.NetworkHost {
-			net, err := s.backend.parent.IPAM().AllocateNetwork(ctx, config)
-			if err != nil {
-				return nil, component.WrapErr(s.log, err)
-			}
-			var networks []string = []string{net.Name}
+			var networks []string
 
-			// Force critest onto bridge
+			// Forces only critest onto bridge
 			if (len(config.Annotations)) == 0 {
 				networks = []string{"bridge"}
+			} else {
+				if net, err := s.backend.parent.IPAM().AllocateNetwork(ctx, config); err == nil {
+					networks = []string{net.Name, s.backend.parent.IPAM().StaticPodNet().Name}
+				}
 			}
 
 			if len(config.GetPortMappings()) > 0 {
