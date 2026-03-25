@@ -37,4 +37,4 @@ jobs:
 
       - run: make init
 
-      - run: make ${{ matrix.suite }}
+      - run: make ${{ matrix.suite }} V=1
