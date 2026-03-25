@@ -18,7 +18,7 @@ jobs:
       fail-fast: true
       matrix:
         runner: [ubuntu-latest, macos26-lima]
-        suite: [critest, e2e]
+        suite: [reviewable]
     steps:
       - uses: actions/checkout@v4
         with:
