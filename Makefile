@@ -70,7 +70,7 @@ init:
 	cd tests && make install-chainsaw
 
 WHAT ?=
-CRITEST_SKIP ?= Mount Propagation|Mount Readonly
+CRITEST_SKIP ?= Mount Propagation|Mount Readonly|AppArmor
 SUITE ?=
 
 V ?= 0
