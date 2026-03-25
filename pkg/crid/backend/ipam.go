@@ -29,7 +29,7 @@ type Ipam interface {
 	ServiceNet() *net.IPNet
 	AllocateNetwork(ctx context.Context, config *runtimeapi.PodSandboxConfig) (*NetworkSpec, error)
 	DeallocateNetwork(ctx context.Context, status *runtimeapi.PodSandboxStatus) error
-	staticPodNet() *NetworkSpec
+	StaticPodNet() *NetworkSpec
 }
 
 type IpamImpl struct {
@@ -65,7 +65,7 @@ func (i *IpamImpl) ServiceNet() *net.IPNet {
 	return i.Service().Net
 }
 
-func (i *IpamImpl) staticPodNet() *NetworkSpec {
+func (i *IpamImpl) StaticPodNet() *NetworkSpec {
 	return i.Service().StaticPodNet
 }
 
@@ -159,7 +159,7 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 
 	if config != nil && config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
 		i.log.Info().Str("pod", config.Metadata.Name).Msg("skipping network allocation for static pod")
-		return i.staticPodNet(), nil
+		return i.StaticPodNet(), nil
 	}
 
 	i.networksMu.Lock()
