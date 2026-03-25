@@ -65,6 +65,10 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 
 	c.broadcaster = record.NewBroadcaster(record.WithContext(ctx))
 
+	if len(c.Backends()) == 0 {
+		return nil, fmt.Errorf("no container runtimes detected (is Docker running?)")
+	}
+
 	for name, backend := range c.Backends() {
 		c.log.Info().Str("backend", string(name)).Msg("starting backend")
 		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, filepath.Join(c.dataDir, "plugins"), filepath.Join(c.dataDir, "plugins_registry"), c.clean); err != nil {
