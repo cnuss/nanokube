@@ -20,17 +20,19 @@ jobs:
         runner: [ubuntu-latest, macos26-lima]
         suite: [reviewable]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-go@v5
+      - uses: docker/setup-docker-action@v5
+
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/go/bin
           key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
