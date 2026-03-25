@@ -39,6 +39,13 @@ const (
 	Podman Runtime = "podman"
 )
 
+// DetectFunc probes for a container runtime and returns a Backend if found.
+type DetectFunc func(ctx context.Context, name, dataDir string) Backend
+
+// Runtimes maps supported runtimes to their detect functions.
+// Populated by runtime packages via init().
+var Runtimes = map[Runtime]DetectFunc{}
+
 type NetworkType string
 
 const (

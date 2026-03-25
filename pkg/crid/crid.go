@@ -5,14 +5,15 @@ import (
 	"crypto/tls"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
-	"github.com/cnuss/nanokube/pkg/crid/docker"
-	"github.com/cnuss/nanokube/pkg/crid/podman"
+	_ "github.com/cnuss/nanokube/pkg/crid/docker"
+	_ "github.com/cnuss/nanokube/pkg/crid/podman"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -66,7 +67,11 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 	c.broadcaster = record.NewBroadcaster(record.WithContext(ctx))
 
 	if len(c.Backends()) == 0 {
-		return nil, fmt.Errorf("no container runtimes detected (is Docker running?)")
+		supported := make([]string, 0, len(backend.Runtimes))
+		for r := range backend.Runtimes {
+			supported = append(supported, string(r))
+		}
+		return nil, fmt.Errorf("no container runtimes detected (supported: %s)", strings.Join(supported, ", "))
 	}
 
 	for name, backend := range c.Backends() {
@@ -257,12 +262,10 @@ func (c *CRID) DefaultBackend() backend.Backend {
 func detectBackends(ctx context.Context, name, dataDir string) map[backend.Runtime]backend.Backend {
 	backends := make(map[backend.Runtime]backend.Backend)
 
-	if b := docker.Detect(ctx, name, dataDir); b != nil {
-		backends[backend.Docker] = b
-	}
-
-	if b := podman.Detect(ctx, name, dataDir); b != nil {
-		backends[backend.Podman] = b
+	for runtime, detect := range backend.Runtimes {
+		if b := detect(ctx, name, dataDir); b != nil {
+			backends[runtime] = b
+		}
 	}
 
 	return backends

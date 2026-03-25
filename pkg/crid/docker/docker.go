@@ -99,6 +99,10 @@ func (b *DockerBackend) Cleanup(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+func init() {
+	backend.Runtimes[backend.Docker] = Detect
+}
+
 func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 	home, _ := os.UserHomeDir()
 	paths := []string{
