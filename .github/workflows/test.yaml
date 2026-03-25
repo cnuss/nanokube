@@ -13,12 +13,12 @@ concurrency:
 
 jobs:
   test:
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: true
       matrix:
+        runner: [ubuntu-latest, macos26-lima]
         suite: [critest, e2e]
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/go/bin
-          key: go-bin-${{ matrix.os }}-${{ hashFiles('**/go.sum') }}
+          key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
 
       - run: make init
 
