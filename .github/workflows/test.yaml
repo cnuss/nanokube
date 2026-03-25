@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        runner: [ubuntu-latest, macos26-lima]
+        runner: [ubuntu-latest, macos-latest]
         suite: [reviewable]
     steps:
       - uses: actions/checkout@v6
