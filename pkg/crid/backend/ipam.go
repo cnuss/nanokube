@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -40,7 +39,8 @@ type IpamImpl struct {
 	service     *ServiceConfig
 	serviceOnce sync.Once
 
-	networks   map[*net.IP]*NetworkSpec
+	networks   map[string]*NetworkSpec
+	nextIP     net.IP
 	networksMu sync.Mutex
 }
 
@@ -48,7 +48,7 @@ func NewIpam(driver Driver) *IpamImpl {
 	return &IpamImpl{
 		log:      component.NewLogger("ipam"),
 		driver:   driver,
-		networks: map[*net.IP]*NetworkSpec{},
+		networks: map[string]*NetworkSpec{},
 	}
 }
 
@@ -130,7 +130,18 @@ func (i *IpamImpl) initService() {
 			Net:          &serviceNet,
 			StaticPodNet: &staticPodNet,
 		}
-		i.networks[&staticPodNet.Network.IP] = &staticPodNet
+		i.networks[staticPodNet.Network.IP.String()] = &staticPodNet
+
+		// nextIP = end of static-pods network (first IP past it)
+		ones, _ := staticPodNet.Network.Mask.Size()
+		i.nextIP = make(net.IP, len(staticPodNet.Network.IP))
+		copy(i.nextIP, staticPodNet.Network.IP)
+		carry := uint32(1) << uint(32-ones)
+		for j := len(i.nextIP) - 1; j >= 0 && carry > 0; j-- {
+			sum := uint32(i.nextIP[j]) + carry
+			i.nextIP[j] = byte(sum)
+			carry = sum >> 8
+		}
 
 		i.log.Info().
 			Str("defaultNetwork", defaultNet.Name).
@@ -156,46 +167,21 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 
 	// Try to reclaim a released slot first, otherwise allocate the next subnet.
 	var nextNet *net.IPNet
-	var reclaimKey *net.IP
-	for ip, existing := range i.networks {
+	var reclaimKey string
+	for key, existing := range i.networks {
 		if existing == nil {
-			nextNet = &net.IPNet{IP: *ip, Mask: net.CIDRMask(SubnetSize, 32)}
-			reclaimKey = ip
+			nextNet = &net.IPNet{IP: net.ParseIP(key), Mask: net.CIDRMask(SubnetSize, 32)}
+			reclaimKey = key
 			break
 		}
 	}
 
 	if nextNet == nil {
-		// No released slots — compute the next subnet after the highest allocated one.
-		// Each network may have a different prefix length (e.g., /24 static vs /30 pod),
-		// so compute the end of each network using its own mask to find the true max.
-		var maxEnd net.IP
-		for _, existing := range i.networks {
-			if existing == nil {
-				continue
-			}
-			ones, _ := existing.Network.Mask.Size()
-			end := make(net.IP, len(existing.Network.IP))
-			copy(end, existing.Network.IP)
-			carry := uint32(1) << uint(32-ones)
-			for j := len(end) - 1; j >= 0 && carry > 0; j-- {
-				sum := uint32(end[j]) + carry
-				end[j] = byte(sum)
-				carry = sum >> 8
-			}
-			if maxEnd == nil || bytes.Compare(end, maxEnd) > 0 {
-				maxEnd = end
-			}
-		}
-
-		if maxEnd == nil {
-			return nil, fmt.Errorf("no networks allocated yet")
-		}
-
 		nextNet = &net.IPNet{
-			IP:   maxEnd,
+			IP:   make(net.IP, len(i.nextIP)),
 			Mask: net.CIDRMask(SubnetSize, 32),
 		}
+		copy(nextNet.IP, i.nextIP)
 	}
 
 	netSpec, err := i.driver.Networks().CreateNetwork(ctx, config.GetMetadata().GetName(), nextNet, nil)
@@ -203,10 +189,17 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 		return nil, fmt.Errorf("create network for pod: %w", err)
 	}
 
-	if reclaimKey != nil {
+	if reclaimKey != "" {
 		i.networks[reclaimKey] = &netSpec
 	} else {
-		i.networks[&nextNet.IP] = &netSpec
+		i.networks[nextNet.IP.String()] = &netSpec
+		// Advance high water mark
+		carry := uint32(1) << uint(32-SubnetSize)
+		for j := len(i.nextIP) - 1; j >= 0 && carry > 0; j-- {
+			sum := uint32(i.nextIP[j]) + carry
+			i.nextIP[j] = byte(sum)
+			carry = sum >> 8
+		}
 	}
 	return &netSpec, nil
 }
@@ -227,9 +220,9 @@ func (i *IpamImpl) DeallocateNetwork(ctx context.Context, status *runtimeapi.Pod
 		i.log.Debug().Err(err).Str("sandbox", status.GetMetadata().GetName()).Msg("failed to remove sandbox network")
 	}
 
-	for ip, net := range i.networks {
-		if net.Name == status.GetMetadata().GetName() {
-			i.networks[ip] = nil
+	for key, net := range i.networks {
+		if net != nil && net.Name == status.GetMetadata().GetName() {
+			i.networks[key] = nil
 			break
 		}
 	}
