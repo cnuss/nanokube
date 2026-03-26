@@ -30,6 +30,9 @@ jobs:
           fetch-tags: true
 
       - uses: docker/setup-docker-action@v5
+        id: docker
+        with:
+          set-host: true
 
       - name: Docker spot checks
         run: |
