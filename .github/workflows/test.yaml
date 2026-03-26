@@ -20,13 +20,15 @@ jobs:
         runner:
           - ubuntu-latest
           - macos-26-intel
-        suite: [e2e, critest]
+        suite:
+          - e2e
+          - critest
         runtime: [docker]
         rootless: [false]
-        # rootless: [true, false]
-        # exclude:
-        #   - runner: macos-26-intel
-        #     rootless: true
+        set-host: [true]
+        exclude:
+          - runner: macos-26-intel
+            suite: e2e
     steps:
       - name: Resolve env
         run: |
@@ -43,7 +45,7 @@ jobs:
         if: matrix.runtime == 'docker'
         with:
           rootless: ${{ matrix.rootless }}
-          set-host: true
+          set-host: ${{ matrix.set-host }}
 
       - uses: actions/setup-go@v6
         with:
@@ -55,7 +57,6 @@ jobs:
           key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
 
       - run: make init
-
       - run: make ${{ matrix.suite }}
 
       - uses: actions/upload-artifact@v4
