@@ -1472,14 +1472,14 @@ func (s *Server) CreateNetwork(ctx context.Context, name string, net *net.IPNet,
 		Driver: "bridge",
 		Labels: netLabels,
 		Options: map[string]string{
-			// DEVNOTE: Docker 29 added network isolation by default.
-			//          Disabling it with nat-unprotected.
-			//          Ref: https://github.com/moby/moby/pull/48597
 			"com.docker.network.bridge.enable_icc":           "true",
 			"com.docker.network.bridge.enable_ip_masquerade": "true",
 			"com.docker.network.bridge.host_binding_ipv4":    "0.0.0.0",
-			"com.docker.network.bridge.gateway_mode_ipv4":    "nat-unprotected",
 			"com.docker.network.driver.mtu":                  "65535",
+			// // DEVNOTE: Docker 29 added network isolation by default.
+			// //          Disabling it with nat-unprotected.
+			// //          Ref: https://github.com/moby/moby/pull/48597
+			// "com.docker.network.bridge.gateway_mode_ipv4": "nat-unprotected",
 		},
 	}
 
