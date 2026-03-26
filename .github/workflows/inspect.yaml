@@ -12,6 +12,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  docker-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - run: brew install --cask docker
+      - run: open --background -a Docker
+      - run: while ! docker system info > /dev/null 2>&1; do sleep 1; done
+      - run: docker version
+      - run: docker info
+      - run: docker context inspect
+      - run: docker network ls
+      - run: docker network inspect bridge
+      - run: hostname
+      - run: hostname -I 2>/dev/null || echo "hostname -I not supported"
+      - run: cat /etc/hosts 2>/dev/null || echo "no /etc/hosts"
+      - run: env | sort
+      - run: uname -a
+      - run: ifconfig 2>/dev/null || ip addr 2>/dev/null || echo "no ifconfig or ip"
+      - run: sudo iptables -t filter -L -n 2>&1 || echo "iptables not available"
+      - run: sudo iptables -t nat -L -n 2>&1 || echo "iptables nat not available"
+      - run: netstat -rn 2>/dev/null || route -n 2>/dev/null || echo "no route table"
+      - run: cat /etc/resolv.conf 2>/dev/null || echo "no resolv.conf"
+      - run: python3 -c "import socket; print(socket.gethostname()); print(socket.getfqdn()); print(socket.gethostbyname(socket.gethostname()))" 2>/dev/null || echo "python3 socket lookup failed"
+
   docker:
     strategy:
       fail-fast: false
