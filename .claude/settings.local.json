@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tee /tmp/e2e-results.log)",
+      "Bash(tee /tmp/nanokube-e2e.log)",
+      "Bash(tee /tmp/nanokube-e2e-endpoint-slices-fix.log)",
+      "Bash(tee /tmp/nanokube-e2e-full-fix.log)",
+      "Bash(go build:*)",
+      "Bash(tee /tmp/nanokube-e2e-no-shared.log)",
+      "Bash(tee /tmp/nanokube-e2e-audit.log)",
+      "Bash(chainsaw --help)",
+      "Bash(tee /tmp/nanokube-e2e-rbac.log)",
+      "Bash(tee /tmp/nanokube-e2e-subnet.log)",
+      "Bash(tee /tmp/nanokube-e2e-full.log)",
+      "Bash(tee /tmp/nanokube-suite-api.log)",
+      "Bash(tee /tmp/nanokube-suite-auth.log)",
+      "Bash(tee /tmp/nanokube-suite-config.log)",
+      "Bash(tee /tmp/nanokube-suite-obs.log)",
+      "Bash(tee /tmp/nanokube-suite-pods.log)",
+      "Bash(tee /tmp/nanokube-suite-policy.log)",
+      "Bash(tee /tmp/nanokube-suite-sched.log)",
+      "Bash(tee /tmp/nanokube-suite-workloads.log)",
+      "Bash(tee /tmp/nanokube-suite-secctx.log)",
+      "Bash(chainsaw docs:*)",
+      "Bash(tee /tmp/e2e-clean.log)",
+      "Bash(tee /tmp/e2e-run2.log)",
+      "Bash(tee /tmp/e2e-run3.log)",
+      "Bash(tee /tmp/e2e-run1.log)",
+      "Bash(tee /tmp/critest-capability.log)",
+      "Bash(tee /tmp/critest-runasgroup.log)",
+      "Bash(tee /tmp/e2e-security-context.log)",
+      "Bash(tee /tmp/e2e-final.log)",
+      "Bash(tee /tmp/critest-nil-profile.log)",
+      "Bash(tee /tmp/critest-privilege-escalation.log)",
+      "Bash(tee /tmp/gh-job-log.log)",
+      "Bash(git*push*)"
+    ]
+  }
+}
