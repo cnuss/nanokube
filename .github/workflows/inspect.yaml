@@ -24,7 +24,7 @@ jobs:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
         env:
-          LIMA_START_ARGS: '--set=(.portForwards)+=([{"guestIPMustBeZero":true,"hostIP":"0.0.0.0"}])'
+          LIMA_START_ARGS: --set=.portForwards[1].guestIPMustBeZero=true
 
       - run: docker version
       - run: docker info
