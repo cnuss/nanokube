@@ -45,4 +45,9 @@ jobs:
       - run: cat /etc/resolv.conf 2>/dev/null || echo "no resolv.conf"
       - run: python3 -c "import socket; print(socket.gethostname()); print(socket.getfqdn()); print(socket.gethostbyname(socket.gethostname()))" 2>/dev/null || echo "python3 socket lookup failed"
       - run: docker run --rm busybox cat /etc/hosts
-      - run: docker run --rm -p 8080:80 busybox sh -c "echo ok" && curl -s http://localhost:8080 || echo "port mapping test done"
+      - run: docker run -d --name port-test -p 8080:8080 python:3-alpine python3 -m http.server 8080
+      - run: sleep 2
+      - run: docker inspect port-test
+      - run: docker network inspect bridge
+      - run: curl -sv http://localhost:8080 || echo "curl localhost:8080 failed"
+      - run: curl -sv http://127.0.0.1:8080 || echo "curl 127.0.0.1:8080 failed"
