@@ -23,8 +23,14 @@ jobs:
         with:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
-        env:
-          LIMA_START_ARGS: "--set '.portForwards += [{\"guestIPMustBeZero\": true, \"hostIP\": \"0.0.0.0\"}]'"
+
+      - name: Enable Lima port forwarding
+        if: runner.os == 'macOS'
+        run: |
+          limactl stop docker-actions-toolkit
+          yq -i '.portForwards += [{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}]' ~/.lima/docker-actions-toolkit/lima.yaml
+          cat ~/.lima/docker-actions-toolkit/lima.yaml | grep -A2 portForwards
+          limactl start docker-actions-toolkit
 
       - run: docker version
       - run: docker info
