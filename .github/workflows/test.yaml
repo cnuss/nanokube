@@ -36,6 +36,8 @@ jobs:
           docker version
           echo "=== docker info ==="
           docker info
+          echo "=== docker context inspect ==="
+          docker context inspect
           echo "=== docker network ls ==="
           docker network ls
           echo "=== docker network inspect bridge ==="
@@ -49,6 +51,9 @@ jobs:
           echo "=== dockerd config ==="
           cat /etc/docker/daemon.json 2>/dev/null || echo "(no daemon.json)"
           cat ~/.config/docker/daemon.json 2>/dev/null || echo "(no user daemon.json)"
+          echo "=== env ==="
+          env | sort
+          exit 1
 
       - uses: actions/setup-go@v6
         with:
