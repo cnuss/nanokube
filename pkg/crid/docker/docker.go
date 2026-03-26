@@ -115,6 +115,11 @@ func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 		filepath.Join(home, ".rd", "docker.sock"),
 	}
 
+	// Prepend DOCKER_HOST socket if set (e.g. docker/setup-docker-action)
+	if dh := os.Getenv("DOCKER_HOST"); strings.HasPrefix(dh, "unix://") {
+		paths = append([]string{strings.TrimPrefix(dh, "unix://")}, paths...)
+	}
+
 	socket := func() *string {
 		for _, s := range paths {
 			if _, err := os.Stat(s); err == nil {
