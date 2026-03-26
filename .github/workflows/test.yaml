@@ -21,6 +21,8 @@ jobs:
           # - ubuntu-latest
           - macos-26-intel
         suite: [reviewable]
+        runtime: [docker]
+        rootless: [true, false]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -29,30 +31,9 @@ jobs:
           fetch-tags: true
 
       - uses: docker/setup-docker-action@v5
-
-      - name: Docker spot checks
-        run: |
-          echo "=== docker version ==="
-          docker version
-          echo "=== docker info ==="
-          docker info
-          echo "=== docker context inspect ==="
-          docker context inspect
-          echo "=== docker network ls ==="
-          docker network ls
-          echo "=== docker network inspect bridge ==="
-          docker network inspect bridge || echo "(no default bridge)"
-          echo "=== iptables version ==="
-          sudo iptables --version || echo "(iptables not available)"
-          echo "=== iptables filter chains ==="
-          sudo iptables -t filter -L -n --line-numbers 2>&1 || echo "(iptables list failed)"
-          echo "=== iptables nat chains ==="
-          sudo iptables -t nat -L -n --line-numbers 2>&1 || echo "(iptables nat list failed)"
-          echo "=== dockerd config ==="
-          cat /etc/docker/daemon.json 2>/dev/null || echo "(no daemon.json)"
-          cat ~/.config/docker/daemon.json 2>/dev/null || echo "(no user daemon.json)"
-          echo "=== env ==="
-          env | sort
+        if: matrix.runtime == 'docker'
+        with:
+          rootless: ${{ matrix.rootless }}
 
       - uses: actions/setup-go@v6
         with:
