@@ -15,7 +15,7 @@ jobs:
   test:
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         runner:
           - ubuntu-latest
@@ -27,6 +27,9 @@ jobs:
           - runner: macos-26-intel
             rootless: true
     steps:
+      - name: Resolve data dir
+        run: echo "NANOKUBE_DATA=$HOME/.nanokube-${{ matrix.suite }}" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -51,20 +54,8 @@ jobs:
 
       - run: make ${{ matrix.suite }}
 
-      - name: Copy nanokube log
-        if: always()
-        run: |
-          mkdir -p /tmp/nanokube-logs
-          cp ~/.nanokube-${{ matrix.suite }}/log /tmp/nanokube-logs/nanokube.log 2>/dev/null || echo "No log found"
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: nanokube-log-${{ matrix.runner }}-${{ matrix.suite }}-${{ matrix.runtime }}-rootless-${{ matrix.rootless }}
-          path: /tmp/nanokube-logs/
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: nanokube-data-${{ matrix.runner }}-${{ matrix.suite }}-${{ matrix.runtime }}-rootless-${{ matrix.rootless }}
-          path: ${{ env.HOME }}/.nanokube-${{ matrix.suite }}/
+          path: ${{ env.NANOKUBE_DATA }}/
