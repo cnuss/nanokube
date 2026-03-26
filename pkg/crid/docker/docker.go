@@ -111,6 +111,7 @@ func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 		"/run/docker.sock",
 		filepath.Join(home, ".docker", "run", "docker.sock"),
 		filepath.Join(home, ".colima", "default", "docker.sock"),
+		filepath.Join(home, ".lima", "docker-actions-toolkit", "docker.sock"),
 		filepath.Join(home, ".rd", "docker.sock"),
 	}
 
