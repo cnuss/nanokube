@@ -1,8 +1,8 @@
 name: Run Tests
 
 on:
-  push:
-    branches: ["1.35"]
+  # push:
+  #   branches: ["1.35"]
   pull_request:
     branches: ["1.35"]
   workflow_dispatch:
@@ -26,9 +26,6 @@ jobs:
         runtime: [docker]
         rootless: [false]
         set-host: [true]
-        exclude:
-          - runner: macos-26-intel
-            suite: e2e
     steps:
       - name: Resolve env
         run: |

@@ -1,11 +1,15 @@
 name: Inspect
 
 on:
-  # push:
-  #   branches: ["1.35"]
+  push:
+    branches: ["1.35"]
   pull_request:
     branches: ["1.35"]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   docker:
