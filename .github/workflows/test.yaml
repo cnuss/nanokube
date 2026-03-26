@@ -63,10 +63,3 @@ jobs:
         with:
           name: nanokube-log-${{ env.MATRIX_HASH }}
           path: ${{ env.NANOKUBE_DATA }}/log
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: nanokube-data-${{ env.MATRIX_HASH }}
-          path: ${{ env.NANOKUBE_DATA }}
-          include-hidden-files: true
