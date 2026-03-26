@@ -23,6 +23,9 @@ jobs:
         suite: [reviewable]
         runtime: [docker]
         rootless: [true, false]
+        exclude:
+          - runner: macos-26-intel
+            rootless: true
     steps:
       - uses: actions/checkout@v6
         with:
