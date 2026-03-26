@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          docker run -it \
+          docker run \
           --device /dev/kvm \
           -p 50922:10022 \
           -v /tmp/.X11-unix:/tmp/.X11-unix \
@@ -90,3 +90,4 @@ jobs:
       - run: docker network inspect bridge
       - run: curl -sv http://localhost:8080 || echo "curl localhost:8080 failed"
       - run: curl -sv http://127.0.0.1:8080 || echo "curl 127.0.0.1:8080 failed"
+      - run: curl -sv http://$(hostname):8080 || echo "curl <host-ip>:8080 failed"
