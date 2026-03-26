@@ -15,7 +15,7 @@ jobs:
   test:
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         runner:
           - ubuntu-latest
@@ -67,4 +67,4 @@ jobs:
         if: always()
         with:
           name: nanokube-data-${{ matrix.runner }}-${{ matrix.suite }}-${{ matrix.runtime }}-rootless-${{ matrix.rootless }}
-          path: ~/.nanokube-${{ matrix.suite }}/
+          path: ${{ env.HOME }}/.nanokube-${{ matrix.suite }}/
