@@ -18,9 +18,9 @@ jobs:
       fail-fast: true
       matrix:
         runner:
-          # - ubuntu-latest
+          - ubuntu-latest
           - macos-26-intel
-        suite: [reviewable]
+        suite: [e2e, critest]
         runtime: [docker]
         rootless: [true, false]
         exclude:
@@ -49,4 +49,22 @@ jobs:
 
       - run: make init
 
-      - run: make ${{ matrix.suite }} V=1
+      - run: make ${{ matrix.suite }}
+
+      - name: Copy nanokube log
+        if: always()
+        run: |
+          mkdir -p /tmp/nanokube-logs
+          cp ~/.nanokube-${{ matrix.suite }}/log /tmp/nanokube-logs/nanokube.log 2>/dev/null || echo "No log found"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nanokube-log-${{ matrix.runner }}-${{ matrix.suite }}-${{ matrix.runtime }}-rootless-${{ matrix.rootless }}
+          path: /tmp/nanokube-logs/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nanokube-data-${{ matrix.runner }}-${{ matrix.suite }}-${{ matrix.runtime }}-rootless-${{ matrix.rootless }}
+          path: ~/.nanokube-${{ matrix.suite }}/
