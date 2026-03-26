@@ -53,7 +53,6 @@ jobs:
           cat ~/.config/docker/daemon.json 2>/dev/null || echo "(no user daemon.json)"
           echo "=== env ==="
           env | sort
-          exit 1
 
       - uses: actions/setup-go@v6
         with:
