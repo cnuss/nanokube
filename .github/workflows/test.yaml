@@ -40,6 +40,7 @@ jobs:
         if: matrix.runtime == 'docker'
         with:
           rootless: ${{ matrix.rootless }}
+          set-host: true
 
       - uses: actions/setup-go@v6
         with:

@@ -116,6 +116,10 @@ func Detect(ctx context.Context, name, dataDir string) backend.Backend {
 	}
 
 	socket := func() *string {
+		if h := os.Getenv("DOCKER_HOST"); strings.HasPrefix(h, "unix://") {
+			s := strings.TrimPrefix(h, "unix://")
+			return &s
+		}
 		for _, s := range paths {
 			if _, err := os.Stat(s); err == nil {
 				return &s
