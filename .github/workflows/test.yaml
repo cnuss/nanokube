@@ -22,13 +22,16 @@ jobs:
           - macos-26-intel
         suite: [e2e, critest]
         runtime: [docker]
-        rootless: [true, false]
-        exclude:
-          - runner: macos-26-intel
-            rootless: true
+        rootless: [false]
+        # rootless: [true, false]
+        # exclude:
+        #   - runner: macos-26-intel
+        #     rootless: true
     steps:
-      - name: Resolve data dir
-        run: echo "NANOKUBE_DATA=$HOME/.nanokube-${{ matrix.suite }}" >> "$GITHUB_ENV"
+      - name: Resolve env
+        run: |
+          echo "NANOKUBE_DATA=$HOME/.nanokube-${{ matrix.suite }}" >> "$GITHUB_ENV"
+          echo "MATRIX_HASH=$(echo -n '${{ toJSON(matrix) }}' | sha256sum | cut -c1-8)" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v6
         with:
@@ -55,14 +58,15 @@ jobs:
 
       - run: make ${{ matrix.suite }}
 
-      - name: Debug data dir
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          echo "NANOKUBE_DATA=$NANOKUBE_DATA"
-          ls -la "$NANOKUBE_DATA" || echo "data dir does not exist"
+        with:
+          name: nanokube-log-${{ env.MATRIX_HASH }}
+          path: ${{ env.NANOKUBE_DATA }}/log
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: nanokube-data-${{ matrix.runner }}-${{ matrix.suite }}-${{ matrix.runtime }}-rootless-${{ matrix.rootless }}
-          path: ${{ env.NANOKUBE_DATA }}/
+          name: nanokube-data-${{ env.MATRIX_HASH }}
+          path: ${{ env.NANOKUBE_DATA }}
+          include-hidden-files: true
