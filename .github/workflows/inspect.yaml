@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  LIMA_HOST_IP: 0.0.0.0
+  HOST_IP: 0.0.0.0
 
 jobs:
   docker:
@@ -29,7 +29,7 @@ jobs:
         env:
           LIMA_START_ARGS: >
             --set=.portForwards[1].guestIPMustBeZero=true
-            --set=.portForwards[1].hostIP="0.0.0.0"
+            --set=.portForwards[1].hostIP=strenv(HOST_IP)
 
       - run: docker version
       - run: docker info
