@@ -7,6 +7,9 @@ on:
     branches: ["1.35"]
   workflow_dispatch:
 
+env:
+  LIMA_HOST_IP: 0.0.0.0
+
 jobs:
   docker:
     strategy:
@@ -24,8 +27,7 @@ jobs:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
         env:
-          LIMA_HOST_IP: 0.0.0.0
-          LIMA_START_ARGS: --set=.portForwards[1].guestIPMustBeZero=true --set=.portForwards[1].hostIP=env(LIMA_HOST_IP)
+          LIMA_START_ARGS: '--set=.portForwards[1].guestIPMustBeZero=true|.portForwards[1].hostIP="0.0.0.0"'
 
       - run: docker version
       - run: docker info
