@@ -22,15 +22,12 @@ jobs:
           - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - run: brew install socket_vmnet
-        if: matrix.runner == 'macos-26-intel'
-
       - uses: docker/setup-docker-action@v5
         with:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
         env:
-          LIMA_START_ARGS: |
+          LIMA_START_ARGS: >
             --set=.portForwards[1].guestIPMustBeZero=true
             --set=.portForwards[1].hostIP=127.0.0.1
 
