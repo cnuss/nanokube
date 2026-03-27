@@ -19,12 +19,12 @@ jobs:
       matrix:
         runner:
           - ubuntu-latest
-          - macos-26-intel
+          # - macos-26-intel
         suite:
           - e2e
           - critest
         runtime: [docker]
-        rootless: [false]
+        rootless: [false, true]
         set-host: [true]
     steps:
       - name: Resolve env
