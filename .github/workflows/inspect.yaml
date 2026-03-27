@@ -24,7 +24,9 @@ jobs:
     steps:
       - name: Resolve Lima port forwarding args
         if: runner.os == 'macOS'
-        run: echo "LIMA_START_ARGS=--set=(.portForwards)+=([$(yq -n -o json -I0 '{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}')])" >> "$GITHUB_ENV"
+        run: |
+          PORTFWD=$(yq -n -o json -I0 '{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}')
+          echo "LIMA_START_ARGS=--set=(.portForwards)+=([$PORTFWD])" >> "$GITHUB_ENV"
 
       - uses: docker/setup-docker-action@v5
         with:
