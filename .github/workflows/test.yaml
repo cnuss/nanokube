@@ -1,8 +1,8 @@
 name: Run Tests
 
 on:
-  # push:
-  #   branches: ["1.35"]
+  push:
+    branches: ["1.35"]
   pull_request:
     branches: ["1.35"]
   workflow_dispatch:
@@ -39,10 +39,16 @@ jobs:
           fetch-tags: true
 
       - uses: docker/setup-docker-action@v5
-        if: matrix.runtime == 'docker'
         with:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
+
+      - name: Enable Lima port forwarding
+        if: runner.os == 'macOS'
+        run: |
+          limactl stop docker-actions-toolkit
+          yq -i '.portForwards += [{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}]' ~/.lima/docker-actions-toolkit/lima.yaml
+          limactl start docker-actions-toolkit
 
       - uses: actions/setup-go@v6
         with:
