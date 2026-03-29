@@ -9,7 +9,7 @@
     "ghcr.io/devcontainers/features/go:1": {
       "version": "1.25"
     },
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    // "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
       "helm": "none",
       "kubectl": "latest",
