@@ -24,6 +24,10 @@ jobs:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
 
+      - name: Enable cgroup delegation for rootless
+        if: matrix.rootless
+        run: sudo loginctl enable-linger runner
+
       - name: Enable Lima port forwarding
         if: runner.os == 'macOS'
         run: |
