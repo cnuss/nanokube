@@ -45,7 +45,7 @@ jobs:
       - id: platform
         run: echo "name=nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.platform.outputs.name }}
           path: nanokube
