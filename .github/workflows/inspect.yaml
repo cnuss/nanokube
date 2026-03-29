@@ -19,14 +19,18 @@ jobs:
           # - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Enable cgroup delegation for rootless
+        if: matrix.rootless
+        run: |
+          sudo loginctl enable-linger runner
+          sudo mkdir -p /sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service
+          sudo chown -R runner:runner /sys/fs/cgroup/user.slice/user-1001.slice || true
+          systemctl --user status || true
+
       - uses: docker/setup-docker-action@v5
         with:
           rootless: ${{ matrix.rootless }}
           set-host: ${{ matrix.set-host }}
-
-      - name: Enable cgroup delegation for rootless
-        if: matrix.rootless
-        run: sudo loginctl enable-linger runner
 
       - name: Enable Lima port forwarding
         if: runner.os == 'macOS'
