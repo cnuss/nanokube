@@ -23,8 +23,7 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "postCreateCommand": {
-    "submodules": "git submodule update --init --recursive",
-    "chainsaw": "cd tests && make install-chainsaw"
+    "submodules": "git submodule update --init --recursive"
   },
   "customizations": {
     "codespaces": {
