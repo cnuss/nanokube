@@ -18,16 +18,16 @@ require (
 	go.opentelemetry.io/otel/trace v1.36.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.72.2
-	k8s.io/api v0.35.3
-	k8s.io/apimachinery v0.35.3
-	k8s.io/apiserver v0.35.3
-	k8s.io/client-go v0.35.3
-	k8s.io/component-base v0.35.3
-	k8s.io/cri-api v0.35.3
+	k8s.io/api v0.35.0
+	k8s.io/apimachinery v0.35.0
+	k8s.io/apiserver v0.35.0
+	k8s.io/client-go v0.35.0
+	k8s.io/component-base v0.35.0
+	k8s.io/cri-api v0.35.0
 	k8s.io/cri-client v0.0.0
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/kubelet v0.35.3
-	k8s.io/kubernetes v1.35.3
+	k8s.io/kubelet v0.35.0
+	k8s.io/kubernetes v1.35.0
 	k8s.io/mount-utils v0.35.0
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/sig-storage-lib-external-provisioner/v10 v10.0.1
@@ -158,12 +158,12 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.35.0 // indirect
-	k8s.io/cloud-provider v0.35.3 // indirect
-	k8s.io/component-helpers v0.35.3 // indirect
-	k8s.io/controller-manager v0.35.3 // indirect
+	k8s.io/cloud-provider v0.35.0 // indirect
+	k8s.io/component-helpers v0.35.0 // indirect
+	k8s.io/controller-manager v0.35.0 // indirect
 	k8s.io/csi-translation-lib v0.0.0 // indirect
-	k8s.io/dynamic-resource-allocation v0.35.3 // indirect
-	k8s.io/kms v0.35.3 // indirect
+	k8s.io/dynamic-resource-allocation v0.35.0 // indirect
+	k8s.io/kms v0.35.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20250910181357-589584f1c912 // indirect
 	k8s.io/kube-scheduler v0.0.0 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
@@ -174,9 +174,9 @@ require (
 )
 
 replace (
-	k8s.io/cri-client => github.com/kubernetes/cri-client v0.35.3
-	k8s.io/csi-translation-lib => github.com/kubernetes/csi-translation-lib v0.35.3
-	k8s.io/kube-scheduler => github.com/kubernetes/kube-scheduler v0.35.3
-	k8s.io/kubectl => github.com/kubernetes/kubectl v0.35.3
+	k8s.io/cri-client => github.com/kubernetes/cri-client v0.35.0
+	k8s.io/csi-translation-lib => github.com/kubernetes/csi-translation-lib v0.35.0
+	k8s.io/kube-scheduler => github.com/kubernetes/kube-scheduler v0.35.0
+	k8s.io/kubectl => github.com/kubernetes/kubectl v0.35.0
 	k8s.io/kubernetes => ./kubernetes
 )

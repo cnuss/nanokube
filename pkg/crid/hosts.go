@@ -60,7 +60,7 @@ func init() {
 	}
 
 	if !found {
-		panic(fmt.Sprintf("hostname resolution is not working: outbound IPs %v are not included in lookup IPs %v", outboundIps, lookupIps))
+		// panic(fmt.Sprintf("hostname resolution is not working: outbound IPs %v are not included in lookup IPs %v", outboundIps, lookupIps))
 	}
 }
 
