@@ -2,14 +2,13 @@
   "name": "NanoKube",
   "image": "mcr.microsoft.com/devcontainers/base:bookworm",
   "hostRequirements": {
-    "cpus": 4,
-    "memory": "16gb"
+    "cpus": 4
   },
   "features": {
     "ghcr.io/devcontainers/features/go:1": {
       "version": "1.25"
     },
-    // "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
       "helm": "none",
       "kubectl": "latest",
