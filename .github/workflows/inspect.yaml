@@ -19,13 +19,20 @@ jobs:
           # - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Enable cgroup delegation for rootless
+      - name: Enable rootless cgroup delegation
         if: matrix.rootless
         run: |
           sudo loginctl enable-linger runner
-          sudo mkdir -p /sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service
-          sudo chown -R runner:runner /sys/fs/cgroup/user.slice/user-1001.slice || true
-          systemctl --user status || true
+          sudo mkdir -p /etc/polkit-1/rules.d
+          cat <<'RULE' | sudo tee /etc/polkit-1/rules.d/50-rootless-docker.rules
+          polkit.addRule(function(action, subject) {
+            if (action.id === "org.freedesktop.systemd1.manage-units" &&
+                subject.user === "runner") {
+              return polkit.Result.YES;
+            }
+          });
+          RULE
+          sudo systemctl restart polkit
 
       - uses: docker/setup-docker-action@v5
         with:
