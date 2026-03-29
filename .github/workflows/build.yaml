@@ -45,7 +45,30 @@ jobs:
       - id: platform
         run: echo "name=nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v5
+      - run: mv nanokube ${{ steps.platform.outputs.name }}
+
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.platform.outputs.name }}
-          path: nanokube
+          path: ${{ steps.platform.outputs.name }}
+
+  release:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: true
+          allowUpdates: true
+          removeArtifacts: true
+          artifacts: artifacts/*
