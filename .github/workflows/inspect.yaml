@@ -9,12 +9,14 @@ on:
 
 jobs:
   runner-uname:
-    matrix:
-      runner:
-        - ubuntu-24.04
-        - ubuntu-24.04-arm
-        - macos-26
-        - macos-26-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
       - run: uname -a
