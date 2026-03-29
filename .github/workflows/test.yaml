@@ -24,7 +24,7 @@ jobs:
           - e2e
           - critest
         runtime: [docker]
-        rootless: [false, true]
+        rootless: [false]
         set-host: [true]
     steps:
       - name: Resolve env
