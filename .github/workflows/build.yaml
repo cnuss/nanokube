@@ -1,0 +1,51 @@
+name: Build
+
+on:
+  push:
+    branches: ["1.35"]
+  pull_request:
+    branches: ["1.35"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-26-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/bin
+          key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
+
+      - run: make init
+
+      - run: make build
+
+      - id: platform
+        run: echo "name=nanokube-$(uname -s)-$(uname -m)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.platform.outputs.name }}
+          path: nanokube
