@@ -8,7 +8,62 @@ on:
   workflow_dispatch:
 
 jobs:
-  runner-uname:
+  macos:
+    strategy:
+      matrix:
+        runner:
+          - macos-15-intel
+          - macos-26-intel
+          - macos-latest
+          - macos-latest-large
+          - macos-latest-xlarge
+          - macos-14
+          - macos-14-large
+          - macos-14-xlarge
+          - macos-15
+          - macos-15-large
+          - macos-15-xlarge
+          - macos-26
+          - macos-26-large
+          - macos-26-xlarge
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - run: uname -a
+      - run: sw_vers
+      - run: sysctl -n machdep.cpu.brand_string
+      - run: system_profiler SPHardwareDataType
+
+      # container runtimes
+      - run: which docker 2>/dev/null && docker --version || echo "no docker"
+      - run: which podman 2>/dev/null && podman --version || echo "no podman"
+      - run: which nerdctl 2>/dev/null && nerdctl --version || echo "no nerdctl"
+      - run: which containerd 2>/dev/null && containerd --version || echo "no containerd"
+      - run: which ctr 2>/dev/null && ctr --version || echo "no ctr"
+      - run: which crictl 2>/dev/null && crictl --version || echo "no crictl"
+      - run: which runc 2>/dev/null && runc --version || echo "no runc"
+
+      # VM / hypervisor tools
+      - run: which lima 2>/dev/null && lima --version || echo "no lima"
+      - run: which limactl 2>/dev/null && limactl --version || echo "no limactl"
+      - run: which colima 2>/dev/null && colima version || echo "no colima"
+      - run: which orbctl 2>/dev/null && orbctl version || echo "no orbctl"
+      - run: which qemu-system-aarch64 2>/dev/null && qemu-system-aarch64 --version || echo "no qemu-aarch64"
+      - run: which qemu-system-x86_64 2>/dev/null && qemu-system-x86_64 --version || echo "no qemu-x86_64"
+      - run: which vfkit 2>/dev/null && vfkit --version || echo "no vfkit"
+
+      # virtualization framework support
+      - run: sysctl -n kern.hv_support 2>/dev/null || echo "no hv_support sysctl"
+      - run: system_profiler SPSoftwareDataType
+
+      # package managers
+      - run: which brew 2>/dev/null && brew --version || echo "no brew"
+      - run: brew list 2>/dev/null || echo "brew not available"
+
+      # networking
+      - run: ifconfig
+      - run: netstat -rn
+
+  runner:
     strategy:
       fail-fast: false
       matrix:
