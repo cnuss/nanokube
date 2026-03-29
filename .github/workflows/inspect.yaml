@@ -12,11 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rootless: [false]
-        set-host: [true]
+        rootless: [false, true]
+        set-host: [false, true]
         runner:
           - ubuntu-latest
-          - macos-26-intel
+          # - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: docker/setup-docker-action@v5
