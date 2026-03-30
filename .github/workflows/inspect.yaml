@@ -8,127 +8,47 @@ on:
   workflow_dispatch:
 
 jobs:
-  macos:
-    strategy:
-      matrix:
-        runner:
-          - macos-15-intel
-          - macos-26-intel
-          - macos-latest
-          - macos-latest-large
-          - macos-latest-xlarge
-          - macos-14
-          - macos-14-large
-          - macos-14-xlarge
-          - macos-15
-          - macos-15-large
-          - macos-15-xlarge
-          - macos-26
-          - macos-26-large
-          - macos-26-xlarge
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - run: uname -a
-      - run: sw_vers
-      - run: sysctl -n machdep.cpu.brand_string
-      - run: system_profiler SPHardwareDataType
+  # macos:
+  #   strategy:
+  #     matrix:
+  #       runner:
+  #         - macos-26
+  #         - macos-26-large
+  #         - macos-26-xlarge
+  #         - macos-26-intel
+  #   runs-on: ${{ matrix.runner }}
+  #   steps:
+  #     - run: uname -a
+  #     - run: sw_vers
+  #     - run: sysctl -n machdep.cpu.brand_string
+  #     - run: system_profiler SPHardwareDataType
+  #     # container runtimes
+  #     - run: which docker 2>/dev/null && docker --version || echo "no docker"
+  #     - run: which podman 2>/dev/null && podman --version || echo "no podman"
+  #     - run: which nerdctl 2>/dev/null && nerdctl --version || echo "no nerdctl"
+  #     - run: which containerd 2>/dev/null && containerd --version || echo "no containerd"
+  #     - run: which ctr 2>/dev/null && ctr --version || echo "no ctr"
+  #     - run: which crictl 2>/dev/null && crictl --version || echo "no crictl"
+  #     - run: which runc 2>/dev/null && runc --version || echo "no runc"
+  #     # VM / hypervisor tools
+  #     - run: which lima 2>/dev/null && lima --version || echo "no lima"
+  #     - run: which limactl 2>/dev/null && limactl --version || echo "no limactl"
+  #     - run: which colima 2>/dev/null && colima version || echo "no colima"
+  #     - run: which orbctl 2>/dev/null && orbctl version || echo "no orbctl"
+  #     - run: which qemu-system-aarch64 2>/dev/null && qemu-system-aarch64 --version || echo "no qemu-aarch64"
+  #     - run: which qemu-system-x86_64 2>/dev/null && qemu-system-x86_64 --version || echo "no qemu-x86_64"
+  #     - run: which vfkit 2>/dev/null && vfkit --version || echo "no vfkit"
+  #     # virtualization framework support
+  #     - run: sysctl -n kern.hv_support 2>/dev/null || echo "no hv_support sysctl"
+  #     - run: system_profiler SPSoftwareDataType
+  #     # package managers
+  #     - run: which brew 2>/dev/null && brew --version || echo "no brew"
+  #     - run: brew list 2>/dev/null || echo "brew not available"
+  #     # networking
+  #     - run: ifconfig
+  #     - run: netstat -rn
 
-      # container runtimes
-      - run: which docker 2>/dev/null && docker --version || echo "no docker"
-      - run: which podman 2>/dev/null && podman --version || echo "no podman"
-      - run: which nerdctl 2>/dev/null && nerdctl --version || echo "no nerdctl"
-      - run: which containerd 2>/dev/null && containerd --version || echo "no containerd"
-      - run: which ctr 2>/dev/null && ctr --version || echo "no ctr"
-      - run: which crictl 2>/dev/null && crictl --version || echo "no crictl"
-      - run: which runc 2>/dev/null && runc --version || echo "no runc"
-
-      # VM / hypervisor tools
-      - run: which lima 2>/dev/null && lima --version || echo "no lima"
-      - run: which limactl 2>/dev/null && limactl --version || echo "no limactl"
-      - run: which colima 2>/dev/null && colima version || echo "no colima"
-      - run: which orbctl 2>/dev/null && orbctl version || echo "no orbctl"
-      - run: which qemu-system-aarch64 2>/dev/null && qemu-system-aarch64 --version || echo "no qemu-aarch64"
-      - run: which qemu-system-x86_64 2>/dev/null && qemu-system-x86_64 --version || echo "no qemu-x86_64"
-      - run: which vfkit 2>/dev/null && vfkit --version || echo "no vfkit"
-
-      # virtualization framework support
-      - run: sysctl -n kern.hv_support 2>/dev/null || echo "no hv_support sysctl"
-      - run: system_profiler SPSoftwareDataType
-
-      # package managers
-      - run: which brew 2>/dev/null && brew --version || echo "no brew"
-      - run: brew list 2>/dev/null || echo "brew not available"
-
-      # networking
-      - run: ifconfig
-      - run: netstat -rn
-
-  macos-containers:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner:
-          - macos-26
-          - macos-26-large
-          - macos-26-xlarge
-          - macos-26-intel
-        runtime:
-          - lima-docker
-          - lima-docker-vz
-          - colima
-          - colima-vz
-          - podman
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Setup Lima + Docker (qemu)
-        if: matrix.runtime == 'lima-docker'
-        uses: docker/setup-docker-action@v5
-
-      - name: Setup Lima + Docker (vz)
-        if: matrix.runtime == 'lima-docker-vz'
-        run: |
-          brew install lima docker
-          limactl start --name=default --vm-type=vz template://docker
-          docker context create lima-docker --docker "host=unix://$HOME/.lima/default/sock/docker.sock"
-          docker context use lima-docker
-
-      - name: Setup Colima + Docker (qemu)
-        if: matrix.runtime == 'colima'
-        run: |
-          brew install colima docker
-          colima start
-          docker context use colima
-
-      - name: Setup Colima + Docker (vz)
-        if: matrix.runtime == 'colima-vz'
-        run: |
-          brew install colima docker
-          colima start --vm-type vz
-          docker context use colima
-
-      - name: Setup Podman
-        if: matrix.runtime == 'podman'
-        run: |
-          brew install podman
-          podman machine init
-          podman machine start
-
-      - name: Run hello-world (docker)
-        if: matrix.runtime != 'podman'
-        run: docker run --rm hello-world
-
-      - name: Run hello-world (podman)
-        if: matrix.runtime == 'podman'
-        run: podman run --rm hello-world
-
-      - name: Version info
-        run: |
-          docker version 2>/dev/null || true
-          podman version 2>/dev/null || true
-          colima version 2>/dev/null || true
-          limactl --version 2>/dev/null || true
-
-  runner:
+  setup-docker:
     strategy:
       fail-fast: false
       matrix:
@@ -137,76 +57,187 @@ jobs:
           - ubuntu-24.04-arm
           - macos-26
           - macos-26-intel
+        runtime:
+          - docker
+          - podman
     runs-on: ${{ matrix.runner }}
     steps:
-      - run: uname -a
-
-  docker:
-    strategy:
-      fail-fast: false
-      matrix:
-        rootless: [false, true]
-        set-host: [false, true]
-        runner:
-          - ubuntu-latest
-          # - macos-26-intel
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Enable rootless cgroup delegation
-        if: matrix.rootless
-        run: |
-          sudo loginctl enable-linger runner
-          sudo mkdir -p /etc/polkit-1/rules.d
-          cat <<'RULE' | sudo tee /etc/polkit-1/rules.d/50-rootless-docker.rules
-          polkit.addRule(function(action, subject) {
-            if (action.id === "org.freedesktop.systemd1.manage-units" &&
-                subject.user === "runner") {
-              return polkit.Result.YES;
-            }
-          });
-          RULE
-          sudo systemctl restart polkit
-
-      - uses: docker/setup-docker-action@v5
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-docker
         with:
-          rootless: ${{ matrix.rootless }}
-          set-host: ${{ matrix.set-host }}
+          runtime: ${{ matrix.runtime }}
 
-      - name: Enable Lima port forwarding
-        if: runner.os == 'macOS'
-        run: |
-          limactl stop docker-actions-toolkit
-          yq -i '.portForwards += [{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}]' ~/.lima/docker-actions-toolkit/lima.yaml
-          limactl start docker-actions-toolkit
+  # macos-containers:
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       runner:
+  #         # - macos-26
+  #         - macos-26-intel
+  #       runtime:
+  #         - docker-desktop
+  #         # - lima-docker
+  #         # - lima-docker-vz
+  #         # - lima-docker-krunkit
+  #         # - colima
+  #         # - colima-vz
+  #         # - podman
+  #   runs-on: ${{ matrix.runner }}
+  #   steps:
+  #     - name: Setup Docker (desktop)
+  #       if: matrix.runtime == 'docker-desktop'
+  #       run: |
+  #         set -ex
+  #         brew install --cask docker
+  #         sudo /Applications/Docker.app/Contents/MacOS/install --accept-license --user=$(whoami)
+  #         open -a Docker.app
+  #         while [ ! -d ~/Library/Containers/com.docker.docker/Data/log ]; do sleep 1; done
+  #         tail -f ~/Library/Containers/com.docker.docker/Data/log/*/*.log 2>/dev/null &
+  #         while ! docker system info >/dev/null 2>&1; do sleep 1; done
 
-      - run: docker version
-      - run: docker info
-      - run: docker context inspect
-      - run: docker network ls
-      - run: docker network inspect bridge
-      - run: hostname
-      - run: hostname -I 2>/dev/null || echo "hostname -I not supported"
-      - run: cat /etc/hosts 2>/dev/null || echo "no /etc/hosts"
-      - run: env | sort
-      - run: uname -a
-      - run: ifconfig 2>/dev/null || ip addr 2>/dev/null || echo "no ifconfig or ip"
-      - run: sudo iptables -t filter -L -n 2>&1 || echo "iptables not available"
-      - run: sudo iptables -t nat -L -n 2>&1 || echo "iptables nat not available"
-      - run: netstat -rn 2>/dev/null || route -n 2>/dev/null || echo "no route table"
-      - run: cat /etc/resolv.conf 2>/dev/null || echo "no resolv.conf"
-      - run: python3 -c "import socket; print(socket.gethostname()); print(socket.getfqdn()); print(socket.gethostbyname(socket.gethostname()))" 2>/dev/null || echo "python3 socket lookup failed"
-      - run: limactl list 2>/dev/null || echo "no lima"
-      - run: cat ~/.lima/docker-actions-toolkit/lima.yaml 2>/dev/null || echo "no lima config"
-      - run: limactl shell docker-actions-toolkit cat /etc/hosts 2>/dev/null || echo "no lima shell"
-      - run: limactl shell docker-actions-toolkit ip addr 2>/dev/null || echo "no lima ip addr"
-      - run: limactl shell docker-actions-toolkit ss -tlnp 2>/dev/null || echo "no lima ss"
-      - run: limactl shell docker-actions-toolkit iptables -t nat -L -n 2>/dev/null || sudo limactl shell docker-actions-toolkit iptables -t nat -L -n 2>/dev/null || echo "no lima iptables"
-      - run: ss -tlnp 2>/dev/null || netstat -an | grep LISTEN 2>/dev/null || echo "no host listening ports"
-      - run: docker run --rm busybox cat /etc/hosts
-      - run: docker run -d --name port-test -p 8080:8080 python:3-alpine python3 -m http.server 8080
-      - run: sleep 2
-      - run: docker inspect port-test
-      - run: docker network inspect bridge
-      - run: curl -sv http://localhost:8080 || echo "curl localhost:8080 failed"
-      - run: curl -sv http://127.0.0.1:8080 || echo "curl 127.0.0.1:8080 failed"
-      - run: curl -sv http://$(hostname):8080 || echo "curl <host-ip>:8080 failed"
+  #     - name: Setup Lima + Docker (qemu)
+  #       if: matrix.runtime == 'lima-docker'
+  #       run: |
+  #         brew install lima lima-additional-guestagents docker
+  #         limactl info
+  #         limactl start --list-templates
+  #         limactl start --name=default --vm-type=qemu template:docker
+  #         docker context create lima-docker --docker "host=unix://$HOME/.lima/default/sock/docker.sock"
+  #         docker context use lima-docker
+
+  #     - name: Setup Lima + Docker (krunkit)
+  #       if: matrix.runtime == 'lima-docker-krunkit'
+  #       run: |
+  #         brew tap slp/krun
+  #         brew install lima lima-additional-guestagents docker krunkit
+  #         limactl info
+  #         limactl start --list-templates
+  #         limactl start --name=default --vm-type=krunkit template:docker
+  #         docker context create lima-docker --docker "host=unix://$HOME/.lima/default/sock/docker.sock"
+  #         docker context use lima-docker
+
+  #     - name: Setup Lima + Docker (vz)
+  #       if: matrix.runtime == 'lima-docker-vz'
+  #       run: |
+  #         brew install lima lima-additional-guestagents docker
+  #         limactl info
+  #         limactl start --list-templates
+  #         limactl start --name=default --vm-type=vz template:docker
+  #         docker context create lima-docker --docker "host=unix://$HOME/.lima/default/sock/docker.sock"
+  #         docker context use lima-docker
+
+  #     - name: Setup Colima + Docker (qemu)
+  #       if: matrix.runtime == 'colima'
+  #       run: |
+  #         brew install colima docker
+  #         colima start
+  #         docker context use colima
+
+  #     - name: Setup Colima + Docker (vz)
+  #       if: matrix.runtime == 'colima-vz'
+  #       run: |
+  #         brew install colima docker
+  #         colima start --vm-type vz
+  #         docker context use colima
+
+  #     - name: Setup Podman
+  #       if: matrix.runtime == 'podman'
+  #       run: |
+  #         brew install podman
+  #         podman machine init
+  #         podman machine start
+
+  #     - name: Run hello-world (docker)
+  #       if: matrix.runtime != 'podman'
+  #       run: docker run --rm hello-world
+
+  #     - name: Run hello-world (podman)
+  #       if: matrix.runtime == 'podman'
+  #       run: podman run --rm hello-world
+
+  #     - name: Version info
+  #       run: |
+  #         docker version 2>/dev/null || true
+  #         podman version 2>/dev/null || true
+  #         colima version 2>/dev/null || true
+  #         limactl --version 2>/dev/null || true
+
+  # runner:
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       runner:
+  #         - ubuntu-24.04
+  #         - ubuntu-24.04-arm
+  #         - macos-26
+  #         - macos-26-intel
+  #   runs-on: ${{ matrix.runner }}
+  #   steps:
+  #     - run: uname -a
+
+  # docker:
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       rootless: [false, true]
+  #       set-host: [false, true]
+  #       runner:
+  #         - ubuntu-latest
+  #         # - macos-26-intel
+  #   runs-on: ${{ matrix.runner }}
+  #   steps:
+  #     - name: Enable rootless cgroup delegation
+  #       if: matrix.rootless
+  #       run: |
+  #         sudo loginctl enable-linger runner
+  #         sudo mkdir -p /etc/polkit-1/rules.d
+  #         cat <<'RULE' | sudo tee /etc/polkit-1/rules.d/50-rootless-docker.rules
+  #         polkit.addRule(function(action, subject) {
+  #           if (action.id === "org.freedesktop.systemd1.manage-units" &&
+  #               subject.user === "runner") {
+  #             return polkit.Result.YES;
+  #           }
+  #         });
+  #         RULE
+  #         sudo systemctl restart polkit
+  #     - uses: docker/setup-docker-action@v5
+  #       with:
+  #         rootless: ${{ matrix.rootless }}
+  #         set-host: ${{ matrix.set-host }}
+  #     - name: Enable Lima port forwarding
+  #       if: runner.os == 'macOS'
+  #       run: |
+  #         limactl stop docker-actions-toolkit
+  #         yq -i '.portForwards += [{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}]' ~/.lima/docker-actions-toolkit/lima.yaml
+  #         limactl start docker-actions-toolkit
+  #     - run: docker version
+  #     - run: docker info
+  #     - run: docker context inspect
+  #     - run: docker network ls
+  #     - run: docker network inspect bridge
+  #     - run: hostname
+  #     - run: hostname -I 2>/dev/null || echo "hostname -I not supported"
+  #     - run: cat /etc/hosts 2>/dev/null || echo "no /etc/hosts"
+  #     - run: env | sort
+  #     - run: uname -a
+  #     - run: ifconfig 2>/dev/null || ip addr 2>/dev/null || echo "no ifconfig or ip"
+  #     - run: sudo iptables -t filter -L -n 2>&1 || echo "iptables not available"
+  #     - run: sudo iptables -t nat -L -n 2>&1 || echo "iptables nat not available"
+  #     - run: netstat -rn 2>/dev/null || route -n 2>/dev/null || echo "no route table"
+  #     - run: cat /etc/resolv.conf 2>/dev/null || echo "no resolv.conf"
+  #     - run: python3 -c "import socket; print(socket.gethostname()); print(socket.getfqdn()); print(socket.gethostbyname(socket.gethostname()))" 2>/dev/null || echo "python3 socket lookup failed"
+  #     - run: limactl list 2>/dev/null || echo "no lima"
+  #     - run: cat ~/.lima/docker-actions-toolkit/lima.yaml 2>/dev/null || echo "no lima config"
+  #     - run: limactl shell docker-actions-toolkit cat /etc/hosts 2>/dev/null || echo "no lima shell"
+  #     - run: limactl shell docker-actions-toolkit ip addr 2>/dev/null || echo "no lima ip addr"
+  #     - run: limactl shell docker-actions-toolkit ss -tlnp 2>/dev/null || echo "no lima ss"
+  #     - run: limactl shell docker-actions-toolkit iptables -t nat -L -n 2>/dev/null || sudo limactl shell docker-actions-toolkit iptables -t nat -L -n 2>/dev/null || echo "no lima iptables"
+  #     - run: ss -tlnp 2>/dev/null || netstat -an | grep LISTEN 2>/dev/null || echo "no host listening ports"
+  #     - run: docker run --rm busybox cat /etc/hosts
+  #     - run: docker run -d --name port-test -p 8080:8080 python:3-alpine python3 -m http.server 8080
+  #     - run: sleep 2
+  #     - run: docker inspect port-test
+  #     - run: docker network inspect bridge
+  #     - run: curl -sv http://localhost:8080 || echo "curl localhost:8080 failed"
+  #     - run: curl -sv http://127.0.0.1:8080 || echo "curl 127.0.0.1:8080 failed"
+  #     - run: curl -sv http://$(hostname):8080 || echo "curl <host-ip>:8080 failed"

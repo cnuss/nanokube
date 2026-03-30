@@ -22,14 +22,12 @@ jobs:
       fail-fast: true
       matrix:
         runner:
-          - ubuntu-latest
-          # - macos-26-intel
+          - ubuntu-24.04
+          - macos-26-intel
         suite:
           - e2e
           - critest
         runtime: [docker]
-        rootless: [false]
-        set-host: [true]
     steps:
       - name: Resolve env
         run: |
@@ -42,17 +40,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: docker/setup-docker-action@v5
+      - uses: ./.github/actions/setup-docker
         with:
-          rootless: ${{ matrix.rootless }}
-          set-host: ${{ matrix.set-host }}
-
-      - name: Enable Lima port forwarding
-        if: runner.os == 'macOS'
-        run: |
-          limactl stop docker-actions-toolkit
-          yq -i '.portForwards += [{"guestIPMustBeZero": true, "hostIP": "0.0.0.0"}]' ~/.lima/docker-actions-toolkit/lima.yaml
-          limactl start docker-actions-toolkit
+          verbose: true
 
       - uses: actions/setup-go@v6
         with:

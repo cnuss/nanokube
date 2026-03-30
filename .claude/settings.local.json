@@ -33,7 +33,28 @@
       "Bash(tee /tmp/critest-nil-profile.log)",
       "Bash(tee /tmp/critest-privilege-escalation.log)",
       "Bash(tee /tmp/gh-job-log.log)",
-      "Bash(git*push*)"
+      "Bash(git*push*)",
+      "Bash(tee /tmp/softprops-readme.txt)",
+      "Bash(tee /tmp/ncipollo-readme.txt)",
+      "Bash(tee /tmp/neovim-release.yml)",
+      "Bash(tee /tmp/inspect-macos-26.log)",
+      "Bash(tee /tmp/inspect-macos-26-intel.log)",
+      "Bash(tee /tmp/inspect-macos-14-large.log)",
+      "Bash(tee /tmp/inspect-failed.log)",
+      "Bash(curl:*)",
+      "Bash(python3 -c \"import sys,json,base64; print\\(base64.b64decode\\(json.load\\(sys.stdin\\)[''''content'''']\\).decode\\(\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; [print\\(f''''{c[\"\"login\"\"]}: {c[\"\"contributions\"\"]} commits''''\\) for c in json.load\\(sys.stdin\\)[:10]]\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Name: {d.get\\(\"\"name\"\"\\)}\\\\nCompany: {d.get\\(\"\"company\"\"\\)}\\\\nBio: {d.get\\(\"\"bio\"\"\\)}\\\\nBlog: {d.get\\(\"\"blog\"\"\\)}''''\\)\")",
+      "Bash(python3 -c \"import sys,json; [print\\(d[''''name'''']\\) for d in json.load\\(sys.stdin\\) if d[''''type'''']==''''dir'''']\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Total: {d.get\\(total_count,0\\)}''''\\); [print\\(i[''''path'''']\\) for i in d.get\\(''''items'''',[]\\)]\")",
+      "Bash(python3 -c \"import sys,json; [print\\(d[''''name'''']\\) for d in json.load\\(sys.stdin\\)]\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(i[''''path'''']\\) for i in d.get\\(''''items'''',[]\\)]\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Stars: {d.get\\(\"\"stargazers_count\"\"\\)}\\\\nDesc: {d.get\\(\"\"description\"\"\\)}\\\\nTopics: {d.get\\(\"\"topics\"\"\\)}''''\\)\")",
+      "Bash(tee /tmp/apptainer-readme.md)",
+      "Bash(tee /tmp/apptainer-docker-oci.html)",
+      "Bash(tee /tmp/apptainer-security.html)",
+      "Bash(tee /tmp/apptainer-install.html)",
+      "Bash(tee /tmp/apptainer-oci-runtime.html)"
     ]
   }
 }
