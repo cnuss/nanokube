@@ -15,7 +15,7 @@ Makefile: ;
 
 else
 
-.PHONY: build clean test submodules run run-clean fmt critest init e2e patch patch-save reviewable
+.PHONY: build clean test submodules run run-clean fmt critest init e2e smoke patch patch-save reviewable
 
 KUBE_VERSION := $(shell grep 'k8s.io/kubernetes v' go.mod | head -1 | awk '{print $$2}')
 KUBE_MAJOR := $(word 1,$(subst ., ,$(KUBE_VERSION:v%=%)))
@@ -99,6 +99,12 @@ critest: build
 	$(call run-nanokube,--kubelet=false,\
 		[ -S "$$HOME/.$(NAME)/docker/cri.sock" ],\
 		cd cri-tools && go mod tidy && go test -c ./cmd/critest && ./critest.test --ginkgo.v $(if $(WHAT),--ginkgo.focus '$(WHAT)') $(if $(CRITEST_SKIP),--ginkgo.skip '$(CRITEST_SKIP)') --runtime-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock" --image-endpoint "unix://$$HOME/.$(NAME)/docker/cri.sock")
+
+smoke: NAME = nanokube-smoke
+smoke: build
+	$(call run-nanokube,,\
+		kubectl get nodes >/dev/null 2>&1,\
+		cd tests && chainsaw test --config .chainsaw.yaml --test-dir smoke)
 
 reviewable: critest e2e
 

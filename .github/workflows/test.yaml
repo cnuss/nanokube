@@ -27,6 +27,7 @@ jobs:
         suite:
           - e2e
           - critest
+          - smoke
         runtime: [docker]
     steps:
       - name: Resolve env
