@@ -106,7 +106,7 @@ func (p *ProberImpl) AddPod(ctx context.Context, pod *v1.Pod) {
 		}
 	}
 
-	p.log.Debug().Str("pod", pod.Name).Msg("added probe workers")
+	p.log.Info().Str("pod", pod.Name).Msg("added probe workers")
 }
 
 func (p *ProberImpl) RemovePod(pod *v1.Pod) {
@@ -373,7 +373,7 @@ func (p *ProberImpl) executeProbe(ctx context.Context, probeSpec *v1.Probe, cont
 		// Exec probes run in the app container per Kubernetes spec
 		containerID, err := p.resolveContainerID(ctx, podUID, container.Name)
 		if err != nil {
-			p.log.Debug().Err(err).Str("pod", podName).Str("container", container.Name).Msg("resolve container for probe")
+			p.log.Info().Err(err).Str("pod", podName).Str("container", container.Name).Msg("resolve container for exec probe")
 			return probe.Failure
 		}
 		execTarget = containerID
@@ -384,7 +384,7 @@ func (p *ProberImpl) executeProbe(ctx context.Context, probeSpec *v1.Probe, cont
 		// the pod network namespace and always has wget/nc available.
 		sandboxID, err := p.resolveSandboxID(ctx, podUID)
 		if err != nil {
-			p.log.Debug().Err(err).Str("pod", podName).Msg("resolve sandbox for probe")
+			p.log.Info().Err(err).Str("pod", podName).Msg("resolve sandbox for probe")
 			return probe.Failure
 		}
 		execTarget = sandboxID
@@ -434,7 +434,7 @@ func (p *ProberImpl) executeProbe(ctx context.Context, probeSpec *v1.Probe, cont
 
 	stdout, stderr, execErr := p.backend.containers.ExecSync(ctx, execTarget, cmd, timeout)
 	if execErr != nil {
-		p.log.Debug().
+		p.log.Info().
 			Err(execErr).
 			Str("pod", podName).
 			Str("container", container.Name).
@@ -443,6 +443,7 @@ func (p *ProberImpl) executeProbe(ctx context.Context, probeSpec *v1.Probe, cont
 			Msg("probe exec failed")
 		return probe.Failure
 	}
+	p.log.Info().Str("pod", podName).Str("container", container.Name).Msg("probe exec succeeded")
 	return probe.Success
 }
 
