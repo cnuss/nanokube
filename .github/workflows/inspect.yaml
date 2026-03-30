@@ -63,6 +63,52 @@ jobs:
       - run: ifconfig
       - run: netstat -rn
 
+  macos-containers:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-26
+          - macos-26-intel
+        runtime:
+          - lima-docker
+          - colima
+          - podman
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Setup Lima + Docker
+        if: matrix.runtime == 'lima-docker'
+        uses: docker/setup-docker-action@v5
+
+      - name: Setup Colima + Docker
+        if: matrix.runtime == 'colima'
+        run: |
+          brew install colima docker
+          colima start
+          docker context use colima
+
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        run: |
+          brew install podman
+          podman machine init
+          podman machine start
+
+      - name: Run hello-world (docker)
+        if: matrix.runtime != 'podman'
+        run: docker run --rm hello-world
+
+      - name: Run hello-world (podman)
+        if: matrix.runtime == 'podman'
+        run: podman run --rm hello-world
+
+      - name: Version info
+        run: |
+          docker version 2>/dev/null || true
+          podman version 2>/dev/null || true
+          colima version 2>/dev/null || true
+          limactl --version 2>/dev/null || true
+
   runner:
     strategy:
       fail-fast: false
