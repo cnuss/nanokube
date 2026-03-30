@@ -91,7 +91,7 @@ e2e: NAME = nanokube-e2e
 e2e: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
-		cd tests && make test KIND=false $(if $(SUITE),SUITE=$(SUITE)) $(if $(WHAT),WHAT=$(WHAT)))
+		cd tests && make test GROUP=e2e KIND=false $(if $(SUITE),SUITE=$(SUITE)) $(if $(WHAT),WHAT=$(WHAT)))
 
 # TODO unhardcode docker
 critest: NAME = nanokube-critest
@@ -104,7 +104,7 @@ smoke: NAME = nanokube-smoke
 smoke: build
 	$(call run-nanokube,,\
 		kubectl get nodes >/dev/null 2>&1,\
-		cd tests && chainsaw test --config .chainsaw.yaml --test-dir smoke)
+		cd tests && make test GROUP=smoke KIND=false $(if $(WHAT),WHAT=$(WHAT)))
 
 reviewable: critest e2e
 
