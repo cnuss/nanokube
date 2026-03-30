@@ -69,22 +69,41 @@ jobs:
       matrix:
         runner:
           - macos-26
+          - macos-26-large
+          - macos-26-xlarge
           - macos-26-intel
         runtime:
           - lima-docker
+          - lima-docker-vz
           - colima
+          - colima-vz
           - podman
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Setup Lima + Docker
+      - name: Setup Lima + Docker (qemu)
         if: matrix.runtime == 'lima-docker'
         uses: docker/setup-docker-action@v5
 
-      - name: Setup Colima + Docker
+      - name: Setup Lima + Docker (vz)
+        if: matrix.runtime == 'lima-docker-vz'
+        run: |
+          brew install lima docker
+          limactl start --name=default --vm-type=vz template://docker
+          docker context create lima-docker --docker "host=unix://$HOME/.lima/default/sock/docker.sock"
+          docker context use lima-docker
+
+      - name: Setup Colima + Docker (qemu)
         if: matrix.runtime == 'colima'
         run: |
           brew install colima docker
           colima start
+          docker context use colima
+
+      - name: Setup Colima + Docker (vz)
+        if: matrix.runtime == 'colima-vz'
+        run: |
+          brew install colima docker
+          colima start --vm-type vz
           docker context use colima
 
       - name: Setup Podman
