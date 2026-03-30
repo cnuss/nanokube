@@ -19,7 +19,7 @@ jobs:
   test:
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         runner:
           - ubuntu-24.04

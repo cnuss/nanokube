@@ -196,6 +196,12 @@ func (p *ProberImpl) UpdatePodStatus(_ context.Context, pod *v1.Pod, podStatus *
 				key := resultKey{pod.UID, cs.Name, probeReadiness}
 				if rs, ok := p.results[key]; ok && rs.success {
 					ready = true
+				} else {
+					p.log.Info().
+						Str("pod", pod.Name).
+						Str("container", cs.Name).
+						Bool("resultExists", ok).
+						Msg("readiness probe not yet passing")
 				}
 			} else {
 				ready = true
