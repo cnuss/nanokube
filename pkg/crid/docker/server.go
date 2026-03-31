@@ -384,11 +384,26 @@ func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtim
 
 // ExecSync implements [v1.RuntimeServiceServer].
 func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	s.log.Trace().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
+	s.log.Info().Any("req", req).Msg("ExecSync")
 	id := req.GetContainerId()
+	cmd := req.GetCmd()
+
+	// Detect sandbox sentinel: rewritten probes need to run in the pod sandbox
+	// (which has busybox with wget/nc) instead of the app container.
+	if len(cmd) > 0 && cmd[0] == backend.SandboxExecSentinel {
+		cmd = cmd[1:]
+		inspect, err := s.backend.client.ContainerInspect(ctx, id)
+		if err != nil {
+			return nil, component.WrapErr(s.log, err)
+		}
+		if sandboxID := s.backend.labels.ParentUID(inspect.Config.Labels); sandboxID != "" {
+			s.log.Debug().Str("container", id).Str("sandbox", sandboxID).Strs("cmd", cmd).Msg("routing probe to sandbox")
+			id = sandboxID
+		}
+	}
 
 	exec, err := s.backend.client.ContainerExecCreate(ctx, id, container.ExecOptions{
-		Cmd:          req.GetCmd(),
+		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 	})

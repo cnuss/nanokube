@@ -26,7 +26,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/kubelet/prober"
+
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
@@ -156,7 +156,6 @@ type Backend interface {
 	HostUtils() hostutil.HostUtils
 	EventBroadcaster() record.EventBroadcaster
 	EventRecorder() record.EventRecorder
-	Prober() prober.Manager
 
 	// Storage
 	CSI() CSI
@@ -205,7 +204,7 @@ type BackendImpl struct {
 	subpath       subpath.Interface
 	hostUtils     hostutil.HostUtils
 	eventRecorder record.EventRecorder
-	prober        prober.Manager
+
 	traceProvider tp.TracerProvider
 	hostInfo      *HostInfo
 	csi           CSI
@@ -549,15 +548,6 @@ func (b *BackendImpl) EventRecorder() record.EventRecorder {
 		b.eventRecorder = er
 	}
 	return b.eventRecorder
-}
-
-func (b *BackendImpl) Prober() prober.Manager {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.prober == nil {
-		b.prober = NewProber(b)
-	}
-	return b.prober
 }
 
 func (b *BackendImpl) CSI() CSI {

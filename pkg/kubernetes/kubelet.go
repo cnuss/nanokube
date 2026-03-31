@@ -246,12 +246,12 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		k.crid.DefaultBackend().Containers(),
 		k.crid.DefaultBackend().ContainerManager(),
 	)
+	hk.KubeletDeps.ProbeManager = nil
 	hk.KubeletDeps.OSInterface = k.crid.DefaultBackend().OS()
 	hk.KubeletDeps.Mounter = k.crid.DefaultBackend().Mounter()
 	hk.KubeletDeps.Subpather = k.crid.DefaultBackend().Subpath()
 	hk.KubeletDeps.HostUtil = k.crid.DefaultBackend().HostUtils()
 	hk.KubeletDeps.Recorder = k.crid.DefaultBackend().EventRecorder()
-	hk.KubeletDeps.ProbeManager = k.crid.DefaultBackend().Prober()
 	hk.KubeletDeps.TLSOptions = k.crid.TLSOptions()
 	k.deps = hk.KubeletDeps
 	exited := make(chan error, 1)

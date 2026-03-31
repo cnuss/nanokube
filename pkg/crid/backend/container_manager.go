@@ -442,6 +442,16 @@ func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 		pod.Annotations[p.backend.Labels().Prefix(labels.HostAliasesKey)] = string(b)
 	}
 
+	// Rewrite HTTP/TCP/GRPC probes to exec probes so the upstream kubelet prober
+	// runs them via ExecSync in the sandbox (which shares the pod network namespace)
+	// instead of connecting from the host to podIP (unreachable on macOS).
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		rewriteProbe(c.LivenessProbe)
+		rewriteProbe(c.ReadinessProbe)
+		rewriteProbe(c.StartupProbe)
+	}
+
 	// Inject container names as annotation so RunPodSandbox can set DNS aliases
 	if len(pod.Spec.Containers) > 0 {
 		names := make([]string, 0, len(pod.Spec.Containers))
@@ -455,6 +465,64 @@ func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 	}
 
 	return lifecycle.PodAdmitResult{Admit: true}
+}
+
+// SandboxExecSentinel is prepended to rewritten probe commands so that
+// ExecSync can detect them and route execution to the pod sandbox container
+// (which has busybox with wget/nc) instead of the app container.
+const SandboxExecSentinel = "__sandbox__"
+
+// rewriteProbe converts HTTP/TCP/GRPC probes into exec probes that run
+// wget or nc inside the sandbox container (which shares the pod network namespace).
+func rewriteProbe(probe *v1.Probe) {
+	if probe == nil {
+		return
+	}
+
+	timeout := probe.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 1
+	}
+
+	switch {
+	case probe.HTTPGet != nil:
+		scheme := "http"
+		if probe.HTTPGet.Scheme == v1.URISchemeHTTPS {
+			scheme = "https"
+		}
+		port := probe.HTTPGet.Port.IntValue()
+		path := probe.HTTPGet.Path
+		if path == "" {
+			path = "/"
+		}
+		url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
+
+		cmd := []string{SandboxExecSentinel, "wget", "-q", "-O", "/dev/null", "-S", "--no-check-certificate", fmt.Sprintf("--timeout=%d", timeout)}
+		if host := probe.HTTPGet.Host; host != "" {
+			cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
+		}
+		for _, h := range probe.HTTPGet.HTTPHeaders {
+			cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
+		}
+		cmd = append(cmd, url)
+
+		probe.HTTPGet = nil
+		probe.Exec = &v1.ExecAction{Command: cmd}
+
+	case probe.TCPSocket != nil:
+		port := probe.TCPSocket.Port.IntValue()
+		probe.TCPSocket = nil
+		probe.Exec = &v1.ExecAction{
+			Command: []string{SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+		}
+
+	case probe.GRPC != nil:
+		port := probe.GRPC.Port
+		probe.GRPC = nil
+		probe.Exec = &v1.ExecAction{
+			Command: []string{SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+		}
+	}
 }
 
 var _ cm.ContainerManager = &ContainerManagerImpl{}
