@@ -3,13 +3,12 @@ package kubernetes
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 	"time"
-
-	"encoding/json"
-	"reflect"
 	"unsafe"
 
 	"github.com/cnuss/nanokube/pkg/component"

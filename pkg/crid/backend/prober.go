@@ -11,453 +11,224 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
-	"k8s.io/kubernetes/pkg/probe"
+	"k8s.io/kubernetes/pkg/kubelet/prober/results"
+	"k8s.io/kubernetes/pkg/kubelet/status"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 )
 
-type probeType int
+// proberPodManager implements the minimal status.PodManager interface for the prober.
+type proberPodManager struct{}
 
-const (
-	probeReadiness probeType = iota
-	probeLiveness
-	probeStartup
-)
-
-func (pt probeType) String() string {
-	switch pt {
-	case probeReadiness:
-		return "readiness"
-	case probeLiveness:
-		return "liveness"
-	case probeStartup:
-		return "startup"
-	default:
-		return "unknown"
-	}
+func (m *proberPodManager) GetPodByUID(uid types.UID) (*v1.Pod, bool)     { return nil, false }
+func (m *proberPodManager) GetMirrorPodByPod(pod *v1.Pod) (*v1.Pod, bool) { return nil, false }
+func (m *proberPodManager) TranslatePodUID(uid types.UID) kubetypes.ResolvedPodUID {
+	return kubetypes.ResolvedPodUID(uid)
 }
 
-type resultKey struct {
-	podUID        types.UID
-	containerName string
-	probeType     probeType
+func (m *proberPodManager) GetUIDTranslations() (map[kubetypes.ResolvedPodUID]kubetypes.MirrorPodUID, map[kubetypes.MirrorPodUID]kubetypes.ResolvedPodUID) {
+	return nil, nil
 }
 
-type resultState struct {
-	success  bool
-	runCount int // consecutive same-result count
-}
+// proberDeletionSafety implements status.PodDeletionSafetyProvider.
+type proberDeletionSafety struct{}
 
-type trackedPod struct {
-	pod            *v1.Pod
-	cancel         context.CancelFunc // cancels all workers
-	livenessCancel context.CancelFunc // cancels liveness workers only
-	startupCancel  context.CancelFunc // cancels startup workers only
-}
+func (d *proberDeletionSafety) PodCouldHaveRunningContainers(pod *v1.Pod) bool { return true }
+
+// proberStartupLatency implements status.PodStartupLatencyStateHelper.
+type proberStartupLatency struct{}
+
+func (l *proberStartupLatency) RecordStatusUpdated(pod *v1.Pod)        {}
+func (l *proberStartupLatency) DeletePodStartupState(podUID types.UID) {}
 
 func NewProber(backend *BackendImpl) prober.Manager {
 	return &ProberImpl{
 		backend: backend,
 		log:     component.NewLogger("prober"),
-		pods:    make(map[types.UID]*trackedPod),
-		results: make(map[resultKey]*resultState),
+		runner: &CommandRunnerImpl{
+			backend: backend,
+			log:     component.NewLogger("command-runner"),
+		},
 	}
 }
 
 type ProberImpl struct {
-	backend *BackendImpl
-	log     component.Logger
-
-	pods    map[types.UID]*trackedPod
-	results map[resultKey]*resultState
-	mu      sync.RWMutex
+	backend   *BackendImpl
+	log       component.Logger
+	runner    *CommandRunnerImpl
+	inner     prober.Manager
+	innerOnce sync.Once
 }
 
+func (p *ProberImpl) Inner() prober.Manager {
+	p.innerOnce.Do(func() {
+		statusMgr := status.NewManager(
+			p.backend.KubeClient(),
+			&proberPodManager{},
+			&proberDeletionSafety{},
+			&proberStartupLatency{},
+		)
+		p.inner = prober.NewManager(
+			statusMgr,
+			results.NewManager(),
+			results.NewManager(),
+			results.NewManager(),
+			p.runner,
+			p.backend.EventRecorder(),
+		)
+	})
+	return p.inner
+}
+
+type CommandRunnerImpl struct {
+	backend *BackendImpl
+	log     component.Logger
+	// sandboxes maps app container IDs to their pod's sandbox container ID.
+	sandboxes sync.Map // map[string]string
+}
+
+// AddPod rewrites HTTP/TCP/GRPC probes into exec probes so the upstream
+// prober routes everything through RunInContainer → sandbox exec.
 func (p *ProberImpl) AddPod(ctx context.Context, pod *v1.Pod) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	uid := pod.UID
-	if _, exists := p.pods[uid]; exists {
-		return
+	rewritten := pod.DeepCopy()
+	for i := range rewritten.Spec.Containers {
+		c := &rewritten.Spec.Containers[i]
+		rewriteProbe(c.LivenessProbe)
+		rewriteProbe(c.ReadinessProbe)
+		rewriteProbe(c.StartupProbe)
 	}
-
-	podCtx, podCancel := context.WithCancel(ctx)
-	livenessCtx, livenessCancel := context.WithCancel(podCtx)
-	startupCtx, startupCancel := context.WithCancel(podCtx)
-
-	tp := &trackedPod{
-		pod:            pod,
-		cancel:         podCancel,
-		livenessCancel: livenessCancel,
-		startupCancel:  startupCancel,
-	}
-	p.pods[uid] = tp
-
-	for i := range pod.Spec.Containers {
-		c := &pod.Spec.Containers[i]
-		if c.ReadinessProbe != nil {
-			go p.worker(podCtx, uid, c, c.ReadinessProbe, probeReadiness)
-		}
-		if c.LivenessProbe != nil {
-			go p.worker(livenessCtx, uid, c, c.LivenessProbe, probeLiveness)
-		}
-		if c.StartupProbe != nil {
-			go p.worker(startupCtx, uid, c, c.StartupProbe, probeStartup)
-		}
-	}
-
-	p.log.Info().Str("pod", pod.Name).Msg("added probe workers")
+	p.log.Info().Str("pod", pod.Name).Msg("AddPod")
+	p.Inner().AddPod(ctx, rewritten)
 }
 
 func (p *ProberImpl) RemovePod(pod *v1.Pod) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.removePodLocked(pod.UID)
-}
-
-func (p *ProberImpl) removePodLocked(uid types.UID) {
-	tp, exists := p.pods[uid]
-	if !exists {
-		return
-	}
-	tp.cancel()
-	delete(p.pods, uid)
-
-	// clean up results for this pod
-	for k := range p.results {
-		if k.podUID == uid {
-			delete(p.results, k)
-		}
-	}
+	p.Inner().RemovePod(pod)
 }
 
 func (p *ProberImpl) CleanupPods(desiredPods map[types.UID]sets.Empty) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for uid := range p.pods {
-		if _, desired := desiredPods[uid]; !desired {
-			p.removePodLocked(uid)
-		}
-	}
+	p.Inner().CleanupPods(desiredPods)
 }
 
 func (p *ProberImpl) StopLivenessAndStartup(pod *v1.Pod) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.Inner().StopLivenessAndStartup(pod)
+}
 
-	tp, exists := p.pods[pod.UID]
-	if !exists {
+func (p *ProberImpl) UpdatePodStatus(ctx context.Context, pod *v1.Pod, podStatus *v1.PodStatus) {
+	p.Inner().UpdatePodStatus(ctx, pod, podStatus)
+}
+
+// rewriteProbe converts HTTP/TCP/GRPC probes into exec probes that run
+// wget or nc inside the sandbox container (which shares the pod network namespace).
+func rewriteProbe(probe *v1.Probe) {
+	if probe == nil {
 		return
 	}
-	if tp.livenessCancel != nil {
-		tp.livenessCancel()
-	}
-	if tp.startupCancel != nil {
-		tp.startupCancel()
-	}
 
-	p.log.Debug().Str("pod", pod.Name).Msg("stopped liveness and startup probes")
-}
-
-func (p *ProberImpl) UpdatePodStatus(_ context.Context, pod *v1.Pod, podStatus *v1.PodStatus) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	// build a map of container spec by name for quick lookup
-	specByName := make(map[string]*v1.Container, len(pod.Spec.Containers))
-	for i := range pod.Spec.Containers {
-		specByName[pod.Spec.Containers[i].Name] = &pod.Spec.Containers[i]
+	timeout := probe.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 1
 	}
 
-	for i := range podStatus.ContainerStatuses {
-		cs := &podStatus.ContainerStatuses[i]
-		spec := specByName[cs.Name]
-		running := cs.State.Running != nil
-
-		// Determine Started
-		started := false
-		if running {
-			if spec != nil && spec.StartupProbe != nil {
-				key := resultKey{pod.UID, cs.Name, probeStartup}
-				if rs, ok := p.results[key]; ok && rs.success {
-					started = true
-				}
-			} else {
-				started = true
-			}
+	switch {
+	case probe.HTTPGet != nil:
+		scheme := "http"
+		if probe.HTTPGet.Scheme == v1.URISchemeHTTPS {
+			scheme = "https"
 		}
-		cs.Started = &started
-
-		// Determine Ready
-		ready := false
-		if started {
-			if spec != nil && spec.ReadinessProbe != nil {
-				key := resultKey{pod.UID, cs.Name, probeReadiness}
-				if rs, ok := p.results[key]; ok && rs.success {
-					ready = true
-				} else {
-					p.log.Info().
-						Str("pod", pod.Name).
-						Str("container", cs.Name).
-						Bool("resultExists", ok).
-						Msg("readiness probe not yet passing")
-				}
-			} else {
-				ready = true
-			}
+		port := probe.HTTPGet.Port.IntValue()
+		path := probe.HTTPGet.Path
+		if path == "" {
+			path = "/"
 		}
-		cs.Ready = ready
-	}
-}
+		url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
 
-func (p *ProberImpl) worker(ctx context.Context, uid types.UID, container *v1.Container, probeSpec *v1.Probe, pt probeType) {
-	initialDelay := time.Duration(probeSpec.InitialDelaySeconds) * time.Second
-	period := time.Duration(probeSpec.PeriodSeconds) * time.Second
-	if period <= 0 {
-		period = 10 * time.Second
-	}
-	successThreshold := int(probeSpec.SuccessThreshold)
-	if successThreshold <= 0 {
-		successThreshold = 1
-	}
-	failureThreshold := int(probeSpec.FailureThreshold)
-	if failureThreshold <= 0 {
-		failureThreshold = 3
-	}
-
-	// wait for initial delay
-	if initialDelay > 0 {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(initialDelay):
+		cmd := []string{"wget", "-q", "-O", "/dev/null", "-S", fmt.Sprintf("--timeout=%d", timeout)}
+		if host := probe.HTTPGet.Host; host != "" {
+			cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
 		}
-	}
+		for _, h := range probe.HTTPGet.HTTPHeaders {
+			cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
+		}
+		cmd = append(cmd, url)
 
-	ticker := time.NewTicker(period)
-	defer ticker.Stop()
+		probe.HTTPGet = nil
+		probe.Exec = &v1.ExecAction{Command: cmd}
 
-	// run immediately on first tick, then at period intervals
-	for {
-		p.runProbe(ctx, uid, container, probeSpec, pt, successThreshold, failureThreshold)
+	case probe.TCPSocket != nil:
+		port := probe.TCPSocket.Port.IntValue()
+		probe.TCPSocket = nil
+		probe.Exec = &v1.ExecAction{
+			Command: []string{"nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+		}
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+	case probe.GRPC != nil:
+		port := probe.GRPC.Port
+		probe.GRPC = nil
+		probe.Exec = &v1.ExecAction{
+			Command: []string{"nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
 		}
 	}
 }
 
-func (p *ProberImpl) runProbe(ctx context.Context, uid types.UID, container *v1.Container, probeSpec *v1.Probe, pt probeType, successThreshold, failureThreshold int) {
-	p.mu.RLock()
-	tp, exists := p.pods[uid]
-	if !exists {
-		p.mu.RUnlock()
-		return
-	}
-	podName := tp.pod.Name
-	p.mu.RUnlock()
+// RunInContainer executes a command in the sandbox container that shares
+// the pod's network namespace. The upstream prober passes the app container ID,
+// but we resolve it to the sandbox for network probes.
+func (c *CommandRunnerImpl) RunInContainer(ctx context.Context, id container.ContainerID, cmd []string, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	// If this is a readiness or liveness probe, check that startup probe passed first
-	if pt == probeReadiness || pt == probeLiveness {
-		if container.StartupProbe != nil {
-			p.mu.RLock()
-			startupKey := resultKey{uid, container.Name, probeStartup}
-			startupResult, ok := p.results[startupKey]
-			startupPassed := ok && startupResult.success
-			p.mu.RUnlock()
-			if !startupPassed {
-				return // startup probe hasn't passed yet
-			}
-		}
+	// Resolve the sandbox for this container's pod
+	sandboxID, err := c.resolveSandboxForContainer(ctx, id.ID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sandbox: %w", err)
 	}
 
-	result := p.executeProbe(ctx, probeSpec, container, uid, podName)
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	key := resultKey{uid, container.Name, pt}
-	rs, ok := p.results[key]
-	if !ok {
-		rs = &resultState{}
-		p.results[key] = rs
+	stdout, stderr, err := c.backend.containers.ExecSync(ctx, sandboxID, cmd, timeout)
+	if err != nil {
+		return append(stdout, stderr...), err
 	}
-
-	succeeded := result == probe.Success || result == probe.Warning
-	if succeeded {
-		if rs.success {
-			rs.runCount++
-		} else {
-			rs.runCount = 1
-		}
-		if rs.runCount >= successThreshold {
-			rs.success = true
-		}
-	} else {
-		if !rs.success {
-			rs.runCount++
-		} else {
-			rs.runCount = 1
-		}
-		if rs.runCount >= failureThreshold {
-			if rs.success {
-				p.log.Info().
-					Str("pod", podName).
-					Str("container", container.Name).
-					Str("probe", pt.String()).
-					Msg("probe failed")
-			}
-			rs.success = false
-		}
-	}
+	return stdout, nil
 }
 
-// resolveSandboxID finds the running sandbox container ID for a given pod UID.
-// Probes exec into the sandbox (busybox) rather than the app container, so
-// probe tooling doesn't depend on the app image contents.
-func (p *ProberImpl) resolveSandboxID(ctx context.Context, podUID types.UID) (string, error) {
-	if p.backend == nil {
-		return "", fmt.Errorf("no CRI backend available")
+// resolveSandboxForContainer finds the sandbox container that shares the network
+// namespace with the given app container, using cached lookups.
+func (c *CommandRunnerImpl) resolveSandboxForContainer(ctx context.Context, containerID string) (string, error) {
+	// Check cache first
+	if sandboxID, ok := c.sandboxes.Load(containerID); ok {
+		return sandboxID.(string), nil
 	}
-	sandboxes, err := p.backend.containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{
+
+	// Look up the container to find its pod UID
+	resp, err := c.backend.containers.ContainerStatus(ctx, containerID, false)
+	if err != nil {
+		return "", fmt.Errorf("container status: %w", err)
+	}
+	podUID := resp.Status.Labels[c.backend.Labels().UIDKey()]
+	if podUID == "" {
+		return "", fmt.Errorf("no pod UID label on container %s", containerID)
+	}
+
+	// Find the sandbox for this pod
+	sandboxes, err := c.backend.containers.ListPodSandbox(ctx, &runtimeapi.PodSandboxFilter{
 		State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY},
 		LabelSelector: map[string]string{
-			p.backend.Labels().UIDKey(): string(podUID),
+			c.backend.Labels().UIDKey(): podUID,
 		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("list sandboxes: %w", err)
 	}
 	if len(sandboxes) == 0 {
-		return "", fmt.Errorf("no ready sandbox found for %s", podUID)
+		return "", fmt.Errorf("no ready sandbox for pod %s", podUID)
 	}
-	return sandboxes[0].Id, nil
+
+	sandboxID := sandboxes[0].Id
+	c.sandboxes.Store(containerID, sandboxID)
+	return sandboxID, nil
 }
 
-// resolveContainerID finds the running container ID for a given pod UID and
-// container name by querying the CRI backend with label selectors.
-func (p *ProberImpl) resolveContainerID(ctx context.Context, podUID types.UID, containerName string) (string, error) {
-	if p.backend == nil {
-		return "", fmt.Errorf("no CRI backend available")
-	}
-	state := runtimeapi.ContainerState_CONTAINER_RUNNING
-	containers, err := p.backend.containers.ListContainers(ctx, &runtimeapi.ContainerFilter{
-		State: &runtimeapi.ContainerStateValue{State: state},
-		LabelSelector: map[string]string{
-			p.backend.Labels().UIDKey():  string(podUID),
-			p.backend.Labels().NameKey(): containerName,
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("list containers: %w", err)
-	}
-	if len(containers) == 0 {
-		return "", fmt.Errorf("no running container found for %s/%s", podUID, containerName)
-	}
-	return containers[0].Id, nil
-}
-
-func (p *ProberImpl) executeProbe(ctx context.Context, probeSpec *v1.Probe, container *v1.Container, podUID types.UID, podName string) probe.Result {
-	handler := probeSpec.ProbeHandler
-	timeout := time.Duration(probeSpec.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 1 * time.Second
-	}
-	timeoutSec := int(timeout.Seconds())
-	if timeoutSec <= 0 {
-		timeoutSec = 1
-	}
-
-	var cmd []string
-	var execTarget string // container ID to exec into
-
-	switch {
-	case handler.Exec != nil:
-		// Exec probes run in the app container per Kubernetes spec
-		containerID, err := p.resolveContainerID(ctx, podUID, container.Name)
-		if err != nil {
-			p.log.Info().Err(err).Str("pod", podName).Str("container", container.Name).Msg("resolve container for exec probe")
-			return probe.Failure
-		}
-		execTarget = containerID
-		cmd = handler.Exec.Command
-
-	case handler.HTTPGet != nil, handler.TCPSocket != nil, handler.GRPC != nil:
-		// HTTP/TCP/GRPC probes exec into the sandbox (busybox) which shares
-		// the pod network namespace and always has wget/nc available.
-		sandboxID, err := p.resolveSandboxID(ctx, podUID)
-		if err != nil {
-			p.log.Info().Err(err).Str("pod", podName).Msg("resolve sandbox for probe")
-			return probe.Failure
-		}
-		execTarget = sandboxID
-
-		if handler.HTTPGet != nil {
-			scheme := "http"
-			if handler.HTTPGet.Scheme == v1.URISchemeHTTPS {
-				scheme = "https"
-			}
-			port := handler.HTTPGet.Port.IntValue()
-			if port == 0 {
-				port, err = probe.ResolveContainerPort(handler.HTTPGet.Port, container)
-				if err != nil {
-					p.log.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("http probe port error")
-					return probe.Failure
-				}
-			}
-			path := handler.HTTPGet.Path
-			if path == "" {
-				path = "/"
-			}
-			url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
-			cmd = []string{"wget", "-q", "-O", "/dev/null", "-S", fmt.Sprintf("--timeout=%d", timeoutSec)}
-			if host := handler.HTTPGet.Host; host != "" {
-				cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
-			}
-			for _, h := range handler.HTTPGet.HTTPHeaders {
-				cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
-			}
-			cmd = append(cmd, url)
-		} else if handler.TCPSocket != nil {
-			port, err := probe.ResolveContainerPort(handler.TCPSocket.Port, container)
-			if err != nil {
-				p.log.Warn().Err(err).Str("pod", podName).Str("container", container.Name).Msg("tcp probe port error")
-				return probe.Failure
-			}
-			cmd = []string{"nc", "-z", fmt.Sprintf("-w%d", timeoutSec), "localhost", fmt.Sprintf("%d", port)}
-		} else {
-			// GRPC: TCP connect fallback (does not speak the GRPC health protocol)
-			cmd = []string{"nc", "-z", fmt.Sprintf("-w%d", timeoutSec), "localhost", fmt.Sprintf("%d", handler.GRPC.Port)}
-		}
-
-	default:
-		p.log.Warn().Str("pod", podName).Str("container", container.Name).Msg("unknown probe handler")
-		return probe.Failure
-	}
-
-	stdout, stderr, execErr := p.backend.containers.ExecSync(ctx, execTarget, cmd, timeout)
-	if execErr != nil {
-		p.log.Info().
-			Err(execErr).
-			Str("pod", podName).
-			Str("container", container.Name).
-			Str("stdout", truncate(string(stdout), 200)).
-			Str("stderr", truncate(string(stderr), 200)).
-			Msg("probe exec failed")
-		return probe.Failure
-	}
-	p.log.Info().Str("pod", podName).Str("container", container.Name).Msg("probe exec succeeded")
-	return probe.Success
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}
-
-var _ prober.Manager = &ProberImpl{}
+var (
+	_ prober.Manager          = &ProberImpl{}
+	_ container.CommandRunner = &CommandRunnerImpl{}
+)
