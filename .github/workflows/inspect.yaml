@@ -48,24 +48,59 @@ jobs:
   #     - run: ifconfig
   #     - run: netstat -rn
 
-  setup-docker:
+  # setup-docker:
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       runner:
+  #         - ubuntu-24.04
+  #         - ubuntu-24.04-arm
+  #         - macos-26
+  #         - macos-26-intel
+  #       runtime:
+  #         - docker
+  #         - podman
+  #   runs-on: ${{ matrix.runner }}
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/setup-docker
+  #       with:
+  #         runtime: ${{ matrix.runtime }}
+
+  docker-dns:
     strategy:
       fail-fast: false
       matrix:
         runner:
           - ubuntu-24.04
-          - ubuntu-24.04-arm
-          - macos-26
           - macos-26-intel
         runtime:
           - docker
-          - podman
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
+
+      - run: cat /etc/resolv.conf
+      - run: cat /etc/hosts
+      - run: cat /etc/hostname
+      - run: hostname
+      - run: dig google.com
+
       - uses: ./.github/actions/setup-docker
         with:
           runtime: ${{ matrix.runtime }}
+
+      - run: docker run --rm cnuss/dev cat /etc/resolv.conf
+      - run: docker run --rm cnuss/dev cat /etc/hosts
+      - run: docker run --rm cnuss/dev cat /etc/hostname
+      - run: docker run --rm cnuss/dev hostname
+      - run: docker run --rm cnuss/dev dig google.com
+
+      - run: docker run --rm --net=host cnuss/dev cat /etc/resolv.conf
+      - run: docker run --rm --net=host cnuss/dev cat /etc/hosts
+      - run: docker run --rm --net=host cnuss/dev cat /etc/hostname
+      - run: docker run --rm --net=host cnuss/dev hostname
+      - run: docker run --rm --net=host cnuss/dev dig google.com
 
   # macos-containers:
   #   strategy:
