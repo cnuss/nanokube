@@ -92,21 +92,20 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 		case <-ctx.Done():
 			return
 		case <-c.backend.nodeReady:
-		}
-
-		c.log.Info().Msg("node ready, creating registration socket")
-		os.Remove(c.regEndpoint)
-		regLis, err := net.Listen("unix", c.regEndpoint)
-		if err != nil {
-			c.log.Error().Err(err).Msg("CSI registration listen failed")
-			return
-		}
-		c.regSrv = grpc.NewServer()
-		pluginreg.RegisterRegistrationServer(c.regSrv, c)
-		c.log.Info().Str("socket", c.regEndpoint).Msg("CSI registration serving")
-		if err := c.regSrv.Serve(regLis); err != nil {
+			c.log.Info().Msg("node ready, creating registration socket")
 			os.Remove(c.regEndpoint)
-			c.log.Error().Err(err).Msg("CSI registration exited")
+			regLis, err := net.Listen("unix", c.regEndpoint)
+			if err != nil {
+				c.log.Error().Err(err).Msg("CSI registration listen failed")
+				return
+			}
+			c.regSrv = grpc.NewServer()
+			pluginreg.RegisterRegistrationServer(c.regSrv, c)
+			c.log.Info().Str("socket", c.regEndpoint).Msg("CSI registration serving")
+			if err := c.regSrv.Serve(regLis); err != nil {
+				os.Remove(c.regEndpoint)
+				c.log.Error().Err(err).Msg("CSI registration exited")
+			}
 		}
 	}()
 

@@ -397,7 +397,7 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 			return nil, component.WrapErr(s.log, err)
 		}
 		if sandboxID := s.backend.labels.ParentUID(inspect.Config.Labels); sandboxID != "" {
-			s.log.Debug().Str("container", id).Str("sandbox", sandboxID).Strs("cmd", cmd).Msg("routing probe to sandbox")
+			s.log.Info().Str("container", id).Str("sandbox", sandboxID).Strs("cmd", cmd).Msg("routing probe to sandbox")
 			id = sandboxID
 		}
 	}

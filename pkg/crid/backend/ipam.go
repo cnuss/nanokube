@@ -12,7 +12,7 @@ import (
 
 var (
 	// SubnetSize is the CIDR prefix length for per-pod networks.
-	SubnetSize = 30
+	SubnetSize = 28
 	// StaticSubnetSize is the CIDR prefix length for the static service network.
 	StaticSubnetSize = 28
 )
