@@ -35,6 +35,9 @@ type Kubelet struct {
 	log          component.Logger
 	featureGates map[string]bool
 
+	name     string
+	nameOnce sync.Once
+
 	flags     *options.KubeletFlags
 	flagsOnce sync.Once
 
@@ -58,16 +61,24 @@ func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
 	return k
 }
 
+func (k *Kubelet) Name() string {
+	k.nameOnce.Do(func() {
+		k.log.Info().Msg("initializing name")
+		hostInfo, _ := k.crid.DefaultBackend().HostInfo()
+		k.name = hostInfo.HostnameOverride()
+	})
+	return k.name
+}
+
 func (k *Kubelet) Flags() *options.KubeletFlags {
 	k.flagsOnce.Do(func() {
 		k.log.Info().Msg("initializing flags")
-		hostInfo, _ := k.crid.DefaultBackend().HostInfo()
 		dataDirs := k.crid.DataDirs()
 
 		k.flags = options.NewKubeletFlags()
 		k.flags.RootDirectory = dataDirs.Root
 		k.flags.CertDirectory = dataDirs.PKI
-		k.flags.HostnameOverride = hostInfo.Hostname
+		k.flags.HostnameOverride = k.Name()
 		k.flags.MaxContainerCount = 100
 		k.flags.MaxPerPodContainerCount = 2
 		k.flags.NodeLabels = map[string]string{} // TODO: Probe
@@ -181,38 +192,38 @@ func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
 	return k.Clients().Heartbeat
 }
 
-func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
-	// Mark node NotReady before shutdown so the next startup emits a
-	// NodeReady event, which triggers CSI driver registration.
-	if client := k.clients.Standard; client != nil {
-		nodeName := k.crid.Hosts().Hostname()
-		k.log.Info().Str("node", nodeName).Msg("marking node not ready")
+func (k *Kubelet) SetNotReady(ctx context.Context, reason, message string) {
+	k.log.Info().Str("node", k.Name()).Msg("marking node not ready")
 
-		node := &v1.Node{
-			Spec: v1.NodeSpec{
-				Taints: []v1.Taint{{
-					Key:    "node.kubernetes.io/not-ready",
-					Effect: v1.TaintEffectNoSchedule,
-				}},
-			},
-			Status: v1.NodeStatus{
-				Conditions: []v1.NodeCondition{{
-					Type:    v1.NodeReady,
-					Status:  v1.ConditionFalse,
-					Reason:  "NodeShutdown",
-					Message: "Node is shutting down",
-				}},
-			},
+	node := &v1.Node{
+		Spec: v1.NodeSpec{
+			Taints: []v1.Taint{{
+				Key:    "node.kubernetes.io/not-ready",
+				Effect: v1.TaintEffectNoSchedule,
+			}},
+		},
+		Status: v1.NodeStatus{
+			Conditions: []v1.NodeCondition{{
+				Type:    v1.NodeReady,
+				Status:  v1.ConditionFalse,
+				Reason:  reason,
+				Message: message,
+			}},
+		},
+	}
+	if data, err := json.Marshal(node); err == nil {
+		if _, err := k.KubeClient().CoreV1().Nodes().Patch(ctx, k.Name(), types.MergePatchType, data, metav1.PatchOptions{}, "status"); err != nil {
+			k.log.Warn().Err(err).Msg("failed to patch node status")
 		}
-		if data, err := json.Marshal(node); err == nil {
-			if _, err := client.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, data, metav1.PatchOptions{}, "status"); err != nil {
-				k.log.Warn().Err(err).Msg("failed to patch node status")
-			}
-			if _, err := client.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
-				k.log.Warn().Err(err).Msg("failed to taint node")
-			}
+		if _, err := k.KubeClient().CoreV1().Nodes().Patch(ctx, k.Name(), types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
+			k.log.Warn().Err(err).Msg("failed to taint node")
 		}
 	}
+}
+
+func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
+	k.log.Info().Msg("stopping kubelet")
+	k.SetNotReady(ctx, "Stopping", "Kubelet is stopping")
 
 	if k.deps != nil && k.deps.PodConfig != nil {
 		k.log.Info().Msg("closing pod config updates channel")

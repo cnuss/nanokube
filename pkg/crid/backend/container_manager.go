@@ -402,11 +402,6 @@ func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.P
 	hosts := p.backend.Hosts()
 	p.log.Info().Any("attrs", attrs).Any("hosts", hosts.Entries(p.backend.Context(), NetworkBridge)).Msg("admitting pod")
 
-	// Sanitize pod name — replace dots with hyphens for DNS compatibility
-	if strings.Contains(pod.Name, ".") {
-		pod.Name = strings.ReplaceAll(pod.Name, ".", "-")
-	}
-
 	if h := p.backend.Hosts(); h != nil {
 		network := NetworkBridge
 		if pod.Spec.HostNetwork {

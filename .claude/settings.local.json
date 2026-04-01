@@ -54,7 +54,11 @@
       "Bash(tee /tmp/apptainer-docker-oci.html)",
       "Bash(tee /tmp/apptainer-security.html)",
       "Bash(tee /tmp/apptainer-install.html)",
-      "Bash(tee /tmp/apptainer-oci-runtime.html)"
+      "Bash(tee /tmp/apptainer-oci-runtime.html)",
+      "Bash(tee /tmp/docker-mac-install.log)",
+      "Bash(tee /tmp/docker-settings-mgmt.log)",
+      "Bash(tee /tmp/docker-desktop-cli.log)",
+      "Bash(kubectl:*)"
     ]
   }
 }

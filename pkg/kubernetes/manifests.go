@@ -41,6 +41,7 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(kubeSystemManifest), 4096).Decode(pod); err != nil {
 		return nil, fmt.Errorf("parse kube-system manifest: %w", err)
 	}
+	pod.Name = m.crid.Name()
 
 	svc := m.crid.DefaultBackend().IPAM().Service()
 	envOverrides := map[string]string{

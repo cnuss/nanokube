@@ -82,11 +82,11 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 		}, true, cb)
 	}
 
-	if err := run([]string{"cat", "/proc/cpuinfo"}, func(out string) error {
-		h.WithCpuInfo(out)
+	if err := run([]string{"cat", "/etc/hostname"}, func(out string) error {
+		h.WithHostname(strings.TrimSpace(out))
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("failed to probe cpuinfo: %w", err)
+		return nil, fmt.Errorf("failed to probe hostname: %w", err)
 	}
 
 	if err := run([]string{"cat", "/etc/machine-id"}, func(out string) error {
@@ -95,6 +95,13 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	}); err != nil {
 		// Not available on all platforms (e.g. macOS); fall back to empty
 		h.WithMachineID("")
+	}
+
+	if err := run([]string{"cat", "/proc/cpuinfo"}, func(out string) error {
+		h.WithCpuInfo(out)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to probe cpuinfo: %w", err)
 	}
 
 	if err := run([]string{"cat", "/proc/sys/kernel/random/boot_id"}, func(out string) error {
@@ -149,6 +156,10 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	}
 
 	return h, nil
+}
+
+func (h *HostInfo) HostnameOverride() string {
+	return fmt.Sprintf("%s-%s", h.Hostname, h.MachineID)
 }
 
 // MemInfo fetches current memory information by probing /proc/meminfo.
@@ -263,6 +274,13 @@ func (h *HostInfo) CpuUsage() (uint64, error) {
 		return fmt.Errorf("/proc/stat: no cpu line found")
 	})
 	return totalNs, err
+}
+
+func (h *HostInfo) WithHostname(hostname string) *HostInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Hostname = hostname
+	return h
 }
 
 func (h *HostInfo) WithMachineID(machineID string) *HostInfo {
