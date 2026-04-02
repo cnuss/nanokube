@@ -1,0 +1,71 @@
+name: Build
+
+on:
+  workflow_call:
+    outputs:
+      artifacts:
+        description: "JSON map of runner -> artifact name"
+        value: ${{ jobs.collect.outputs.artifacts }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-26-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/bin
+          key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
+
+      - run: make build
+
+      - id: platform
+        run: |
+          NAME="nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)"
+          mv nanokube $NAME
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.platform.outputs.name }}
+          path: ${{ steps.platform.outputs.name }}
+
+      - run: echo '{"runner":"${{ matrix.runner }}","artifact":"${{ steps.platform.outputs.name }}"}' > build-meta-${{ matrix.runner }}.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-meta-${{ matrix.runner }}
+          path: build-meta-${{ matrix.runner }}.json
+
+  collect:
+    outputs:
+      artifacts: ${{ steps.artifacts.outputs.map }}
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-meta-*
+          path: meta
+          merge-multiple: true
+
+      - id: artifacts
+        run: |
+          map=$(jq -sc 'reduce .[] as $item ({}; . + {($item.runner): $item.artifact})' meta/*.json)
+          echo "map=$map" >> "$GITHUB_OUTPUT"

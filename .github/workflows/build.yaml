@@ -17,43 +17,7 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner:
-          - ubuntu-24.04
-          - ubuntu-24.04-arm
-          - macos-26
-          - macos-26-intel
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - uses: actions/cache@v5
-        with:
-          path: ~/go/bin
-          key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
-
-      - run: make init
-
-      - run: make build
-
-      - id: platform
-        run: echo "name=nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)" >> "$GITHUB_OUTPUT"
-
-      - run: mv nanokube ${{ steps.platform.outputs.name }}
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.platform.outputs.name }}
-          path: ${{ steps.platform.outputs.name }}
+    uses: ./.github/calls/.build.yaml
 
   release:
     needs: build
@@ -64,6 +28,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: nanokube-*
           path: artifacts
           merge-multiple: true
 

@@ -16,25 +16,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runner:
-          - ubuntu-24.04
-          - macos-26-intel
-        suite:
-          - e2e
-          - critest
-          - smoke
-        runtime: [docker]
-    steps:
-      - name: Resolve env
-        run: |
-          echo "NANOKUBE_DATA=$HOME/.nanokube-${{ matrix.suite }}" >> "$GITHUB_ENV"
-          echo "MATRIX_HASH=$(echo -n '${{ toJSON(matrix) }}' | sha256sum | cut -c1-8)" >> "$GITHUB_ENV"
+  build:
+    uses: ./.github/calls/.build.yaml
 
+  smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      ARTIFACT: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
+    steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
@@ -44,20 +34,80 @@ jobs:
         with:
           verbose: true
 
-      - uses: actions/setup-go@v6
+      - uses: actions/download-artifact@v4
         with:
-          go-version-file: go.mod
+          name: ${{ env.ARTIFACT }}
 
-      - uses: actions/cache@v5
-        with:
-          path: ~/go/bin
-          key: go-bin-${{ matrix.runner }}-${{ hashFiles('**/go.sum') }}
 
-      - run: make init
-      - run: make ${{ matrix.suite }}
+      - run: make smoke ARTIFACT=${{ env.ARTIFACT }}
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: nanokube-log-${{ env.MATRIX_HASH }}
-          path: ${{ env.NANOKUBE_DATA }}/log
+          name: nanokube-log-smoke
+          path: ~/.nanokube-smoke/log
+
+  conformance:
+    needs: [build, smoke]
+    runs-on: ubuntu-24.04
+    env:
+      ARTIFACT: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [critest, e2e]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: ./.github/actions/setup-docker
+        with:
+          verbose: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+
+
+      - run: make ${{ matrix.suite }} ARTIFACT=${{ env.ARTIFACT }}
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: nanokube-log-${{ matrix.suite }}
+          path: ~/.nanokube-${{ matrix.suite }}/log
+
+  cross-platform:
+    needs: [build, conformance]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04-arm
+          - macos-26-intel
+        suite: [smoke, critest, e2e]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: ./.github/actions/setup-docker
+        with:
+          verbose: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+
+
+      - run: make ${{ matrix.suite }} ARTIFACT=${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: nanokube-log-${{ matrix.runner }}-${{ matrix.suite }}
+          path: ~/.nanokube-${{ matrix.suite }}/log

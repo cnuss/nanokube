@@ -15,7 +15,7 @@ Makefile: ;
 
 else
 
-.PHONY: build clean test submodules run run-clean fmt critest init e2e smoke patch patch-save reviewable
+.PHONY: build clean test submodules run run-clean fmt critest e2e smoke patch patch-save reviewable
 
 KUBE_VERSION := $(shell grep 'k8s.io/kubernetes v' go.mod | head -1 | awk '{print $$2}')
 KUBE_MAJOR := $(word 1,$(subst ., ,$(KUBE_VERSION:v%=%)))
@@ -37,9 +37,17 @@ patch-save:
 	@cd kubernetes && git diff > ../patches/kubernetes.patch
 	@echo "Patch saved to patches/kubernetes.patch"
 
+ARTIFACT ?=
+
+ifdef ARTIFACT
+build:
+	mv $(ARTIFACT) nanokube
+	chmod +x nanokube
+else
 build: patch
 	CGO_ENABLED=0 go build -ldflags="-s -w $(VERSION_LDFLAGS)" -o nanokube .
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
+endif
 
 clean:
 	@rm -f nanokube; true
@@ -66,8 +74,6 @@ run: fmt build
 run-clean: ARGS += --clean
 run-clean: run
 
-init:
-	cd tests && make install-chainsaw
 
 WHAT ?=
 CRITEST_SKIP ?= Mount Propagation|Mount Readonly|AppArmor
