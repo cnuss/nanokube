@@ -85,8 +85,8 @@ jobs:
       - run: cat /etc/hostname || true
       - run: hostname
       - run: hostname -s
-      - run: ping -c 1 hostname || true
-      - run: ping -c 1 hostname -s || true
+      - run: sh -c "ping -c 1 $(hostname)" || true
+      - run: sh -c "ping -c 1 $(hostname -s)" || true
       - run: dig google.com
 
       - uses: ./.github/actions/setup-docker
@@ -103,8 +103,8 @@ jobs:
       - run: docker exec dns-test cat /etc/hostname || true
       - run: docker exec dns-test hostname
       - run: docker exec dns-test hostname -s
-      - run: docker exec dns-test ping -c 1 hostname || true
-      - run: docker exec dns-test ping -c 1 hostname -s || true
+      - run: docker exec dns-test sh -c 'ping -c 1 $(hostname)' || true
+      - run: docker exec dns-test sh -c 'ping -c 1 $(hostname -s)' || true
       - run: docker exec dns-test dig google.com
       - run: docker rm -f dns-test
 
@@ -118,8 +118,8 @@ jobs:
       - run: docker exec dns-test cat /etc/hostname || true
       - run: docker exec dns-test hostname
       - run: docker exec dns-test hostname -s
-      - run: docker exec dns-test ping -c 1 hostname || true
-      - run: docker exec dns-test ping -c 1 hostname -s || true
+      - run: docker exec dns-test sh -c 'ping -c 1 $(hostname)' || true
+      - run: docker exec dns-test sh -c 'ping -c 1 $(hostname -s)' || true
       - run: docker exec dns-test dig google.com
       - run: docker rm -f dns-test
 
