@@ -44,7 +44,7 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 	cfg.InitialCluster = "default=" + peerURL.String()
 
 	// Restart: if WAL exists, this is an existing cluster
-	if _, err := os.Stat(filepath.Join(e.dataDir, "member", "wal")); err == nil {
+	if _, err := os.Stat(filepath.Join(e.dataDir, "etcd", "member", "wal")); err == nil {
 		cfg.ClusterState = embed.ClusterStateFlagExisting
 	}
 

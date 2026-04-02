@@ -192,8 +192,7 @@ func (c *CRID) Kubeconfig() string {
 		// Merge into ~/.kube/config
 		recommendedPath := clientcmd.RecommendedHomeFile
 		dst, err := clientcmd.LoadFromFile(recommendedPath)
-		if err == nil {
-			c.log.Warn().Err(err).Msg("creating new kubeconfig")
+		if err != nil {
 			dst = clientcmdapi.NewConfig()
 		}
 		dst.Clusters[c.name] = cfg.Clusters[c.name]
