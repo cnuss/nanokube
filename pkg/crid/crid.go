@@ -155,7 +155,6 @@ func (c *CRID) DataDir() string          { return c.dataDir }
 func (c *CRID) DataDirs() config.DataDirs {
 	c.dataDirsOnce.Do(func() {
 		c.dataDirs = config.NewDataDirs(c.name, c.dataDir)
-		c.dataDir = c.dataDirs.Root
 	})
 	return c.dataDirs
 }
@@ -193,7 +192,8 @@ func (c *CRID) Kubeconfig() string {
 		// Merge into ~/.kube/config
 		recommendedPath := clientcmd.RecommendedHomeFile
 		dst, err := clientcmd.LoadFromFile(recommendedPath)
-		if err != nil {
+		if err == nil {
+			c.log.Warn().Err(err).Msg("creating new kubeconfig")
 			dst = clientcmdapi.NewConfig()
 		}
 		dst.Clusters[c.name] = cfg.Clusters[c.name]

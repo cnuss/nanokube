@@ -46,13 +46,12 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	svc := m.crid.DefaultBackend().IPAM().Service()
 	envOverrides := map[string]string{
 		"ADVERTISE_ADDRESS":        svc.IP.String(),
+		"HOSTNAME":                 m.crid.Hosts().Hostname(),
 		"SERVICE_CLUSTER_IP_RANGE": svc.Net.String(),
 	}
 
 	for i, c := range pod.Spec.Containers {
-		if pod.Spec.Containers[i].Name == "api" || pod.Spec.Containers[i].Name == "controller" || pod.Spec.Containers[i].Name == "scheduler" {
-			pod.Spec.Containers[i].Image = c.Image + ":" + version
-		}
+		pod.Spec.Containers[i].Image = c.Image + ":" + version
 		for j, env := range c.Env {
 			if val, ok := envOverrides[env.Name]; ok {
 				pod.Spec.Containers[i].Env[j].Value = val
@@ -67,8 +66,6 @@ func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 		switch vol.Name {
 		case "etc-kubernetes":
 			pod.Spec.Volumes[i].HostPath.Path = m.crid.DataDir()
-		case "var-lib-etcd":
-			pod.Spec.Volumes[i].HostPath.Path = m.crid.DataDirs().Etcd
 		}
 	}
 

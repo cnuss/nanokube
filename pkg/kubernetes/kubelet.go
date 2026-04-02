@@ -51,14 +51,12 @@ type Kubelet struct {
 }
 
 func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
-	k := &Kubelet{
+	return &Kubelet{
 		ctx:          crid.Context(),
 		crid:         crid,
 		featureGates: featureGates,
 		log:          component.NewLogger("kubelet"),
 	}
-	go k.Clients()
-	return k
 }
 
 func (k *Kubelet) Name() string {
@@ -76,7 +74,7 @@ func (k *Kubelet) Flags() *options.KubeletFlags {
 		dataDirs := k.crid.DataDirs()
 
 		k.flags = options.NewKubeletFlags()
-		k.flags.RootDirectory = dataDirs.Root
+		k.flags.RootDirectory = dataDirs.Kubelet
 		k.flags.CertDirectory = dataDirs.PKI
 		k.flags.HostnameOverride = k.Name()
 		k.flags.MaxContainerCount = 100
@@ -245,6 +243,7 @@ func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	k.log.Info().Msg("starting kubelet")
+	go k.Clients()
 
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(

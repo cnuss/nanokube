@@ -58,7 +58,13 @@
       "Bash(tee /tmp/docker-mac-install.log)",
       "Bash(tee /tmp/docker-settings-mgmt.log)",
       "Bash(tee /tmp/docker-desktop-cli.log)",
-      "Bash(kubectl:*)"
+      "Bash(kubectl:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Read(//home/vscode/.nanokube/**)",
+      "Read(//home/vscode/**)",
+      "Bash(ls:*)",
+      "Bash(go doc:*)"
     ]
   }
 }

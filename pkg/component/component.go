@@ -14,8 +14,10 @@ import (
 
 var rootLog = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}).With().Timestamp().Logger()
 
-type Started <-chan struct{}
-type Stopped <-chan struct{}
+type (
+	Started <-chan struct{}
+	Stopped <-chan struct{}
+)
 
 // Component is the lifecycle interface for nanokube subsystems.
 type Component interface {
@@ -54,10 +56,10 @@ func Setup(cmd *cobra.Command) (*cobra.Command, zerolog.Logger, func()) {
 	if clean {
 		os.RemoveAll(dataDir)
 	}
-	os.MkdirAll(dataDir, 0755)
+	os.MkdirAll(dataDir, 0o755)
 
 	// Set up log file mirroring — all output (zerolog + klog + etcd) goes to disk
-	logFile, err := os.OpenFile(filepath.Join(dataDir, "log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	logFile, err := os.OpenFile(filepath.Join(dataDir, "log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return cmd, rootLog, func() {}
 	}

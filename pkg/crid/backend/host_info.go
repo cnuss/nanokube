@@ -159,7 +159,10 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 }
 
 func (h *HostInfo) HostnameOverride() string {
-	return fmt.Sprintf("%s-%s", h.Hostname, h.MachineID)
+	if h.MachineID != "" {
+		return fmt.Sprintf("%s-%s", h.Hostname, h.MachineID)
+	}
+	return h.Hostname
 }
 
 // MemInfo fetches current memory information by probing /proc/meminfo.

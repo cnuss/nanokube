@@ -4,6 +4,8 @@
   },
   "git.ignoredRepositories": [
     "cri-tools",
-    "kubernetes"
-  ]
+    "kubernetes",
+    "tests"
+  ],
+  "explorer.openEditors.visible": 10
 }

@@ -4,32 +4,27 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
-	"go.etcd.io/etcd/client/pkg/v3/transport"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 var logger = component.NewLogger("etcd")
 
 type Etcd struct {
-	certs     *config.Certs
-	dataDir   string
-	verbosity int
-	server    *embed.Etcd
+	certs   *config.Certs
+	dataDir string
+	server  *embed.Etcd
 }
 
-func NewEtcd(certs *config.Certs, dataDir string, verbosity int) *Etcd {
+func NewEtcd(certs *config.Certs, dataDir string) *Etcd {
 	return &Etcd{
-		certs:     certs,
-		dataDir:   dataDir,
-		verbosity: verbosity,
+		certs:   certs,
+		dataDir: filepath.Join(dataDir, "etcd"),
 	}
 }
 
@@ -37,22 +32,9 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 	logger.Info().Str("dataDir", e.dataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
-	cfg.Dir = filepath.Join(e.dataDir, "etcd")
+	cfg.Dir = e.dataDir
 
-	if e.verbosity > 0 {
-		cfg.LogLevel = "info"
-	} else {
-		cfg.LogLevel = "error"
-		zapCfg := zap.NewProductionConfig()
-		zapCfg.Level = zap.NewAtomicLevelAt(zapcore.PanicLevel)
-		logger, err := zapCfg.Build()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create logger: %w", err)
-		}
-		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(logger)
-	}
-
-	clientURL, _ := url.Parse("https://127.0.0.1:2379")
+	clientURL, _ := url.Parse("https://0.0.0.0:2379")
 	peerURL, _ := url.Parse("https://127.0.0.1:2380")
 
 	cfg.ListenClientUrls = []url.URL{*clientURL}
@@ -60,21 +42,21 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 	cfg.ListenPeerUrls = []url.URL{*peerURL}
 	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
 	cfg.InitialCluster = "default=" + peerURL.String()
+
+	// Restart: if WAL exists, this is an existing cluster
+	if _, err := os.Stat(filepath.Join(e.dataDir, "member", "wal")); err == nil {
+		cfg.ClusterState = embed.ClusterStateFlagExisting
+	}
+
+	cfg.ClientTLSInfo.CertFile = e.certs.CertPath()
+	cfg.ClientTLSInfo.KeyFile = e.certs.KeyPath()
+	cfg.ClientTLSInfo.TrustedCAFile = e.certs.CertPath()
+	cfg.PeerTLSInfo.CertFile = e.certs.CertPath()
+	cfg.PeerTLSInfo.KeyFile = e.certs.KeyPath()
+	cfg.PeerTLSInfo.TrustedCAFile = e.certs.CertPath()
+
 	cfg.AutoCompactionRetention = "0"
-
-	// Client TLS
-	cfg.ClientTLSInfo = transport.TLSInfo{
-		CertFile:      e.certs.CertPath(),
-		KeyFile:       e.certs.KeyPath(),
-		TrustedCAFile: e.certs.CertPath(),
-	}
-
-	// Peer TLS
-	cfg.PeerTLSInfo = transport.TLSInfo{
-		CertFile:      e.certs.CertPath(),
-		KeyFile:       e.certs.KeyPath(),
-		TrustedCAFile: e.certs.CertPath(),
-	}
+	cfg.LogLevel = "fatal"
 
 	var err error
 	e.server, err = embed.StartEtcd(cfg)
@@ -84,52 +66,22 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 
 	select {
 	case <-e.server.Server.ReadyNotify():
-		logger.Info().Msg("etcd server ready")
+		logger.Info().Msg("etcd ready")
+	case <-time.After(30 * time.Second):
+		e.server.Close()
+		return nil, fmt.Errorf("etcd took too long to start")
 	case <-ctx.Done():
+		e.server.Close()
 		return nil, ctx.Err()
 	}
 
-	// Wait for client connectivity
-	tlsInfo := transport.TLSInfo{
-		CertFile:      e.certs.CertPath(),
-		KeyFile:       e.certs.KeyPath(),
-		TrustedCAFile: e.certs.CertPath(),
-	}
-	tlsConfig, err := tlsInfo.ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create tls config: %w", err)
-	}
-
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"https://127.0.0.1:2379"},
-		TLS:         tlsConfig,
-		DialTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create etcd client: %w", err)
-	}
-	defer client.Close()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
-			_, err := client.Get(ctxTimeout, "health")
-			cancel()
-			if err == nil {
-				logger.Info().Msg("etcd is ready")
-				return component.Ready(), nil
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
+	return component.Ready(), nil
 }
 
 func (e *Etcd) Stop(ctx context.Context) component.Stopped {
-	// Don't call e.server.Close() — etcd runs in-process and exits with us.
-	// Closing it before K8s gRPC clients fully drain causes a flood of
-	// "connection refused" retries from orphaned channels.
+	logger.Info().Msg("stopping etcd")
+	if e.server != nil {
+		e.server.Close()
+	}
 	return component.Done()
 }

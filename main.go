@@ -12,6 +12,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid"
+	"github.com/cnuss/nanokube/pkg/etcd"
 	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -41,19 +42,14 @@ var rootCmd = &cobra.Command{
 		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
 		log.Debug().Msg("debug logging enabled")
 
-		cr := crid.NewCRID(sigCtx, options.Name, options.DataDir, options.Clean)
+		crid := crid.NewCRID(sigCtx, options.Name, options.DataDir, options.Clean)
+		etcd := etcd.NewEtcd(crid.Certs(), crid.DataDirs().Etcd)
+		manifests := kubernetes.NewManifests(crid)
 
-		components := []component.Component{
-			cr,
-			// etcd.NewEtcd(cr.Certs(), cr.DataDir(), options.Verbosity),
-			// kubernetes.NewAPIServer(cr.Certs(), featureGates, options.Verbosity),
-			// kubernetes.NewControllerManager(cr.Certs(), cr.Files().Kubeconfig, featureGates, options.Verbosity),
-			// kubernetes.NewScheduler(cr.Certs(), cr.Files().Kubeconfig, featureGates, options.Verbosity),
-			kubernetes.NewManifests(cr),
-		}
+		components := []component.Component{etcd, crid, manifests}
 
 		if options.Kubelet {
-			components = append(components, kubernetes.NewKubelet(cr, featureGates))
+			components = append(components, kubernetes.NewKubelet(crid, featureGates))
 		}
 
 		// Each component gets its own context so we can cancel them
