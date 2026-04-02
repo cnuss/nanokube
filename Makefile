@@ -42,8 +42,8 @@ build: patch
 	@ls -lh nanokube | awk '{print "Binary size:", $$5}'
 
 clean:
-	@rm -f nanokube
-	@pkill -f nanokube 2>/dev/null; true
+	@rm -f nanokube; true
+	@pkill -f '[.]\/nanokube' 2>/dev/null; true
 	@docker ps -aq | xargs -r docker rm -f 2>/dev/null; true
 	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
 	@docker system prune -f >/dev/null 2>&1; true
@@ -53,7 +53,7 @@ test:
 	go test ./...
 
 submodules:
-	git submodule update --init --recursive
+	git submodule update --init --recursive --depth 1
 
 fmt:
 	go fmt ./...

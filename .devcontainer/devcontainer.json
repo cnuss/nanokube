@@ -21,6 +21,7 @@
   "containerEnv": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
+  "postCreateCommand": "make submodules",
   "customizations": {
     "codespaces": {
       "repositories": {
