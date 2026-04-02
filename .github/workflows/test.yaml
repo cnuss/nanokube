@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    uses: ./.github/calls/.build.yaml
+    uses: ./.github/workflows/.build.yaml
 
   smoke:
     needs: build
