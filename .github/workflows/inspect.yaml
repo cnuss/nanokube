@@ -84,23 +84,40 @@ jobs:
       - run: cat /etc/hosts
       - run: cat /etc/hostname || true
       - run: hostname
+      - run: hostname -s
+      - run: ping -c 1 hostname || true
+      - run: ping -c 1 hostname -s || true
       - run: dig google.com
 
       - uses: ./.github/actions/setup-docker
         with:
           runtime: ${{ matrix.runtime }}
 
-      - run: docker run --rm cnuss/dev cat /etc/resolv.conf
-      - run: docker run --rm cnuss/dev cat /etc/hosts
-      - run: docker run --rm cnuss/dev cat /etc/hostname
-      - run: docker run --rm cnuss/dev hostname
-      - run: docker run --rm cnuss/dev dig google.com
+      - run: docker run -d --name dns-test -p 8080:80 cnuss/dev busybox httpd -f -p 80
+      - run: sleep 2
+      - run: docker exec dns-test cat /etc/resolv.conf
+      - run: docker exec dns-test cat /etc/hosts
+      - run: docker exec dns-test cat /etc/hostname || true
+      - run: docker exec dns-test hostname
+      - run: docker exec dns-test hostname -s
+      - run: docker exec dns-test ping -c 1 hostname || true
+      - run: docker exec dns-test ping -c 1 hostname -s || true
+      - run: docker exec dns-test dig google.com
+      - run: docker rm -f dns-test
+      - run: curl -sv http://localhost:8080 || echo "curl localhost:8080 failed"
 
-      - run: docker run --rm --net=host cnuss/dev cat /etc/resolv.conf
-      - run: docker run --rm --net=host cnuss/dev cat /etc/hosts
-      - run: docker run --rm --net=host cnuss/dev cat /etc/hostname
-      - run: docker run --rm --net=host cnuss/dev hostname
-      - run: docker run --rm --net=host cnuss/dev dig google.com
+      - run: docker run -d --name dns-test --net=host cnuss/dev busybox httpd -f -p 8080
+      - run: sleep 2
+      - run: docker exec dns-test cat /etc/resolv.conf
+      - run: docker exec dns-test cat /etc/hosts
+      - run: docker exec dns-test cat /etc/hostname || true
+      - run: docker exec dns-test hostname
+      - run: docker exec dns-test hostname -s
+      - run: docker exec dns-test ping -c 1 hostname || true
+      - run: docker exec dns-test ping -c 1 hostname -s || true
+      - run: docker exec dns-test dig google.com
+      - run: docker rm -f dns-test
+      - run: curl -sv http://localhost:8080 || echo "curl localhost:8080 failed"
 
   # macos-containers:
   #   strategy:
