@@ -1,5 +1,9 @@
 {
   "gopls": {
     "formatting.gofumpt": true
-  }
+  },
+  "git.ignoredRepositories": [
+    "cri-tools",
+    "kubernetes"
+  ]
 }
