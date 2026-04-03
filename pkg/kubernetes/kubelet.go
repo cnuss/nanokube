@@ -2,10 +2,8 @@ package kubernetes
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"reflect"
 	"sync"
 	"time"
@@ -48,6 +46,9 @@ type Kubelet struct {
 	clientsOnce sync.Once
 
 	deps *kubelet.Dependencies
+
+	ready chan struct{}
+	done  chan struct{}
 }
 
 func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
@@ -56,6 +57,8 @@ func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
 		crid:         crid,
 		featureGates: featureGates,
 		log:          component.NewLogger("kubelet"),
+		ready:        make(chan struct{}),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -155,7 +158,6 @@ func (k *Kubelet) Clients() Clients {
 		}
 		k.log.Info().Msg("kube client ready")
 		k.clients.Standard = client
-		k.crid.WithKubeClient(client)
 
 		// Heartbeat client — lower timeout, unlimited QPS
 		cfg := k.Config()
@@ -256,51 +258,68 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 		k.crid.DefaultBackend().ContainerManager(),
 	)
 	hk.KubeletDeps.ProbeManager = nil
+	hk.KubeletDeps.Recorder = k.crid.DefaultBackend().EventRecorder()
 	hk.KubeletDeps.OSInterface = k.crid.DefaultBackend().OS()
 	hk.KubeletDeps.Mounter = k.crid.DefaultBackend().Mounter()
 	hk.KubeletDeps.Subpather = k.crid.DefaultBackend().Subpath()
 	hk.KubeletDeps.HostUtil = k.crid.DefaultBackend().HostUtils()
-	hk.KubeletDeps.Recorder = k.crid.DefaultBackend().EventRecorder()
 	hk.KubeletDeps.TLSOptions = k.crid.TLSOptions()
 	k.deps = hk.KubeletDeps
-	exited := make(chan error, 1)
-	go func() {
-		k.log.Info().Msg("hollow kubelet goroutine starting")
-		hk.Run(ctx)
-		k.log.Warn().Msg("hollow kubelet goroutine exited")
-		exited <- fmt.Errorf("kubelet exited unexpectedly")
-	}()
 
-	// Wait for kubelet to be healthy
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	go k.WaitForApiServer(ctx)
+	go k.WaitForNodeReady(ctx)
+	go k.WaitForKubelet(ctx, hk)
 
 	for {
 		select {
 		case <-ctx.Done():
+			k.log.Info().Msg("context cancelled")
 			return nil, ctx.Err()
-		case err := <-exited:
-			return nil, err
-		case <-ticker.C:
-			reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			req, _ := http.NewRequestWithContext(reqCtx, "GET", "https://127.0.0.1:10250/healthz", nil)
-			resp, err := httpClient.Do(req)
-			cancel()
-			if err != nil {
-				k.log.Debug().Err(err).Msg("healthz probe failed")
-				continue
-			}
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				k.log.Info().Msg("kubelet is ready")
-				return component.Ready(), nil
-			}
-			k.log.Debug().Int("status", resp.StatusCode).Msg("healthz returned non-200")
+		case <-k.done:
+			k.log.Info().Msg("kubelet exited")
+			return nil, fmt.Errorf("kubelet exited")
+		case <-k.ready:
+			k.log.Info().Msg("kubelet is ready")
+			k.crid.WithKubeClient(k.Clients().Standard)
+			return component.Ready(), nil
 		}
 	}
+}
+
+func (k *Kubelet) WaitForKubelet(ctx context.Context, hk *kubemark.HollowKubelet) {
+	k.log.Info().Msg("running kubelet")
+	hk.Run(ctx)
+	close(k.done)
+}
+
+func (k *Kubelet) WaitForApiServer(ctx context.Context) {
+	k.log.Info().Msg("waiting for api server")
+	for {
+		if _, err := k.Clients().Standard.Discovery().ServerVersion(); err == nil {
+			k.log.Info().Msg("api server is available")
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+
+	if svc := k.crid.DefaultBackend().IPAM().Service(); svc != nil {
+		client := k.Clients().Standard
+		if existing, err := client.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); err == nil {
+			if existing.Spec.ClusterIP != svc.IP.String() {
+				k.log.Info().Str("old", existing.Spec.ClusterIP).Str("new", svc.IP.String()).Msg("deleting stale kubernetes service")
+				client.CoreV1().Services("default").Delete(ctx, "kubernetes", metav1.DeleteOptions{})
+			}
+		}
+	}
+}
+
+func (k *Kubelet) WaitForNodeReady(ctx context.Context) {
+	// TODO: Make EventRecorder provided by crid?
+	k.log.Info().Msg("waiting for node ready")
+	k.crid.DefaultBackend().EventRecorder().WaitForNodeReady(ctx)
+	close(k.ready)
 }

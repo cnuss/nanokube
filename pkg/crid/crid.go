@@ -7,16 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/cnuss/nanokube/pkg/config"
 	"github.com/cnuss/nanokube/pkg/crid/backend"
 	_ "github.com/cnuss/nanokube/pkg/crid/docker"
 	_ "github.com/cnuss/nanokube/pkg/crid/podman"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
-	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
@@ -115,35 +113,13 @@ func (c *CRID) Stop(ctx context.Context) component.Stopped {
 
 func (c *CRID) WithKubeClient(client clientset.Interface) {
 	go func() {
-		c.log.Info().Msg("waiting for API server")
-		for {
-			if _, err := client.Discovery().ServerVersion(); err == nil {
-				break
-			}
-			select {
-			case <-c.ctx.Done():
-				return
-			case <-time.After(1 * time.Second):
-			}
-		}
-		c.log.Info().Msg("API server reachable")
-
-		// Delete stale kubernetes service if ClusterIP doesn't match the current service CIDR
-		if svc := c.DefaultBackend().IPAM().Service(); svc != nil {
-			if existing, err := client.CoreV1().Services("default").Get(c.ctx, "kubernetes", metav1.GetOptions{}); err == nil {
-				if existing.Spec.ClusterIP != svc.IP.String() {
-					c.log.Info().Str("old", existing.Spec.ClusterIP).Str("new", svc.IP.String()).Msg("deleting stale kubernetes service")
-					client.CoreV1().Services("default").Delete(c.ctx, "kubernetes", metav1.DeleteOptions{})
-				}
-			}
-		}
-
 		if c.broadcaster != nil {
-			c.broadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: client.CoreV1().Events("")})
-			c.log.Info().Msg("event sink connected")
+			c.log.Info().Msg("starting event broadcaster")
+			c.broadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: client.CoreV1().Events("")})
 		}
 
 		for _, b := range c.Backends() {
+			c.log.Info().Str("backend", string(b.Name())).Msg("starting CSI provisioner for backend")
 			b.WithKubeClient(client).CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
 		}
 	}()

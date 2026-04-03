@@ -155,7 +155,7 @@ type Backend interface {
 	Subpath() subpath.Interface
 	HostUtils() hostutil.HostUtils
 	EventBroadcaster() record.EventBroadcaster
-	EventRecorder() record.EventRecorder
+	EventRecorder() *EventRecorderImpl
 
 	// Storage
 	CSI() CSI
@@ -204,7 +204,7 @@ type BackendImpl struct {
 	os            container.OSInterface
 	subpath       subpath.Interface
 	hostUtils     hostutil.HostUtils
-	eventRecorder record.EventRecorder
+	eventRecorder *EventRecorderImpl
 
 	traceProvider tp.TracerProvider
 	hostInfo      *HostInfo
@@ -221,10 +221,6 @@ type BackendImpl struct {
 	subscribersMu sync.Mutex
 	streamOnce    sync.Once
 
-	// node lifecycle
-	nodeReady     chan struct{}
-	nodeReadyOnce sync.Once
-
 	// sync
 	mu sync.Mutex
 
@@ -239,7 +235,6 @@ func NewBackend(name string, d Driver) Backend {
 		log:           component.NewLogger(string(d.Name())),
 		klog:          klog.Background(),
 		traceProvider: tp.NewTracerProvider(),
-		nodeReady:     make(chan struct{}),
 	}
 	return backend
 }
@@ -323,10 +318,6 @@ func (b *BackendImpl) clean() error {
 	}
 
 	return errors.Join(errs...)
-}
-
-func (b *BackendImpl) SignalNodeReady() {
-	b.nodeReadyOnce.Do(func() { close(b.nodeReady) })
 }
 
 func (b *BackendImpl) Subscribe() <-chan Event {
@@ -531,22 +522,11 @@ func (b *BackendImpl) EventBroadcaster() record.EventBroadcaster {
 	return b.broadcaster
 }
 
-func (b *BackendImpl) EventRecorder() record.EventRecorder {
-	b.mu.Lock()
-	if b.eventRecorder != nil {
-		defer b.mu.Unlock()
-		return b.eventRecorder
-	}
-	b.mu.Unlock()
-
-	// Build outside the lock — NewEventRecorder calls Subscribe() which
-	// also takes b.mu, so we must not hold it here.
-	er := NewEventRecorder(b)
-
+func (b *BackendImpl) EventRecorder() *EventRecorderImpl {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.eventRecorder == nil {
-		b.eventRecorder = er
+		b.eventRecorder = NewEventRecorder(b)
 	}
 	return b.eventRecorder
 }

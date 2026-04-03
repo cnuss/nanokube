@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -11,18 +12,21 @@ import (
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 )
 
-func NewEventRecorder(backend *BackendImpl) record.EventRecorder {
+func NewEventRecorder(backend Backend) *EventRecorderImpl {
 	return &EventRecorderImpl{
-		log:     component.NewLogger("event-recorder"),
-		backend: backend,
+		log:       component.NewLogger("event-recorder"),
+		backend:   backend,
+		nodeReady: make(chan struct{}),
 	}
 }
 
 type EventRecorderImpl struct {
 	log          component.Logger
-	backend      *BackendImpl
+	backend      Backend
 	recorder     record.EventRecorder
 	recorderOnce sync.Once
+
+	nodeReady chan struct{}
 }
 
 func (e *EventRecorderImpl) Recorder() record.EventRecorder {
@@ -54,7 +58,17 @@ func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reas
 
 func (e *EventRecorderImpl) checkNodeReady(reason string) {
 	if reason == "NodeReady" {
-		e.backend.SignalNodeReady()
+		e.log.Info().Msg("node is ready")
+		close(e.nodeReady)
+	}
+}
+
+func (e *EventRecorderImpl) WaitForNodeReady(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.nodeReady:
+		return nil
 	}
 }
 

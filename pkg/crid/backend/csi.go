@@ -27,6 +27,8 @@ func NewCSI(backend *BackendImpl) CSI {
 		backend:    backend,
 		driverName: string(backend.Name()) + ".csi",
 		log:        component.NewLogger("csi"),
+		csiSrv:     grpc.NewServer(),
+		regSrv:     grpc.NewServer(),
 	}
 }
 
@@ -72,40 +74,17 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 	if err != nil {
 		return component.WrapErr(c.log, err)
 	}
-	c.csiSrv = grpc.NewServer()
+
 	csipb.RegisterIdentityServer(c.csiSrv, c)
 	csipb.RegisterControllerServer(c.csiSrv, c.backend.VolumeServer())
 	csipb.RegisterNodeServer(c.csiSrv, c)
+	pluginreg.RegisterRegistrationServer(c.regSrv, c)
+
 	go func() {
 		c.log.Info().Str("socket", c.csiEndpoint).Msg("CSI endpoint serving")
 		if err := c.csiSrv.Serve(csiLis); err != nil {
 			os.Remove(c.csiEndpoint)
 			c.log.Error().Err(err).Msg("CSI endpoint exited")
-		}
-	}()
-
-	// Registration socket — deferred until the kubelet has initialized
-	// the CSI volume plugin with the correct nodeName and the Node object
-	// exists (triggered by NodeHasSufficientPID/Memory/DiskPressure events).
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.backend.nodeReady:
-			c.log.Info().Msg("node ready, creating registration socket")
-			os.Remove(c.regEndpoint)
-			regLis, err := net.Listen("unix", c.regEndpoint)
-			if err != nil {
-				c.log.Error().Err(err).Msg("CSI registration listen failed")
-				return
-			}
-			c.regSrv = grpc.NewServer()
-			pluginreg.RegisterRegistrationServer(c.regSrv, c)
-			c.log.Info().Str("socket", c.regEndpoint).Msg("CSI registration serving")
-			if err := c.regSrv.Serve(regLis); err != nil {
-				os.Remove(c.regEndpoint)
-				c.log.Error().Err(err).Msg("CSI registration exited")
-			}
 		}
 	}()
 
@@ -116,7 +95,21 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 // reconciles the CSIDriver and StorageClass objects, then runs a
 // ProvisionController for this backend.
 func (c *CSIImpl) StartProvisioner(ctx context.Context, client clientset.Interface, isDefault bool) {
-	c.log.Warn().Bool("isDefault", isDefault).Msg("StartProvisioner")
+	c.log.Trace().Bool("isDefault", isDefault).Msg("StartProvisioner")
+
+	regLis, err := net.Listen("unix", c.regEndpoint)
+	if err != nil {
+		c.log.Error().Err(err).Msg("failed to listen on registration socket")
+		return
+	}
+
+	go func() {
+		c.log.Info().Str("socket", c.regEndpoint).Msg("CSI registration serving")
+		if err := c.regSrv.Serve(regLis); err != nil {
+			os.Remove(c.regEndpoint)
+			c.log.Error().Err(err).Msg("CSI registration exited")
+		}
+	}()
 
 	fm := metav1.ApplyOptions{FieldManager: string(c.backend.Name()), Force: true}
 

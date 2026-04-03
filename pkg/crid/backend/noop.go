@@ -45,7 +45,7 @@ func (n *NoopBackend) OS() container.OSInterface                                
 func (n *NoopBackend) Subpath() subpath.Interface                                  { return nil }
 func (n *NoopBackend) HostUtils() hostutil.HostUtils                               { return nil }
 func (n *NoopBackend) EventBroadcaster() record.EventBroadcaster                   { return nil }
-func (n *NoopBackend) EventRecorder() record.EventRecorder                         { return nil }
+func (n *NoopBackend) EventRecorder() *EventRecorderImpl                           { return NewEventRecorder(n) }
 func (n *NoopBackend) Prober() prober.Manager                                      { return nil }
 func (n *NoopBackend) Streaming() streaming.Server                                 { return nil }
 func (n *NoopBackend) Subscribe() <-chan Event                                     { return make(chan Event) }
