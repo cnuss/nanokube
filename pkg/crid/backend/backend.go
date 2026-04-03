@@ -162,6 +162,7 @@ type Backend interface {
 
 	// Host information — probed from inside the container runtime
 	HostInfo() (*HostInfo, error)
+	HostnameOverride() string
 
 	// Hosts returns the host provider for /etc/hosts injection.
 	Hosts() Hosts
@@ -572,6 +573,17 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 		b.log.Trace().Any("hostinfo", b.hostInfo).Msg("host info probed successfully")
 	}
 	return b.hostInfo, nil
+}
+
+func (b *BackendImpl) HostnameOverride() string {
+	info, err := b.HostInfo()
+	if err != nil {
+		return ""
+	}
+	if info.MachineID != "" {
+		return fmt.Sprintf("%s-%s", info.Hostname, info.MachineID)
+	}
+	return info.Hostname
 }
 
 func (b *BackendImpl) Hosts() Hosts {

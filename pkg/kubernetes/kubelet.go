@@ -62,8 +62,7 @@ func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
 func (k *Kubelet) Name() string {
 	k.nameOnce.Do(func() {
 		k.log.Info().Msg("initializing name")
-		hostInfo, _ := k.crid.DefaultBackend().HostInfo()
-		k.name = hostInfo.HostnameOverride()
+		k.name = k.crid.DefaultBackend().HostnameOverride()
 	})
 	return k.name
 }

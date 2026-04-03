@@ -168,14 +168,14 @@ func (h *hostsImpl) WithBackend(runtime backend.Runtime, backend backend.Backend
 func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) map[string][]string {
 	entries := make(map[string][]string)
 
-	hostname := h.hostname
-	if hostname != nil {
-		for _, ips := range h.addrs {
-			for _, ip := range ips {
-				if network == backend.NetworkBridge && (strings.HasPrefix(ip, "169.254.") || strings.HasPrefix(ip, "fe80::")) {
-					continue
-				}
-				entries[strings.ToLower(*hostname)] = append(entries[strings.ToLower(*hostname)], ip)
+	for _, ips := range h.addrs {
+		for _, ip := range ips {
+			if network == backend.NetworkBridge && (strings.HasPrefix(ip, "169.254.") || strings.HasPrefix(ip, "fe80::")) {
+				continue
+			}
+			entries[strings.ToLower(h.Hostname())] = append(entries[strings.ToLower(h.Hostname())], ip)
+			for _, backend := range h.backends {
+				entries[strings.ToLower(backend.HostnameOverride())] = append(entries[strings.ToLower(backend.HostnameOverride())], ip)
 			}
 		}
 	}
