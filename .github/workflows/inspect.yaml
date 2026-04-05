@@ -63,7 +63,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-docker
+      - uses: ./.github/actions/setup
         with:
           runtime: ${{ matrix.runtime }}
 
@@ -90,7 +90,7 @@ jobs:
       - run: sh -c "ping -c 1 $(hostname -s)" || true
       - run: dig google.com
 
-      - uses: ./.github/actions/setup-docker
+      - uses: ./.github/actions/setup
         with:
           runtime: ${{ matrix.runtime }}
 

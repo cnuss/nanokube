@@ -21,7 +21,7 @@ runs:
       if: inputs.runtime == 'docker' && runner.os == 'macOS'
       shell: bash
       run: |
-        brew install colima docker
+        brew install colima docker kubectl
 
         COLIMA_ARGS="--runtime docker"
         HV=$(sysctl -n kern.hv_vmx_support 2>/dev/null || sysctl -n kern.hv_support 2>/dev/null || echo 0)
