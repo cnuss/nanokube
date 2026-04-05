@@ -26,6 +26,9 @@ jobs:
       ARTIFACT: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
       - uses: ./.github/actions/setup-docker
         with:
@@ -54,6 +57,9 @@ jobs:
         suite: [critest, e2e]
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
       - uses: ./.github/actions/setup-docker
         with:
@@ -83,6 +89,9 @@ jobs:
         suite: [smoke, critest, e2e]
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
       - uses: ./.github/actions/setup-docker
         with:
