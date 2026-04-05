@@ -34,6 +34,13 @@ runs:
 
         colima start $COLIMA_ARGS
 
+    - name: Unsupported runtime
+      if: inputs.runtime != 'docker'
+      shell: bash
+      run: |
+        echo "::error::Unsupported runtime: ${{ inputs.runtime }}"
+        exit 1
+
     - name: Wait for Docker to be ready
       if: inputs.runtime == 'docker'
       shell: bash
