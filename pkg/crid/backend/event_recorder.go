@@ -39,31 +39,34 @@ func (e *EventRecorderImpl) Recorder() record.EventRecorder {
 
 // AnnotatedEventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	e.log.Info().Str("fn", "AnnotatedEventf").Str("type", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
+	e.log.Info().Str("fn", "AnnotatedEventf").Any("object", object).Str("eventtype", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
+	e.checkNodeReady(object, eventtype, reason)
 	e.Recorder().AnnotatedEventf(object, annotations, eventtype, reason, messageFmt, args...)
 }
 
 // Event implements [record.EventRecorder].
 func (e *EventRecorderImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
 	e.log.Info().Str("fn", "Event").Str("type", eventtype).Str("reason", reason).Msg(message)
-	e.checkNodeReady(reason)
+	e.checkNodeReady(object, eventtype, reason)
 	e.Recorder().Event(object, eventtype, reason, message)
 }
 
 // Eventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	e.log.Info().Str("fn", "Eventf").Str("type", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
-	e.checkNodeReady(reason)
+	e.log.Info().Str("fn", "Eventf").Any("object", object).Str("eventtype", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
+	e.checkNodeReady(object, eventtype, reason)
 	e.Recorder().Eventf(object, eventtype, reason, messageFmt, args...)
 }
 
-func (e *EventRecorderImpl) checkNodeReady(reason string) {
-	if reason == "NodeReady" {
-		e.nodeReadyOnce.Do(func() {
-			e.log.Info().Msg("node is ready")
-			close(e.nodeReady)
-		})
+func (e *EventRecorderImpl) checkNodeReady(object runtime.Object, eventtype string, reason string) {
+	if eventtype != v1.EventTypeNormal || reason != "NodeReady" {
+		return
 	}
+	if _, ok := object.(*v1.Node); !ok {
+		return
+	}
+	e.log.Info().Any("object", object).Msg("NodeReady event detected")
+	e.nodeReadyOnce.Do(func() { close(e.nodeReady) })
 }
 
 func (e *EventRecorderImpl) WaitForNodeReady(ctx context.Context) error {

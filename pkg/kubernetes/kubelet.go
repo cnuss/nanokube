@@ -47,8 +47,8 @@ type Kubelet struct {
 
 	deps *kubelet.Dependencies
 
-	ready chan struct{}
-	done  chan struct{}
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
@@ -58,7 +58,6 @@ func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
 		featureGates: featureGates,
 		log:          component.NewLogger("kubelet"),
 		ready:        make(chan struct{}),
-		done:         make(chan struct{}),
 	}
 }
 
@@ -244,7 +243,8 @@ func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	k.log.Info().Msg("starting kubelet")
-	go k.Clients()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 
 	// Build and run HollowKubelet
 	hk := kubemark.NewHollowKubelet(
@@ -268,35 +268,28 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 
 	go k.WaitForApiServer(ctx)
 	go k.WaitForNodeReady(ctx)
-	go k.WaitForKubelet(ctx, hk)
+
+	go func() {
+		hk.Run(ctx)
+		cancel(fmt.Errorf("kubelet exited unexpectedly"))
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			k.log.Info().Msg("context cancelled")
 			return nil, ctx.Err()
-		case <-k.done:
-			k.log.Info().Msg("kubelet exited")
-			return nil, fmt.Errorf("kubelet exited")
 		case <-k.ready:
 			k.log.Info().Msg("kubelet is ready")
-			k.crid.WithKubeClient(k.Clients().Standard)
 			return component.Ready(), nil
 		}
 	}
 }
 
-func (k *Kubelet) WaitForKubelet(ctx context.Context, hk *kubemark.HollowKubelet) {
-	k.log.Info().Msg("running kubelet")
-	hk.Run(ctx)
-	close(k.done)
-}
-
 func (k *Kubelet) WaitForApiServer(ctx context.Context) {
 	k.log.Info().Msg("waiting for api server")
 	for {
-		if _, err := k.Clients().Standard.Discovery().ServerVersion(); err == nil {
-			k.log.Info().Msg("api server is available")
+		if _, err := k.KubeClient().Discovery().ServerVersion(); err == nil {
 			break
 		}
 		select {
@@ -306,20 +299,25 @@ func (k *Kubelet) WaitForApiServer(ctx context.Context) {
 		}
 	}
 
+	k.log.Info().Msg("api server is available")
+	k.SetNotReady(ctx, "Starting", "Kubelet is starting")
+
 	if svc := k.crid.DefaultBackend().IPAM().Service(); svc != nil {
-		client := k.Clients().Standard
-		if existing, err := client.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); err == nil {
+		if existing, err := k.KubeClient().CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); err == nil {
 			if existing.Spec.ClusterIP != svc.IP.String() {
 				k.log.Info().Str("old", existing.Spec.ClusterIP).Str("new", svc.IP.String()).Msg("deleting stale kubernetes service")
-				client.CoreV1().Services("default").Delete(ctx, "kubernetes", metav1.DeleteOptions{})
+				k.KubeClient().CoreV1().Services("default").Delete(ctx, "kubernetes", metav1.DeleteOptions{})
 			}
 		}
 	}
+
+	k.crid.WithKubeClient(k.KubeClient())
 }
 
 func (k *Kubelet) WaitForNodeReady(ctx context.Context) {
 	// TODO: Make EventRecorder provided by crid?
 	k.log.Info().Msg("waiting for node ready")
 	k.crid.DefaultBackend().EventRecorder().WaitForNodeReady(ctx)
-	close(k.ready)
+	k.log.Info().Msg("node is ready")
+	k.readyOnce.Do(func() { close(k.ready) })
 }
