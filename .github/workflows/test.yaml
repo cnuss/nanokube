@@ -26,9 +26,6 @@ jobs:
       ARTIFACT: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
 
       - uses: ./.github/actions/setup-docker
         with:
@@ -37,7 +34,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT }}
-
 
       - run: make smoke ARTIFACT=${{ env.ARTIFACT }}
 
@@ -58,9 +54,6 @@ jobs:
         suite: [critest, e2e]
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
 
       - uses: ./.github/actions/setup-docker
         with:
@@ -69,7 +62,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT }}
-
 
       - run: make ${{ matrix.suite }} ARTIFACT=${{ env.ARTIFACT }}
 
@@ -91,9 +83,6 @@ jobs:
         suite: [smoke, critest, e2e]
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
 
       - uses: ./.github/actions/setup-docker
         with:
@@ -102,7 +91,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
-
 
       - run: make ${{ matrix.suite }} ARTIFACT=${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
 
