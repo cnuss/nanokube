@@ -77,67 +77,114 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 		driver:   driver,
 	}
 
-	run := func(cmd []string, cb func(string) error) error {
-		return driver.Run("busybox", cmd, []string{
-			"/etc/machine-id:/etc/machine-id:ro",
-			"/etc/os-release:/etc/os-release:ro",
-			"/sys:/host/sys:ro",
-		}, true, cb)
+	type probe struct {
+		name string
+		cmd  string            // shell command; stderr suppressed commands should use 2>/dev/null || echo ''
+		fn   func(string) error // called with trimmed output
 	}
 
-	if err := run([]string{"cat", "/etc/hostname"}, func(out string) error {
-		h.WithHostname(strings.TrimSpace(out))
+	probes := []probe{
+		{"hostname", "cat /etc/hostname 2>/dev/null || echo ''", func(out string) error {
+			if out != "" {
+				h.WithHostname(out)
+			}
+			log.Info().Str("hostname", h.Hostname).Msg("probed hostname")
+			return nil
+		}},
+		{"machine-id", "cat /etc/machine-id 2>/dev/null || echo ''", func(out string) error {
+			if out != "" {
+				h.WithMachineID(out)
+				log.Info().Str("machineID", h.MachineID).Msg("probed machine-id")
+			} else {
+				log.Warn().Msg("machine-id not available, falling back to empty")
+				h.WithMachineID("")
+			}
+			return nil
+		}},
+		{"cpuinfo", "cat /proc/cpuinfo", func(out string) error {
+			if out == "" {
+				return fmt.Errorf("empty output")
+			}
+			h.WithCpuInfo(out)
+			log.Info().Int("cpus", len(h.CpuInfo)).Msg("probed cpuinfo")
+			return nil
+		}},
+		{"boot_id", "cat /proc/sys/kernel/random/boot_id", func(out string) error {
+			if out == "" {
+				return fmt.Errorf("empty output")
+			}
+			h.WithBootID(out)
+			log.Info().Str("bootID", h.BootID).Msg("probed boot_id")
+			return nil
+		}},
+		{"system_uuid", "cat /host/sys/class/dmi/id/product_uuid 2>/dev/null || echo ''", func(out string) error {
+			if out != "" {
+				h.WithSystemUUID(out)
+				log.Info().Str("systemUUID", h.SystemUUID).Msg("probed system_uuid")
+			} else {
+				log.Warn().Msg("product_uuid not available, falling back to boot_id")
+				h.WithSystemUUID(h.BootID)
+			}
+			return nil
+		}},
+		{"kernel", "uname -r", func(out string) error {
+			if out == "" {
+				return fmt.Errorf("empty output")
+			}
+			h.WithKernelVersion(out)
+			log.Info().Str("kernel", h.KernelVersion).Msg("probed kernel version")
+			return nil
+		}},
+		{"os-release", "cat /etc/os-release 2>/dev/null || echo ''", func(out string) error {
+			if out != "" {
+				for line := range strings.SplitSeq(out, "\n") {
+					key, val := parseKV(line, "=")
+					if key == "PRETTY_NAME" {
+						h.WithOSVersion(strings.Trim(val, "\""))
+						break
+					}
+				}
+			}
+			if h.OSVersion == "" {
+				log.Warn().Msg("os-release not available, falling back to unknown")
+				h.WithOSVersion("unknown")
+			} else {
+				log.Info().Str("os", h.OSVersion).Msg("probed os-release")
+			}
+			return nil
+		}},
+	}
+
+	// Build a single shell script that runs all probes separated by a delimiter
+	const delim = "---PROBE---"
+	cmds := make([]string, 0, len(probes)*2)
+	for i, p := range probes {
+		cmds = append(cmds, p.cmd)
+		if i < len(probes)-1 {
+			cmds = append(cmds, "echo "+delim)
+		}
+	}
+
+	if err := driver.Run("busybox", []string{"sh", "-c", strings.Join(cmds, ";")}, []string{
+		"/etc/machine-id:/etc/machine-id:ro",
+		"/etc/os-release:/etc/os-release:ro",
+		"/sys:/host/sys:ro",
+	}, true, func(out string) error {
+		sections := strings.Split(out, delim)
+		if len(sections) != len(probes) {
+			return fmt.Errorf("expected %d probe sections, got %d", len(probes), len(sections))
+		}
+		for i, p := range probes {
+			if err := p.fn(strings.TrimSpace(sections[i])); err != nil {
+				return fmt.Errorf("probe %s failed: %w", p.name, err)
+			}
+		}
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("failed to probe hostname: %w", err)
-	}
-	log.Info().Str("hostname", h.Hostname).Msg("probed hostname")
-
-	if err := run([]string{"cat", "/etc/machine-id"}, func(out string) error {
-		h.WithMachineID(strings.TrimSpace(out))
-		return nil
-	}); err != nil {
-		log.Warn().Err(err).Msg("machine-id not available, falling back to empty")
-		h.WithMachineID("")
-	} else {
-		log.Info().Str("machineID", h.MachineID).Msg("probed machine-id")
+		return nil, fmt.Errorf("host info probe failed: %w", err)
 	}
 
-	if err := run([]string{"cat", "/proc/cpuinfo"}, func(out string) error {
-		h.WithCpuInfo(out)
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("failed to probe cpuinfo: %w", err)
-	}
-	log.Info().Int("cpus", len(h.CpuInfo)).Msg("probed cpuinfo")
-
-	if err := run([]string{"cat", "/proc/sys/kernel/random/boot_id"}, func(out string) error {
-		h.WithBootID(strings.TrimSpace(out))
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("failed to probe boot_id: %w", err)
-	}
-	log.Info().Str("bootID", h.BootID).Msg("probed boot_id")
-
-	if err := run([]string{"cat", "/host/sys/class/dmi/id/product_uuid"}, func(out string) error {
-		h.WithSystemUUID(strings.TrimSpace(out))
-		return nil
-	}); err != nil {
-		log.Warn().Err(err).Msg("product_uuid not available, falling back to boot_id")
-		h.WithSystemUUID(h.BootID)
-	} else {
-		log.Info().Str("systemUUID", h.SystemUUID).Msg("probed system_uuid")
-	}
-
-	if err := run([]string{"uname", "-r"}, func(out string) error {
-		h.WithKernelVersion(strings.TrimSpace(out))
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("failed to probe kernel version: %w", err)
-	}
-	log.Info().Str("kernel", h.KernelVersion).Msg("probed kernel version")
-
-	// Probe DNS from a plain container (no host mounts) to see what Docker gives containers
+	// Probe DNS from a separate container (no host mounts) to see what Docker gives containers
 	if err := driver.Run("busybox", []string{"cat", "/etc/resolv.conf"}, nil, false, func(out string) error {
 		for line := range strings.SplitSeq(out, "\n") {
 			if strings.HasPrefix(line, "nameserver ") {
@@ -152,22 +199,6 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 		return nil, fmt.Errorf("failed to probe nameservers: no nameserver lines in /etc/resolv.conf")
 	}
 	log.Info().Strs("nameservers", h.Nameservers).Msg("probed nameservers")
-
-	if err := run([]string{"cat", "/etc/os-release"}, func(out string) error {
-		for line := range strings.SplitSeq(out, "\n") {
-			key, val := parseKV(line, "=")
-			if key == "PRETTY_NAME" {
-				h.WithOSVersion(strings.Trim(val, "\""))
-				return nil
-			}
-		}
-		return nil
-	}); err != nil {
-		log.Warn().Err(err).Msg("os-release not available, falling back to unknown")
-		h.WithOSVersion("unknown")
-	} else {
-		log.Info().Str("os", h.OSVersion).Msg("probed os-release")
-	}
 
 	return h, nil
 }
