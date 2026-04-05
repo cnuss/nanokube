@@ -110,7 +110,7 @@ critest: build
 smoke: NAME = nanokube-smoke
 smoke: build
 	$(call run-nanokube,,\
-		kubectl get nodes >/dev/null 2>&1,\
+		kubectl get nodes 2>&1,\
 		cd tests && make test GROUP=smoke KIND=false $(if $(WHAT),WHAT=$(WHAT)))
 
 reviewable: critest e2e
