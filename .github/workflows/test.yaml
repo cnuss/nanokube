@@ -61,6 +61,7 @@ jobs:
       matrix:
         runner:
           - ubuntu-24.04-arm
+          - macos-26
           - macos-26-intel
     steps:
       - uses: actions/checkout@v6
@@ -82,6 +83,7 @@ jobs:
       matrix:
         runner:
           - ubuntu-24.04-arm
+          - macos-26
           - macos-26-intel
         suite: [critest, e2e]
     steps:

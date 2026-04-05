@@ -32,14 +32,10 @@ VERSION_LDFLAGS := \
 patch:
 	@cd kubernetes && git reset --hard HEAD
 	@cd kubernetes && git apply ../patches/kubernetes.patch
-	@cd cri-tools && git reset --hard HEAD
-	@cd cri-tools && git apply ../patches/cri-tools.patch
 
 patch-save:
 	@cd kubernetes && git diff > ../patches/kubernetes.patch
 	@echo "Patch saved to patches/kubernetes.patch"
-	@cd cri-tools && git diff > ../patches/cri-tools.patch
-	@echo "Patch saved to patches/cri-tools.patch"
 
 ARTIFACT ?=
 
@@ -59,7 +55,7 @@ clean:
 	@docker ps -aq | xargs -r docker rm -f 2>/dev/null; true
 	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
 	@docker system prune -f >/dev/null 2>&1; true
-	@rm -rf ~/.nanokube ~/.nanokube-e2e ~/.nanokube-critest ~/.nanokube-smoke
+	@rm -rf ~/.nanokube ~/.nanokube-e2e ~/.nanokube-critest ~/.nanokube-smoke ~/.nanokube-tmp.*
 
 test:
 	go test ./...
@@ -88,7 +84,8 @@ NANOKUBE_OUT = $(if $(filter 1,$(V)),,>/dev/null 2>&1)
 
 # Usage: $(call run-nanokube,<nanokube-args>,<ready-check>,<test-cmd>)
 define run-nanokube
-	@trap 'kill $$! 2>/dev/null; wait' EXIT; \
+	@export TMPDIR=$$(mktemp -d "$$HOME/.nanokube-tmp.XXXXXX"); \
+	trap 'kill $$! 2>/dev/null; wait' EXIT; \
 	./nanokube $(1) $(ARGS) --name $(NAME) $(NANOKUBE_OUT) & \
 	for i in $$(seq 1 90); do $(2) && break; sleep 1; done; \
 	echo "########################################"; \
