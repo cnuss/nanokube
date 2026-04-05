@@ -32,10 +32,14 @@ VERSION_LDFLAGS := \
 patch:
 	@cd kubernetes && git reset --hard HEAD
 	@cd kubernetes && git apply ../patches/kubernetes.patch
+	@cd cri-tools && git reset --hard HEAD
+	@cd cri-tools && git apply ../patches/cri-tools.patch
 
 patch-save:
 	@cd kubernetes && git diff > ../patches/kubernetes.patch
 	@echo "Patch saved to patches/kubernetes.patch"
+	@cd cri-tools && git diff > ../patches/cri-tools.patch
+	@echo "Patch saved to patches/cri-tools.patch"
 
 ARTIFACT ?=
 

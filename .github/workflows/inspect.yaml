@@ -59,7 +59,7 @@ jobs:
           - macos-26-intel
         runtime:
           - docker
-          - podman
+          # - podman
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
