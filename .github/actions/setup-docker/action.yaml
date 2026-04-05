@@ -25,9 +25,9 @@ runs:
         HV=$(sysctl -n kern.hv_vmx_support 2>/dev/null || sysctl -n kern.hv_support 2>/dev/null || echo 0)
         if [[ "$HV" != "1" ]]; then
           brew install qemu
-          Q=/opt/homebrew/bin/qemu-system-aarch64
+          Q=$(which qemu-system-aarch64 || which qemu-system-x86_64)
           sudo mv "$Q" "$Q.real"
-          printf '#!/bin/bash\na=(); for x; do [[ $x = host ]] && x=max; a+=("${x//accel=hvf/accel=tcg}"); done\nexec /opt/homebrew/bin/qemu-system-aarch64.real "${a[@]}"\n' | sudo tee "$Q" >/dev/null
+          printf '#!/bin/bash\na=(); for x; do [[ $x = host ]] && x=max; a+=("${x//accel=hvf/accel=tcg}"); done\nexec "%s.real" "${a[@]}"\n' "$Q" | sudo tee "$Q" >/dev/null
           sudo chmod +x "$Q"
           COLIMA_ARGS="$COLIMA_ARGS --vm-type=qemu"
         fi
