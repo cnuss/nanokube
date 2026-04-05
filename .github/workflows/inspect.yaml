@@ -53,18 +53,16 @@ jobs:
       fail-fast: false
       matrix:
         runner:
-          # - ubuntu-24.04
-          # - ubuntu-24.04-arm
-          # - macos-26
-          # - macos-26-intel
-          - macos-26-arm
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-26-intel
         runtime:
           - docker
           - podman
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
-      - run: curl ifconfig.me 2>/dev/null || echo "no external IP"
       - uses: ./.github/actions/setup-docker
         with:
           runtime: ${{ matrix.runtime }}
