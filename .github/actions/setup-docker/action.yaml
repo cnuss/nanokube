@@ -3,17 +3,9 @@ description: Setup a container runtime with configurable VM backend
 
 inputs:
   runtime:
-    description: "Container runtime: docker or podman"
+    description: "Container runtime: docker, containerd, or podman"
     required: false
     default: docker
-  provider:
-    description: "VM Provider: default, lima, colima"
-    required: false
-    default: default
-  verbose:
-    description: "Tail logs during setup"
-    required: false
-    default: "false"
 
 runs:
   using: composite
@@ -21,46 +13,26 @@ runs:
     - name: Setup Docker on Linux
       if: inputs.runtime == 'docker' && runner.os == 'Linux'
       shell: bash
-      run: |
-        if [[ "${{ inputs.provider }}" == "default" ]]; then
-          echo "Using native Docker on Linux"
-        else
-          echo "Unsupported provider on Linux: ${{ inputs.provider }}"
-          exit 1
-        fi
+      run: echo "Using native Docker on Linux"
 
     - name: Setup Docker on macOS
       if: inputs.runtime == 'docker' && runner.os == 'macOS'
       shell: bash
       run: |
+        brew install colima docker
+
+        COLIMA_ARGS="--runtime docker"
         HV=$(sysctl -n kern.hv_vmx_support 2>/dev/null || sysctl -n kern.hv_support 2>/dev/null || echo 0)
         if [[ "$HV" != "1" ]]; then
-          echo "::error::Hypervisor not available. Containers require virtualization on macOS."
-          exit 1
+          brew install qemu
+          Q=/opt/homebrew/bin/qemu-system-aarch64
+          sudo mv "$Q" "$Q.real"
+          printf '#!/bin/bash\na=(); for x; do [[ $x = host ]] && x=max; a+=("${x//accel=hvf/accel=tcg}"); done\nexec /opt/homebrew/bin/qemu-system-aarch64.real "${a[@]}"\n' | sudo tee "$Q" >/dev/null
+          sudo chmod +x "$Q"
+          COLIMA_ARGS="$COLIMA_ARGS --vm-type=qemu"
         fi
 
-        if [[ "${{ inputs.provider }}" == "lima" ]]; then
-          echo "Setting up Lima + Docker on macOS"
-          brew install lima docker
-          limactl start --name=default template:docker
-          docker context create lima-docker --docker "host=unix://$HOME/.lima/default/sock/docker.sock"
-          docker context use lima-docker
-          if [[ "${{ inputs.verbose }}" == "true" ]]; then
-            tail -f ~/.lima/default/ha.stderr.log 2>/dev/null &
-          fi
-        elif [[ "${{ inputs.provider }}" == "default" ]]; then
-          echo "Setting up Docker Desktop on macOS"
-          brew install --cask docker
-          sudo /Applications/Docker.app/Contents/MacOS/install --accept-license --user=$(whoami)
-          open -a Docker.app
-          while [ ! -d ~/Library/Containers/com.docker.docker/Data/log ]; do sleep 1; done
-          if [[ "${{ inputs.verbose }}" == "true" ]]; then
-            tail -f ~/Library/Containers/com.docker.docker/Data/log/*/*.log 2>/dev/null &
-          fi
-        else
-          echo "Unsupported OS/provider combination: $RUNNER_OS / ${{ inputs.provider }}"
-          exit 1
-        fi
+        colima start $COLIMA_ARGS
 
     - name: Wait for Docker to be ready
       if: inputs.runtime == 'docker'
