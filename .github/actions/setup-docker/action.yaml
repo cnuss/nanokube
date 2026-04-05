@@ -13,7 +13,9 @@ runs:
     - name: Setup Docker on Linux
       if: inputs.runtime == 'docker' && runner.os == 'Linux'
       shell: bash
-      run: echo "Using native Docker on Linux"
+      run: |
+        echo "Using native Docker on Linux"
+        ls -la /dev/kvm 2>/dev/null && echo "KVM available" || echo "KVM not available"
 
     - name: Setup Docker on macOS
       if: inputs.runtime == 'docker' && runner.os == 'macOS'
@@ -32,7 +34,9 @@ runs:
           COLIMA_ARGS="$COLIMA_ARGS --vm-type=qemu"
         fi
 
-        colima start $COLIMA_ARGS
+        CPUS=$(sysctl -n hw.ncpu)
+        MEM=$(( $(sysctl -n hw.memsize) / 1073741824 ))
+        colima start $COLIMA_ARGS --cpu $CPUS --memory $MEM
 
     - name: Unsupported runtime
       if: inputs.runtime != 'docker'
