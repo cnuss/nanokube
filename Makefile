@@ -87,7 +87,7 @@ define run-nanokube
 	@export TMPDIR=$$(mktemp -d "$$HOME/.nanokube-tmp.XXXXXX"); \
 	trap 'kill $$! 2>/dev/null; wait' EXIT; \
 	./nanokube $(1) $(ARGS) --name $(NAME) $(NANOKUBE_OUT) & \
-	for i in $$(seq 1 90); do $(2) && break; sleep 1; done; \
+	for i in $$(seq 1 120); do $(2) && break; sleep 1; done; \
 	echo "########################################"; \
 	echo "# NANOKUBE LOG: ~/.$(NAME)/log"; \
 	echo "########################################"; \

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cnuss/nanokube/pkg/component"
 	"github.com/dustin/go-humanize"
 )
 
@@ -67,6 +68,8 @@ type MemoryInfo struct {
 // NewHostInfo probes immutable host information (hostname, cpuinfo) in parallel.
 // The returned HostInfo can fetch dynamic data (meminfo) on demand via MemInfo().
 func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
+	log := component.NewLogger("host-info")
+
 	h := &HostInfo{
 		Domain:   driver.Domain(),
 		Hostname: hosts.Hostname(),
@@ -88,13 +91,16 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("failed to probe hostname: %w", err)
 	}
+	log.Info().Str("hostname", h.Hostname).Msg("probed hostname")
 
 	if err := run([]string{"cat", "/etc/machine-id"}, func(out string) error {
 		h.WithMachineID(strings.TrimSpace(out))
 		return nil
 	}); err != nil {
-		// Not available on all platforms (e.g. macOS); fall back to empty
+		log.Warn().Err(err).Msg("machine-id not available, falling back to empty")
 		h.WithMachineID("")
+	} else {
+		log.Info().Str("machineID", h.MachineID).Msg("probed machine-id")
 	}
 
 	if err := run([]string{"cat", "/proc/cpuinfo"}, func(out string) error {
@@ -103,6 +109,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("failed to probe cpuinfo: %w", err)
 	}
+	log.Info().Int("cpus", len(h.CpuInfo)).Msg("probed cpuinfo")
 
 	if err := run([]string{"cat", "/proc/sys/kernel/random/boot_id"}, func(out string) error {
 		h.WithBootID(strings.TrimSpace(out))
@@ -110,13 +117,16 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("failed to probe boot_id: %w", err)
 	}
+	log.Info().Str("bootID", h.BootID).Msg("probed boot_id")
 
 	if err := run([]string{"cat", "/host/sys/class/dmi/id/product_uuid"}, func(out string) error {
 		h.WithSystemUUID(strings.TrimSpace(out))
 		return nil
 	}); err != nil {
-		// Not available on all platforms (e.g. ARM, containers); fall back to boot_id
+		log.Warn().Err(err).Msg("product_uuid not available, falling back to boot_id")
 		h.WithSystemUUID(h.BootID)
+	} else {
+		log.Info().Str("systemUUID", h.SystemUUID).Msg("probed system_uuid")
 	}
 
 	if err := run([]string{"uname", "-r"}, func(out string) error {
@@ -125,6 +135,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("failed to probe kernel version: %w", err)
 	}
+	log.Info().Str("kernel", h.KernelVersion).Msg("probed kernel version")
 
 	// Probe DNS from a plain container (no host mounts) to see what Docker gives containers
 	if err := driver.Run("busybox", []string{"cat", "/etc/resolv.conf"}, nil, false, func(out string) error {
@@ -140,6 +151,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	if len(h.Nameservers) == 0 {
 		return nil, fmt.Errorf("failed to probe nameservers: no nameserver lines in /etc/resolv.conf")
 	}
+	log.Info().Strs("nameservers", h.Nameservers).Msg("probed nameservers")
 
 	if err := run([]string{"cat", "/etc/os-release"}, func(out string) error {
 		for line := range strings.SplitSeq(out, "\n") {
@@ -151,8 +163,10 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 		}
 		return nil
 	}); err != nil {
-		// Non-fatal — some minimal images lack /etc/os-release
+		log.Warn().Err(err).Msg("os-release not available, falling back to unknown")
 		h.WithOSVersion("unknown")
+	} else {
+		log.Info().Str("os", h.OSVersion).Msg("probed os-release")
 	}
 
 	return h, nil
