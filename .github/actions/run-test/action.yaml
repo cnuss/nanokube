@@ -1,0 +1,33 @@
+name: Run Test
+description: Download artifact, run a test suite, and upload logs
+
+inputs:
+  suite:
+    description: "Test suite to run: smoke, critest, or e2e"
+    required: true
+  artifact:
+    description: "Name of the build artifact to download"
+    required: true
+  log-name:
+    description: "Name for the uploaded log artifact"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-docker
+      with:
+        verbose: true
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+
+    - shell: bash
+      run: make ${{ inputs.suite }} ARTIFACT=${{ inputs.artifact }}
+
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: ${{ inputs.log-name }}
+        path: ~/.nanokube-${{ inputs.suite }}/log

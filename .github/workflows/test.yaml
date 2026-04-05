@@ -22,35 +22,21 @@ jobs:
   smoke:
     needs: build
     runs-on: ubuntu-24.04
-    env:
-      ARTIFACT: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 1
 
-      - uses: ./.github/actions/setup-docker
+      - uses: ./.github/actions/run-test
         with:
-          verbose: true
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT }}
-
-      - run: make smoke ARTIFACT=${{ env.ARTIFACT }}
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: nanokube-log-smoke
-          path: ~/.nanokube-smoke/log
+          suite: smoke
+          artifact: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
+          log-name: nanokube-log-smoke
 
   conformance:
     needs: [build, smoke]
     runs-on: ubuntu-24.04
-    env:
-      ARTIFACT: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,23 +47,13 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - uses: ./.github/actions/setup-docker
+      - uses: ./.github/actions/run-test
         with:
-          verbose: true
+          suite: ${{ matrix.suite }}
+          artifact: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
+          log-name: nanokube-log-${{ matrix.suite }}
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT }}
-
-      - run: make ${{ matrix.suite }} ARTIFACT=${{ env.ARTIFACT }}
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: nanokube-log-${{ matrix.suite }}
-          path: ~/.nanokube-${{ matrix.suite }}/log
-
-  cross-platform:
+  cross-platform-smoke:
     needs: [build, conformance]
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -86,25 +62,36 @@ jobs:
         runner:
           - ubuntu-24.04-arm
           - macos-26-intel
-        suite: [smoke, critest, e2e]
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
           fetch-depth: 1
 
-      - uses: ./.github/actions/setup-docker
+      - uses: ./.github/actions/run-test
         with:
-          verbose: true
+          suite: smoke
+          artifact: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+          log-name: nanokube-log-${{ matrix.runner }}-smoke
 
-      - uses: actions/download-artifact@v4
+  cross-platform-full:
+    needs: [build, cross-platform-smoke]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04-arm
+          - macos-26-intel
+        suite: [critest, e2e]
+    steps:
+      - uses: actions/checkout@v6
         with:
-          name: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+          submodules: recursive
+          fetch-depth: 1
 
-      - run: make ${{ matrix.suite }} ARTIFACT=${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
-
-      - uses: actions/upload-artifact@v7
-        if: always()
+      - uses: ./.github/actions/run-test
         with:
-          name: nanokube-log-${{ matrix.runner }}-${{ matrix.suite }}
-          path: ~/.nanokube-${{ matrix.suite }}/log
+          suite: ${{ matrix.suite }}
+          artifact: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+          log-name: nanokube-log-${{ matrix.runner }}-${{ matrix.suite }}
