@@ -26,7 +26,8 @@ type EventRecorderImpl struct {
 	recorder     record.EventRecorder
 	recorderOnce sync.Once
 
-	nodeReady chan struct{}
+	nodeReady     chan struct{}
+	nodeReadyOnce sync.Once
 }
 
 func (e *EventRecorderImpl) Recorder() record.EventRecorder {
@@ -58,8 +59,10 @@ func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reas
 
 func (e *EventRecorderImpl) checkNodeReady(reason string) {
 	if reason == "NodeReady" {
-		e.log.Info().Msg("node is ready")
-		close(e.nodeReady)
+		e.nodeReadyOnce.Do(func() {
+			e.log.Info().Msg("node is ready")
+			close(e.nodeReady)
+		})
 	}
 }
 
