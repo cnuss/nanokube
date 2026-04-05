@@ -281,6 +281,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 			return nil, ctx.Err()
 		case <-k.ready:
 			k.log.Info().Msg("kubelet is ready")
+			k.crid.WithKubeClient(k.KubeClient())
 			return component.Ready(), nil
 		}
 	}
@@ -311,13 +312,14 @@ func (k *Kubelet) WaitForApiServer(ctx context.Context) {
 		}
 	}
 
-	k.crid.WithKubeClient(k.KubeClient())
 }
 
 func (k *Kubelet) WaitForNodeReady(ctx context.Context) {
-	// TODO: Make EventRecorder provided by crid?
 	k.log.Info().Msg("waiting for node ready")
-	k.crid.DefaultBackend().EventRecorder().WaitForNodeReady(ctx)
+	if err := k.crid.DefaultBackend().EventRecorder().WaitForNodeReady(ctx); err != nil {
+		k.log.Warn().Err(err).Msg("wait for node ready cancelled")
+		return
+	}
 	k.log.Info().Msg("node is ready")
 	k.readyOnce.Do(func() { close(k.ready) })
 }

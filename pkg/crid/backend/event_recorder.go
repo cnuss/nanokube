@@ -62,11 +62,10 @@ func (e *EventRecorderImpl) checkNodeReady(object runtime.Object, eventtype stri
 	if eventtype != v1.EventTypeNormal || reason != "NodeReady" {
 		return
 	}
-	if _, ok := object.(*v1.Node); !ok {
-		return
-	}
-	e.log.Info().Any("object", object).Msg("NodeReady event detected")
-	e.nodeReadyOnce.Do(func() { close(e.nodeReady) })
+	e.nodeReadyOnce.Do(func() {
+		e.log.Info().Any("object", object).Msg("NodeReady event detected")
+		close(e.nodeReady)
+	})
 }
 
 func (e *EventRecorderImpl) WaitForNodeReady(ctx context.Context) error {
