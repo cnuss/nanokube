@@ -78,6 +78,8 @@ jobs:
   cross-platform-full:
     needs: [build, cross-platform-smoke]
     runs-on: ${{ matrix.runner }}
+    # macos runners are currently too slow for the full e2e suite
+    if: matrix.suite == 'e2e' && matrix.runner != 'ubuntu-24.04-arm'
     strategy:
       fail-fast: false
       matrix:
