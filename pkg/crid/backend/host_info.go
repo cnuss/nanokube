@@ -79,7 +79,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 
 	type probe struct {
 		name string
-		cmd  string            // shell command; stderr suppressed commands should use 2>/dev/null || echo ''
+		cmd  string             // shell command; stderr suppressed commands should use 2>/dev/null || echo ''
 		fn   func(string) error // called with trimmed output
 	}
 
