@@ -877,17 +877,20 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 		// Ensure pause image is available
 		imgSpec := &runtimeapi.ImageSpec{Image: dockerConfig.Image}
 		imgReq := &runtimeapi.ImageStatusRequest{Image: imgSpec, Verbose: true}
-		image, _ := s.ImageStatus(ctx, imgReq)
-		if image.Image == nil {
+		image, err := s.ImageStatus(ctx, imgReq)
+		if err != nil || image.Image == nil {
 			if _, err := s.PullImage(ctx, &runtimeapi.PullImageRequest{Image: imgSpec}); err != nil {
 				return nil, component.WrapErr(s.log, err)
 			}
-			image, _ = s.ImageStatus(ctx, imgReq)
+			image, err = s.ImageStatus(ctx, imgReq)
+			if err != nil {
+				return nil, component.WrapErr(s.log, err)
+			}
 		}
 
 		// Platform from image info
 		var platform *ocispec.Platform
-		if image.Info != nil {
+		if image != nil && image.Info != nil {
 			platform = &ocispec.Platform{OS: image.Info["os"], Architecture: image.Info["architecture"]}
 		}
 
