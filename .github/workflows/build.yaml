@@ -19,8 +19,29 @@ jobs:
   build:
     uses: ./.github/workflows/.build.yaml
 
-  release:
+  smoke:
     needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - macos-26
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: ./.github/actions/run-test
+        with:
+          suite: smoke
+          artifact: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+          log-name: nanokube-log-${{ matrix.runner }}-smoke
+
+  release:
+    needs: [build, smoke]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
