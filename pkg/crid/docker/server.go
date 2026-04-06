@@ -232,7 +232,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 	}
 	if state == runtimeapi.ContainerState_CONTAINER_EXITED {
 		status.ExitCode = int32(inspect.State.ExitCode)
-		if inspect.State.OOMKilled {
+		if inspect.State.OOMKilled || (inspect.State.ExitCode == 137 && inspect.HostConfig.Memory > 0) {
 			status.Reason = "OOMKilled"
 		} else if inspect.State.ExitCode == 0 {
 			status.Reason = "Completed"
