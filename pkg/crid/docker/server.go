@@ -147,7 +147,6 @@ func (s *Server) CheckpointContainer(ctx context.Context, req *runtimeapi.Checkp
 
 // ContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ContainerStats(ctx context.Context, req *runtimeapi.ContainerStatsRequest) (*runtimeapi.ContainerStatsResponse, error) {
-	s.log.Trace().Str("id", req.ContainerId).Msg("ContainerStats")
 	id := req.GetContainerId()
 
 	statusResp, err := s.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{ContainerId: id})
@@ -194,8 +193,6 @@ func (s *Server) ContainerStats(ctx context.Context, req *runtimeapi.ContainerSt
 
 // ContainerStatus implements [v1.RuntimeServiceServer].
 func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerStatusRequest) (*runtimeapi.ContainerStatusResponse, error) {
-	s.log.Trace().Str("id", req.ContainerId).Msg("ContainerStatus")
-
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetContainerId())
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
@@ -251,7 +248,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 		})
 	}
 
-	s.log.Trace().Str("id", inspect.ID[:min(12, len(inspect.ID))]).Str("state", inspect.State.Status).Int32("exitCode", status.ExitCode).Str("reason", status.Reason).Msg("ContainerStatus")
+	s.log.Debug().Str("id", inspect.ID[:min(12, len(inspect.ID))]).Str("state", inspect.State.Status).Int32("exitCode", status.ExitCode).Str("reason", status.Reason).Msg("ContainerStatus")
 
 	resp := &runtimeapi.ContainerStatusResponse{Status: status}
 	if req.GetVerbose() {
@@ -472,8 +469,6 @@ func (s *Server) GetContainerEvents(req *runtimeapi.GetEventsRequest, stream grp
 
 // ListContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
-	s.log.Trace().Msg("ListContainerStats")
-
 	filter := req.GetFilter()
 	containers, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
 		Filter: &runtimeapi.ContainerFilter{
@@ -500,8 +495,6 @@ func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListCon
 
 // ListContainers implements [v1.RuntimeServiceServer].
 func (s *Server) ListContainers(ctx context.Context, req *runtimeapi.ListContainersRequest) (*runtimeapi.ListContainersResponse, error) {
-	s.log.Trace().Msg("ListContainers")
-
 	lb := s.backend.labels.NewBuilder(nil).WithType(labels.TypeContainer)
 	f := s.backend.Into.Filters(lb)
 
@@ -552,7 +545,6 @@ func (s *Server) ListMetricDescriptors(_ context.Context, req *runtimeapi.ListMe
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
-	s.log.Trace().Msg("ListPodSandbox")
 	if req == nil {
 		req = &runtimeapi.ListPodSandboxRequest{}
 	}
@@ -610,8 +602,6 @@ func (s *Server) PodSandboxStats(_ context.Context, req *runtimeapi.PodSandboxSt
 
 // PodSandboxStatus implements [v1.RuntimeServiceServer].
 func (s *Server) PodSandboxStatus(ctx context.Context, req *runtimeapi.PodSandboxStatusRequest) (*runtimeapi.PodSandboxStatusResponse, error) {
-	s.log.Trace().Str("id", req.PodSandboxId).Msg("PodSandboxStatus")
-
 	inspect, err := s.backend.client.ContainerInspect(ctx, req.GetPodSandboxId())
 	if err != nil {
 		return nil, component.WrapErr(s.log, err)
@@ -736,7 +726,6 @@ func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePod
 
 // ReopenContainerLog implements [v1.RuntimeServiceServer].
 func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenContainerLogRequest) (*runtimeapi.ReopenContainerLogResponse, error) {
-	s.log.Trace().Str("id", req.ContainerId).Msg("ReopenContainerLog")
 	id := req.GetContainerId()
 	s.backend.StopLogs(id)
 	s.backend.StartLogs(id)
@@ -925,7 +914,6 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 // RuntimeConfig implements [v1.RuntimeServiceServer].
 func (s *Server) RuntimeConfig(ctx context.Context, req *runtimeapi.RuntimeConfigRequest) (*runtimeapi.RuntimeConfigResponse, error) {
-	s.log.Trace().Msg("RuntimeConfig")
 	return &runtimeapi.RuntimeConfigResponse{}, nil
 }
 
@@ -944,8 +932,6 @@ func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContai
 
 // Status implements [v1.RuntimeServiceServer].
 func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
-	s.log.Trace().Msg("Status")
-
 	info, err := s.backend.client.Info(ctx)
 	_, netErr := s.backend.client.NetworkInspect(ctx, "bridge", network.InspectOptions{})
 
@@ -969,7 +955,6 @@ func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*ru
 // StopContainer implements [v1.RuntimeServiceServer].
 func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContainerRequest) (*runtimeapi.StopContainerResponse, error) {
 	id := req.GetContainerId()
-	s.log.Trace().Str("id", id[:min(12, len(id))]).Msg("StopContainer")
 	s.backend.StopLogs(id)
 
 	t := int(req.GetTimeout())
@@ -1009,7 +994,6 @@ func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSand
 
 // UpdateContainerResources implements [v1.RuntimeServiceServer].
 func (s *Server) UpdateContainerResources(ctx context.Context, req *runtimeapi.UpdateContainerResourcesRequest) (*runtimeapi.UpdateContainerResourcesResponse, error) {
-	s.log.Trace().Str("id", req.ContainerId).Msg("UpdateContainerResources")
 	resources := req.Linux
 	if resources == nil {
 		return &runtimeapi.UpdateContainerResourcesResponse{}, nil
@@ -1038,7 +1022,6 @@ func (s *Server) UpdatePodSandboxResources(_ context.Context, req *runtimeapi.Up
 
 // UpdateRuntimeConfig implements [v1.RuntimeServiceServer].
 func (s *Server) UpdateRuntimeConfig(ctx context.Context, req *runtimeapi.UpdateRuntimeConfigRequest) (*runtimeapi.UpdateRuntimeConfigResponse, error) {
-	s.log.Trace().Msg("UpdateRuntimeConfig")
 	return &runtimeapi.UpdateRuntimeConfigResponse{}, nil
 }
 

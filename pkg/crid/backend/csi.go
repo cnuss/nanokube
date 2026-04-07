@@ -95,8 +95,6 @@ func (c *CSIImpl) Start(ctx context.Context, pluginsDir, registrationDir string)
 // reconciles the CSIDriver and StorageClass objects, then runs a
 // ProvisionController for this backend.
 func (c *CSIImpl) StartProvisioner(ctx context.Context, client clientset.Interface, isDefault bool) {
-	c.log.Trace().Bool("isDefault", isDefault).Msg("StartProvisioner")
-
 	regLis, err := net.Listen("unix", c.regEndpoint)
 	if err != nil {
 		c.log.Error().Err(err).Msg("failed to listen on registration socket")

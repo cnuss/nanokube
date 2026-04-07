@@ -122,14 +122,11 @@ type CadvisorImpl struct {
 
 // ContainerFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) ContainerFsInfo(ctx context.Context) (v2.FsInfo, error) {
-	c.log.Trace().Msg("ContainerFsInfo")
 	return c.GetDirFsInfo("/")
 }
 
 // ContainerInfoV2 implements [cadvisor.Interface].
 func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (map[string]v2.ContainerInfo, error) {
-	c.log.Trace().Str("name", name).Bool("recursive", options.Recursive).Msg("ContainerInfoV2")
-
 	cs := c.backend.ContainerServer()
 	if cs == nil {
 		return map[string]v2.ContainerInfo{}, nil
@@ -187,8 +184,6 @@ func (c *CadvisorImpl) ContainerInfoV2(name string, options v2.RequestOptions) (
 
 // GetDirFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) GetDirFsInfo(path string) (v2.FsInfo, error) {
-	c.log.Trace().Str("path", path).Msg("GetDirFsInfo")
-
 	c.mu.Lock()
 	if entry, ok := c.fsCache[path]; ok && time.Now().Before(entry.expiresAt) {
 		info := entry.info
@@ -249,8 +244,6 @@ func (c *CadvisorImpl) GetDirFsInfo(path string) (v2.FsInfo, error) {
 
 // GetRequestedContainersInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) GetRequestedContainersInfo(containerName string, options v2.RequestOptions) (map[string]*v1.ContainerInfo, error) {
-	c.log.Trace().Str("name", containerName).Bool("recursive", options.Recursive).Msg("GetRequestedContainersInfo")
-
 	v2Info, err := c.ContainerInfoV2(containerName, options)
 	if err != nil {
 		return nil, err
@@ -296,14 +289,11 @@ func (c *CadvisorImpl) GetRequestedContainersInfo(containerName string, options 
 
 // ImagesFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) ImagesFsInfo(ctx context.Context) (v2.FsInfo, error) {
-	c.log.Trace().Msg("ImagesFsInfo")
 	return c.ContainerFsInfo(ctx)
 }
 
 // MachineInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) MachineInfo() (*v1.MachineInfo, error) {
-	c.log.Trace().Msg("MachineInfo")
-
 	host, err := c.backend.HostInfo()
 	if err != nil {
 		c.log.Warn().Err(err).Msg("HostInfo failed, reporting minimal capacity")
@@ -329,20 +319,16 @@ func (c *CadvisorImpl) MachineInfo() (*v1.MachineInfo, error) {
 
 // RootFsInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) RootFsInfo() (v2.FsInfo, error) {
-	c.log.Trace().Msg("RootFsInfo")
 	return c.GetDirFsInfo("/")
 }
 
 // Start implements [cadvisor.Interface].
 func (c *CadvisorImpl) Start() error {
-	c.log.Trace().Msg("Start")
 	return nil
 }
 
 // VersionInfo implements [cadvisor.Interface].
 func (c *CadvisorImpl) VersionInfo() (*v1.VersionInfo, error) {
-	c.log.Trace().Msg("VersionInfo")
-
 	host, err := c.backend.HostInfo()
 	if err != nil {
 		c.log.Warn().Err(err).Msg("HostInfo failed for VersionInfo")

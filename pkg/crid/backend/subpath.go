@@ -29,12 +29,10 @@ func (s *SubpathImpl) remap(path string) string {
 }
 
 func (s *SubpathImpl) CleanSubPaths(podDir string, volumeName string) error {
-	s.log.Trace().Str("podDir", podDir).Str("volume", volumeName).Msg("CleanSubPaths not implemented")
 	return nil
 }
 
 func (s *SubpathImpl) PrepareSafeSubpath(sub subpath.Subpath) (string, func(), error) {
-	s.log.Trace().Str("path", sub.Path).Msg("PrepareSafeSubpath not implemented")
 	return sub.Path, nil, nil
 }
 

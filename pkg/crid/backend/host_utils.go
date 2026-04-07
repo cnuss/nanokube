@@ -21,17 +21,14 @@ type HostUtilsImpl struct {
 }
 
 func (h *HostUtilsImpl) DeviceOpened(pathname string) (bool, error) {
-	h.log.Trace().Str("path", pathname).Msg("DeviceOpened not implemented")
 	return false, nil
 }
 
 func (h *HostUtilsImpl) PathIsDevice(pathname string) (bool, error) {
-	h.log.Trace().Str("path", pathname).Msg("PathIsDevice not implemented")
 	return false, nil
 }
 
 func (h *HostUtilsImpl) MakeRShared(path string) error {
-	h.log.Trace().Str("path", path).Msg("MakeRShared not implemented")
 	return nil
 }
 
@@ -79,7 +76,6 @@ func (h *HostUtilsImpl) GetOwner(pathname string) (int64, int64, error) {
 }
 
 func (h *HostUtilsImpl) GetSELinuxSupport(pathname string) (bool, error) {
-	h.log.Trace().Str("path", pathname).Msg("GetSELinuxSupport not implemented")
 	return false, nil
 }
 
@@ -88,7 +84,6 @@ func (h *HostUtilsImpl) GetMode(pathname string) (os.FileMode, error) {
 }
 
 func (h *HostUtilsImpl) GetSELinuxMountContext(pathname string) (string, error) {
-	h.log.Trace().Str("path", pathname).Msg("GetSELinuxMountContext not implemented")
 	return "", nil
 }
 

@@ -99,7 +99,6 @@ func (m *ContainerManagerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {
 }
 
 func (m *ContainerManagerImpl) GetNodeAllocatableReservation() v1.ResourceList {
-	m.log.Trace().Msg("GetNodeAllocatableReservation not implemented")
 	return nil
 }
 
@@ -112,7 +111,6 @@ func (m *ContainerManagerImpl) GetCapacity(localStorageCapacityIsolation bool) v
 }
 
 func (m *ContainerManagerImpl) GetDevicePluginResourceCapacity() (v1.ResourceList, v1.ResourceList, []string) {
-	m.log.Trace().Msg("GetDevicePluginResourceCapacity not implemented")
 	return nil, nil, nil
 }
 
@@ -339,7 +337,6 @@ func (p *podContainerManager) EnsureExists(logger klog.Logger, pod *v1.Pod) erro
 }
 
 func (p *podContainerManager) Exists(pod *v1.Pod) bool {
-	p.log.Trace().Str("pod", pod.Name).Msg("checking if pod container exists")
 	if p.backend == nil {
 		return true
 	}
