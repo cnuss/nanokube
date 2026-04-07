@@ -399,8 +399,7 @@ type podAdmitHandler struct {
 
 func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attrs.Pod
-	hosts := p.backend.Hosts()
-	p.log.Info().Any("attrs", attrs).Any("hosts", hosts.Entries(p.backend.Context(), NetworkBridge)).Msg("admitting pod")
+	p.log.Info().Str("pod", pod.Name).Str("namespace", pod.Namespace).Msg("admitting pod")
 
 	if h := p.backend.Hosts(); h != nil {
 		network := NetworkBridge

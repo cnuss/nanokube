@@ -550,7 +550,7 @@ func (b *BackendImpl) HostInfo() (*HostInfo, error) {
 			b.log.Warn().Err(err).Msg("failed to probe host info")
 			return nil, err
 		}
-		b.log.Trace().Any("hostinfo", b.hostInfo).Msg("host info probed successfully")
+		b.log.Trace().Str("hostname", b.hostInfo.Hostname).Str("domain", b.hostInfo.Domain).Str("machineId", b.hostInfo.MachineID).Msg("host info probed successfully")
 	}
 	return b.hostInfo, nil
 }

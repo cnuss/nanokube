@@ -264,7 +264,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 // CreateContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
-	s.log.Info().Any("req", req).Msg("CreateContainer")
+	s.log.Info().Str("sandbox", req.GetPodSandboxId()).Str("name", req.GetConfig().GetMetadata().GetName()).Msg("CreateContainer")
 	config := req.GetConfig()
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
@@ -384,7 +384,7 @@ func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtim
 
 // ExecSync implements [v1.RuntimeServiceServer].
 func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	s.log.Info().Any("req", req).Msg("ExecSync")
+	s.log.Info().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
 	id := req.GetContainerId()
 	cmd := req.GetCmd()
 
@@ -745,7 +745,7 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	s.log.Info().Any("req", req).Msg("RunPodSandbox")
+	s.log.Info().Str("name", req.GetConfig().GetMetadata().GetName()).Str("namespace", req.GetConfig().GetMetadata().GetNamespace()).Msg("RunPodSandbox")
 	config := req.GetConfig()
 	meta := config.GetMetadata()
 

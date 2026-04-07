@@ -104,7 +104,7 @@ func (i *DockerInto) Event(msg events.Message) *backend.Event {
 	case events.NetworkEventType:
 		resource = backend.ResourceNetwork
 	default:
-		i.log.Warn().Any("msg", msg).Str("type", string(msg.Type)).Msg("Dropping event: unknown type")
+		i.log.Warn().Str("type", string(msg.Type)).Str("action", string(msg.Action)).Str("id", msg.Actor.ID).Msg("Dropping event: unknown type")
 		return nil
 	}
 

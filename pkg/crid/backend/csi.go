@@ -160,7 +160,7 @@ func (c *CSIImpl) DriverName() string {
 // --- pluginregistration.Registration ---
 
 func (c *CSIImpl) GetInfo(ctx context.Context, req *pluginreg.InfoRequest) (*pluginreg.PluginInfo, error) {
-	c.log.Warn().Any("req", req).Msg("GetInfo")
+	c.log.Warn().Msg("GetInfo")
 	return &pluginreg.PluginInfo{
 		Type:              pluginreg.CSIPlugin,
 		Name:              c.driverName,
@@ -170,7 +170,7 @@ func (c *CSIImpl) GetInfo(ctx context.Context, req *pluginreg.InfoRequest) (*plu
 }
 
 func (c *CSIImpl) NotifyRegistrationStatus(_ context.Context, status *pluginreg.RegistrationStatus) (*pluginreg.RegistrationStatusResponse, error) {
-	c.log.Warn().Any("status", status).Msg("NotifyRegistrationStatus")
+	c.log.Warn().Bool("registered", status.GetPluginRegistered()).Str("error", status.GetError()).Msg("NotifyRegistrationStatus")
 	if status.PluginRegistered {
 		c.log.Info().Msg("CSI driver registered with kubelet")
 	} else {
@@ -182,7 +182,7 @@ func (c *CSIImpl) NotifyRegistrationStatus(_ context.Context, status *pluginreg.
 // --- csipb.IdentityServer ---
 
 func (c *CSIImpl) GetPluginInfo(_ context.Context, req *csipb.GetPluginInfoRequest) (*csipb.GetPluginInfoResponse, error) {
-	c.log.Warn().Any("req", req).Msg("GetPluginInfo")
+	c.log.Warn().Msg("GetPluginInfo")
 	return &csipb.GetPluginInfoResponse{
 		Name:          c.driverName,
 		VendorVersion: versionutil.Get().GitVersion,
@@ -190,7 +190,7 @@ func (c *CSIImpl) GetPluginInfo(_ context.Context, req *csipb.GetPluginInfoReque
 }
 
 func (c *CSIImpl) GetPluginCapabilities(_ context.Context, req *csipb.GetPluginCapabilitiesRequest) (*csipb.GetPluginCapabilitiesResponse, error) {
-	c.log.Warn().Any("req", req).Msg("GetPluginCapabilities")
+	c.log.Warn().Msg("GetPluginCapabilities")
 	return &csipb.GetPluginCapabilitiesResponse{
 		Capabilities: []*csipb.PluginCapability{
 			{
@@ -211,7 +211,7 @@ func (c *CSIImpl) Probe(_ context.Context, req *csipb.ProbeRequest) (*csipb.Prob
 // --- csipb.NodeServer ---
 
 func (c *CSIImpl) NodeGetInfo(_ context.Context, req *csipb.NodeGetInfoRequest) (*csipb.NodeGetInfoResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeGetInfo")
+	c.log.Warn().Msg("NodeGetInfo")
 	hostInfo, err := c.backend.HostInfo()
 	if err != nil {
 		return nil, component.WrapErr(c.log, err)
@@ -222,14 +222,14 @@ func (c *CSIImpl) NodeGetInfo(_ context.Context, req *csipb.NodeGetInfoRequest) 
 }
 
 func (c *CSIImpl) NodeGetCapabilities(_ context.Context, req *csipb.NodeGetCapabilitiesRequest) (*csipb.NodeGetCapabilitiesResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeGetCapabilities")
+	c.log.Warn().Msg("NodeGetCapabilities")
 	return &csipb.NodeGetCapabilitiesResponse{
 		Capabilities: []*csipb.NodeServiceCapability{},
 	}, nil
 }
 
 func (c *CSIImpl) NodePublishVolume(_ context.Context, req *csipb.NodePublishVolumeRequest) (*csipb.NodePublishVolumeResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodePublishVolume")
+	c.log.Warn().Str("volumeId", req.GetVolumeId()).Str("targetPath", req.GetTargetPath()).Msg("NodePublishVolume")
 	targetPath := req.GetTargetPath()
 	mountpoint := req.GetVolumeContext()["mountpoint"]
 
@@ -243,7 +243,7 @@ func (c *CSIImpl) NodePublishVolume(_ context.Context, req *csipb.NodePublishVol
 }
 
 func (c *CSIImpl) NodeUnpublishVolume(_ context.Context, req *csipb.NodeUnpublishVolumeRequest) (*csipb.NodeUnpublishVolumeResponse, error) {
-	c.log.Warn().Any("req", req).Msg("NodeUnpublishVolume")
+	c.log.Warn().Str("targetPath", req.GetTargetPath()).Msg("NodeUnpublishVolume")
 	targetPath := req.GetTargetPath()
 	os.Remove(targetPath)
 	return &csipb.NodeUnpublishVolumeResponse{}, nil
@@ -301,7 +301,7 @@ func (c *CSIImpl) NodeUnstageVolume(_ context.Context, req *csipb.NodeUnstageVol
 
 // Provision implements [controller.Provisioner].
 func (c *CSIImpl) Provision(ctx context.Context, opts provisioner.ProvisionOptions) (*corev1.PersistentVolume, provisioner.ProvisioningState, error) {
-	c.log.Warn().Any("opts", opts).Msg("Provision")
+	c.log.Warn().Str("pvName", opts.PVName).Str("pvc", opts.PVC.Name).Str("namespace", opts.PVC.Namespace).Msg("Provision")
 	capacity := opts.PVC.Spec.Resources.Requests[corev1.ResourceStorage]
 
 	resp, err := c.backend.VolumeServer().CreateVolume(ctx, &csipb.CreateVolumeRequest{
@@ -345,7 +345,7 @@ func (c *CSIImpl) Provision(ctx context.Context, opts provisioner.ProvisionOptio
 
 // Delete implements [controller.Provisioner].
 func (c *CSIImpl) Delete(ctx context.Context, pv *corev1.PersistentVolume) error {
-	c.log.Warn().Any("pv", pv).Msg("Delete")
+	c.log.Warn().Str("pv", pv.Name).Msg("Delete")
 	csiSource := pv.Spec.CSI
 	if csiSource == nil {
 		return component.WrapErr(c.log, fmt.Errorf("PV %s has no CSI source", pv.Name))

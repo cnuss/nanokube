@@ -210,7 +210,7 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) ma
 				h.log.Warn().Str("sandbox", sandbox.GetId()).Msg("pod sandbox has no IP address, skipping")
 				continue
 			}
-			h.log.Info().Str("sandbox", sandbox.GetId()).Str("ip", ip).Any("additionalIps", ips).Msg("found pod sandbox IP from backend")
+			h.log.Info().Str("sandbox", sandbox.GetId()).Str("ip", ip).Int("additionalIps", len(ips)).Msg("found pod sandbox IP from backend")
 			name := sandbox.GetMetadata().GetName()
 			hostname := strings.ToLower(fmt.Sprintf("%s.%s", name, domain))
 			entries[hostname] = append(entries[hostname], ip)
@@ -235,7 +235,7 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) ma
 		}
 	}
 
-	h.log.Info().Any("entries", entries).Msg("Host Entries")
+	h.log.Info().Int("count", len(entries)).Msg("Host Entries")
 	return entries
 }
 
