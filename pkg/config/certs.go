@@ -14,12 +14,10 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/component"
-	"github.com/rs/zerolog/log"
 )
 
-var logger = component.NewLogger("config")
-
 type Certs struct {
+	log      component.Logger
 	Name     string
 	DataDir  string
 	Hostname string
@@ -29,6 +27,7 @@ type Certs struct {
 
 func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 	c := &Certs{
+		log:      component.NewLogger("certs"),
 		Name:     name,
 		DataDir:  dataDir,
 		Hostname: hostname,
@@ -46,11 +45,11 @@ func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 		var err error
 		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
-			log.Fatal().Err(err).Msg("failed to generate key")
+			c.log.Error().Err(err).Msg("failed to generate key")
 		}
-		logger.Info().Msg("generated new key")
+		c.log.Info().Msg("generated new key")
 	} else {
-		logger.Info().Msg("reusing existing key")
+		c.log.Info().Msg("reusing existing key")
 	}
 
 	template := &x509.Certificate{
@@ -81,17 +80,17 @@ func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create cert")
+		c.log.Error().Err(err).Msg("failed to create cert")
 	}
 
 	c.CertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to marshal key")
+		c.log.Error().Err(err).Msg("failed to marshal key")
 	}
 	c.KeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	logger.Info().Msg("certificates generated")
+	c.log.Info().Msg("certificates generated")
 	return c
 }
 
