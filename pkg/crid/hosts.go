@@ -36,32 +36,32 @@ func init() {
 		DefaultHosts.log.Error().Err(err).Msg("failed to get local outbound IP")
 	}
 
-	lookupIps, err := lookupIPs(hostname)
-	if err != nil {
-		DefaultHosts.log.Error().Err(err).Msg("failed to lookup IPs for hostname")
-	}
+	// lookupIps, err := lookupIPs(hostname)
+	// if err != nil {
+	// 	DefaultHosts.log.Error().Err(err).Msg("failed to lookup IPs for hostname")
+	// }
 
-	interfaceIps, err := interfaceIPs()
-	if err != nil {
-		DefaultHosts.log.Error().Err(err).Msg("failed to get interface IPs")
-	}
+	// interfaceIps, err := interfaceIPs()
+	// if err != nil {
+	// 	DefaultHosts.log.Error().Err(err).Msg("failed to get interface IPs")
+	// }
 
-	DefaultHosts.WithHost(hostname, outboundIps).Log().Debug().Str("hostname", hostname).Strs("outboundIPs", outboundIps).Strs("lookupIPs", lookupIps).Strs("interfaceIPs", interfaceIps).Msg("resolved local IP addresses")
+	DefaultHosts.WithHost(hostname, outboundIps)
 
 	// Sniff test to make sure hostname resolution is working: Check if outbound IPs are included in lookup IPs
-	found := false
-	for _, outboundIp := range outboundIps {
-		for _, lookupIp := range lookupIps {
-			if outboundIp == lookupIp {
-				found = true
-				break
-			}
-		}
-	}
+	// found := false
+	// for _, outboundIp := range outboundIps {
+	// 	for _, lookupIp := range lookupIps {
+	// 		if outboundIp == lookupIp {
+	// 			found = true
+	// 			break
+	// 		}
+	// 	}
+	// }
 
-	if !found {
-		// panic(fmt.Sprintf("hostname resolution is not working: outbound IPs %v are not included in lookup IPs %v", outboundIps, lookupIps))
-	}
+	// if !found {
+	// 	// panic(fmt.Sprintf("hostname resolution is not working: outbound IPs %v are not included in lookup IPs %v", outboundIps, lookupIps))
+	// }
 }
 
 // localOutboundIP discovers the preferred outbound IP by opening a UDP
@@ -75,40 +75,40 @@ func localOutboundIPs() ([]string, error) {
 	return []string{conn.LocalAddr().(*net.UDPAddr).IP.String()}, nil
 }
 
-func lookupIPs(host string) ([]string, error) {
-	ips, err := net.LookupHost(host)
-	if err != nil {
-		return nil, err
-	}
-	return ips, nil
-}
+// func lookupIPs(host string) ([]string, error) {
+// 	ips, err := net.LookupHost(host)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return ips, nil
+// }
 
-func interfaceIPs() ([]string, error) {
-	var ips []string
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, err
-	}
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagRunning == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		ifAddrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range ifAddrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast() {
-				ips = append(ips, ip.String())
-			}
-		}
-	}
-	return ips, nil
-}
+// func interfaceIPs() ([]string, error) {
+// 	var ips []string
+// 	interfaces, err := net.Interfaces()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	for _, iface := range interfaces {
+// 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagRunning == 0 || iface.Flags&net.FlagLoopback != 0 {
+// 			continue
+// 		}
+// 		ifAddrs, err := iface.Addrs()
+// 		if err != nil {
+// 			continue
+// 		}
+// 		for _, addr := range ifAddrs {
+// 			ip, _, err := net.ParseCIDR(addr.String())
+// 			if err != nil {
+// 				continue
+// 			}
+// 			if ip.IsGlobalUnicast() || ip.IsLinkLocalUnicast() {
+// 				ips = append(ips, ip.String())
+// 			}
+// 		}
+// 	}
+// 	return ips, nil
+// }
 
 type hostsImpl struct {
 	ctx      context.Context

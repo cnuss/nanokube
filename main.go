@@ -105,10 +105,10 @@ var rootCmd = &cobra.Command{
 			names[i] = fmt.Sprintf("%T", c)
 		}
 		for i := started - 1; i >= 0; i-- {
-			log.Info().Str("component", names[i]).Msg("stopping")
+			log.Debug().Str("component", names[i]).Msg("stopping")
 			cancels[i]()
 			<-components[i].Stop(shutdownCtx)
-			log.Info().Str("component", names[i]).Msg("stopped")
+			log.Debug().Str("component", names[i]).Msg("stopped")
 		}
 		return nil
 	},

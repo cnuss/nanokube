@@ -263,7 +263,7 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 	}
 	go func() {
 		if err := b.streaming.Start(true); err != nil {
-			b.log.Warn().Err(err).Msg("backend streaming server exited")
+			b.log.Debug().Err(err).Msg("backend streaming server exited")
 		}
 	}()
 
@@ -401,7 +401,7 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 	if b.streaming != nil {
 		err := b.streaming.Stop()
 		if err != nil {
-			b.log.Warn().Err(err).Msg("backend streaming server exited")
+			b.log.Debug().Err(err).Msg("backend streaming server exited")
 		}
 	}
 
