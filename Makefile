@@ -67,9 +67,10 @@ fmt:
 	go fmt ./...
 
 ARGS ?=
+VERBOSE_FLAGS := $(if $(filter 2,$(V)),-vv,$(if $(filter 1,$(V)),-v))
 
 run: fmt build
-	./nanokube $(ARGS)
+	./nanokube $(VERBOSE_FLAGS) $(ARGS)
 
 run-clean: ARGS += --clean
 run-clean: run
