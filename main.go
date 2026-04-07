@@ -144,6 +144,7 @@ func main() {
 	rootCmd, logger, cleanup := component.Setup(rootCmd)
 	rootCmd.SetContext(ctx)
 	log.Logger = logger
+	component.SetupKlog()
 	defer cleanup()
 
 	if err := rootCmd.Execute(); err != nil {
