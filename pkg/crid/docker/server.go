@@ -261,7 +261,7 @@ func (s *Server) ContainerStatus(ctx context.Context, req *runtimeapi.ContainerS
 
 // CreateContainer implements [v1.RuntimeServiceServer].
 func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateContainerRequest) (*runtimeapi.CreateContainerResponse, error) {
-	s.log.Info().Str("sandbox", req.GetPodSandboxId()).Str("name", req.GetConfig().GetMetadata().GetName()).Msg("CreateContainer")
+	s.log.Debug().Str("sandbox", req.GetPodSandboxId()).Str("name", req.GetConfig().GetMetadata().GetName()).Msg("CreateContainer")
 	config := req.GetConfig()
 	sandboxID := req.GetPodSandboxId()
 	meta := config.GetMetadata()
@@ -359,7 +359,7 @@ func (s *Server) CreateContainer(ctx context.Context, req *runtimeapi.CreateCont
 		labelBuilder = labelBuilder.Clone().IncrementAttempt()
 		name, labels, err = labelBuilder.Build()
 		dockerConfig.Labels = labels
-		s.log.Info().Str("name", name).Msg("container name conflict, retrying")
+		s.log.Debug().Str("name", name).Msg("container name conflict, retrying")
 		resp, err = s.backend.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
 	}
 
@@ -381,7 +381,7 @@ func (s *Server) Exec(ctx context.Context, req *runtimeapi.ExecRequest) (*runtim
 
 // ExecSync implements [v1.RuntimeServiceServer].
 func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) (*runtimeapi.ExecSyncResponse, error) {
-	s.log.Info().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
+	s.log.Debug().Str("container", req.GetContainerId()).Strs("cmd", req.GetCmd()).Msg("ExecSync")
 	id := req.GetContainerId()
 	cmd := req.GetCmd()
 
@@ -394,7 +394,7 @@ func (s *Server) ExecSync(ctx context.Context, req *runtimeapi.ExecSyncRequest) 
 			return nil, component.WrapErr(s.log, err)
 		}
 		if sandboxID := s.backend.labels.ParentUID(inspect.Config.Labels); sandboxID != "" {
-			s.log.Info().Str("container", id).Str("sandbox", sandboxID).Strs("cmd", cmd).Msg("routing probe to sandbox")
+			s.log.Debug().Str("container", id).Str("sandbox", sandboxID).Strs("cmd", cmd).Msg("routing probe to sandbox")
 			id = sandboxID
 		}
 	}
@@ -669,7 +669,7 @@ func (s *Server) PortForward(ctx context.Context, req *runtimeapi.PortForwardReq
 // RemoveContainer implements [v1.RuntimeServiceServer].
 func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveContainerRequest) (*runtimeapi.RemoveContainerResponse, error) {
 	id := req.GetContainerId()
-	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemoveContainer")
+	s.log.Debug().Str("id", id[:min(12, len(id))]).Msg("RemoveContainer")
 	s.backend.StopLogs(id)
 
 	if err := s.backend.client.ContainerRemove(ctx, id, container.RemoveOptions{Force: true}); err != nil {
@@ -684,7 +684,7 @@ func (s *Server) RemoveContainer(ctx context.Context, req *runtimeapi.RemoveCont
 // RemovePodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RemovePodSandbox(ctx context.Context, req *runtimeapi.RemovePodSandboxRequest) (*runtimeapi.RemovePodSandboxResponse, error) {
 	id := req.GetPodSandboxId()
-	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
+	s.log.Debug().Str("id", id[:min(12, len(id))]).Msg("RemovePodSandbox")
 
 	// Check if sandbox exists — if not, return success (idempotent)
 	status, err := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: id})
@@ -734,7 +734,7 @@ func (s *Server) ReopenContainerLog(ctx context.Context, req *runtimeapi.ReopenC
 
 // RunPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandboxRequest) (*runtimeapi.RunPodSandboxResponse, error) {
-	s.log.Info().Str("name", req.GetConfig().GetMetadata().GetName()).Str("namespace", req.GetConfig().GetMetadata().GetNamespace()).Msg("RunPodSandbox")
+	s.log.Debug().Str("name", req.GetConfig().GetMetadata().GetName()).Str("namespace", req.GetConfig().GetMetadata().GetNamespace()).Msg("RunPodSandbox")
 	config := req.GetConfig()
 	meta := config.GetMetadata()
 
@@ -757,13 +757,13 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 
 	for _, sb := range existing.GetItems() {
 		if sb.GetAnnotations()["kubernetes.io/config.hash"] == config.GetAnnotations()["kubernetes.io/config.hash"] {
-			s.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("reusing existing sandbox")
+			s.log.Debug().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("reusing existing sandbox")
 			resp, _ := s.PodSandboxStatus(ctx, &runtimeapi.PodSandboxStatusRequest{PodSandboxId: sb.Id})
 			if resp.GetStatus() != nil {
 				status = resp.GetStatus()
 			}
 		} else {
-			s.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing stale sandbox")
+			s.log.Debug().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing stale sandbox")
 			s.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: sb.Id})
 		}
 	}
@@ -846,7 +846,7 @@ func (s *Server) RunPodSandbox(ctx context.Context, req *runtimeapi.RunPodSandbo
 					hostPort := pm.GetHostPort()
 					if hostPort == 0 && len(config.Annotations) == 0 {
 						// If host port is not specified and we do not have any annotations, we're in critest
-						s.log.Info().Int32("containerPort", containerPort).Msg("host port not specified, defaulting to container port (critest compatibility)")
+						s.log.Debug().Int32("containerPort", containerPort).Msg("host port not specified, defaulting to container port (critest compatibility)")
 						hostPort = containerPort
 					}
 					port := nat.Port(fmt.Sprintf("%d/%s", containerPort, strings.ToLower(pm.GetProtocol().String())))
@@ -919,7 +919,7 @@ func (s *Server) RuntimeConfig(ctx context.Context, req *runtimeapi.RuntimeConfi
 
 // StartContainer implements [v1.RuntimeServiceServer].
 func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContainerRequest) (*runtimeapi.StartContainerResponse, error) {
-	s.log.Info().Str("id", req.ContainerId).Msg("StartContainer")
+	s.log.Debug().Str("id", req.ContainerId).Msg("StartContainer")
 	id := req.GetContainerId()
 
 	if err := s.backend.client.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
@@ -970,7 +970,7 @@ func (s *Server) StopContainer(ctx context.Context, req *runtimeapi.StopContaine
 // StopPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) StopPodSandbox(ctx context.Context, req *runtimeapi.StopPodSandboxRequest) (*runtimeapi.StopPodSandboxResponse, error) {
 	id := req.GetPodSandboxId()
-	s.log.Info().Str("id", id[:min(12, len(id))]).Msg("StopPodSandbox")
+	s.log.Debug().Str("id", id[:min(12, len(id))]).Msg("StopPodSandbox")
 
 	resp, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
 		Filter: &runtimeapi.ContainerFilter{PodSandboxId: id},
@@ -1168,7 +1168,7 @@ func (s *Server) RemoveImage(ctx context.Context, req *runtimeapi.RemoveImageReq
 // CreateVolume implements [csipb.ControllerServer].
 func (s *Server) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRequest) (*csipb.CreateVolumeResponse, error) {
 	name := req.GetName()
-	s.log.Info().Str("name", name).Msg("CreateVolume")
+	s.log.Debug().Str("name", name).Msg("CreateVolume")
 
 	params := req.GetParameters()
 	volName, volLabels, err := s.backend.labels.NewBuilder(nil).
@@ -1198,7 +1198,7 @@ func (s *Server) CreateVolume(ctx context.Context, req *csipb.CreateVolumeReques
 // DeleteVolume implements [csipb.ControllerServer].
 func (s *Server) DeleteVolume(ctx context.Context, req *csipb.DeleteVolumeRequest) (*csipb.DeleteVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
-	s.log.Info().Str("volume", volumeID).Msg("DeleteVolume")
+	s.log.Debug().Str("volume", volumeID).Msg("DeleteVolume")
 
 	volName, _, err := s.backend.labels.NewBuilder(nil).WithType(labels.TypeVolume).WithUid(volumeID).Build()
 	if err != nil {

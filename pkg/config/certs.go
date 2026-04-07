@@ -47,9 +47,9 @@ func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 		if err != nil {
 			c.log.Error().Err(err).Msg("failed to generate key")
 		}
-		c.log.Info().Msg("generated new key")
+		c.log.Debug().Msg("generated new key")
 	} else {
-		c.log.Info().Msg("reusing existing key")
+		c.log.Debug().Msg("reusing existing key")
 	}
 
 	template := &x509.Certificate{
@@ -90,7 +90,7 @@ func NewCerts(name, dataDir, hostname string, extraIPs ...net.IP) *Certs {
 	}
 	c.KeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
-	c.log.Info().Msg("certificates generated")
+	c.log.Debug().Msg("certificates generated")
 	return c
 }
 

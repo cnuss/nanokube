@@ -58,7 +58,7 @@ func (b *DockerBackend) DataDir() string {
 
 // Cleanup force-removes all containers and volumes managed by this backend.
 func (b *DockerBackend) Cleanup(ctx context.Context) error {
-	b.log.Info().Msg("cleanup: removing managed containers and volumes")
+	b.log.Debug().Msg("cleanup: removing managed containers and volumes")
 	f := filters.NewArgs()
 	f.Add("label", b.labels.ManagedByFilter())
 	var errs []error
@@ -68,7 +68,7 @@ func (b *DockerBackend) Cleanup(ctx context.Context) error {
 		return err
 	}
 	for _, c := range containers {
-		b.log.Info().Str("id", c.ID[:min(12, len(c.ID))]).Strs("names", c.Names).Msg("cleanup: removing container")
+		b.log.Debug().Str("id", c.ID[:min(12, len(c.ID))]).Strs("names", c.Names).Msg("cleanup: removing container")
 		if err := b.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
 			errs = append(errs, fmt.Errorf("remove container %s: %w", c.ID[:min(12, len(c.ID))], err))
 		}
@@ -79,7 +79,7 @@ func (b *DockerBackend) Cleanup(ctx context.Context) error {
 		return err
 	}
 	for _, v := range volumes.Volumes {
-		b.log.Info().Str("name", v.Name).Msg("cleanup: removing volume")
+		b.log.Debug().Str("name", v.Name).Msg("cleanup: removing volume")
 		if err := b.client.VolumeRemove(ctx, v.Name, true); err != nil {
 			errs = append(errs, fmt.Errorf("remove volume %s: %w", v.Name, err))
 		}
@@ -90,7 +90,7 @@ func (b *DockerBackend) Cleanup(ctx context.Context) error {
 		return err
 	}
 	for _, n := range networks {
-		b.log.Info().Str("name", n.Name).Msg("cleanup: removing network")
+		b.log.Debug().Str("name", n.Name).Msg("cleanup: removing network")
 		if err := b.client.NetworkRemove(ctx, n.ID); err != nil {
 			errs = append(errs, fmt.Errorf("remove network %s: %w", n.Name, err))
 		}
@@ -236,7 +236,7 @@ func (b *DockerBackend) Exec(ctx context.Context, containerID string, cmd []stri
 		Tty:          tty,
 	}
 
-	b.log.Info().Str("container", containerID[:12]).Strs("cmd", cmd).Bool("tty", tty).Msg("exec")
+	b.log.Debug().Str("container", containerID[:12]).Strs("cmd", cmd).Bool("tty", tty).Msg("exec")
 
 	createResp, err := b.client.ContainerExecCreate(ctx, containerID, execConfig)
 	if err != nil {
@@ -267,7 +267,7 @@ func (b *DockerBackend) Exec(ctx context.Context, containerID string, cmd []stri
 		return nil
 	}
 	if inspect.ExitCode != 0 {
-		b.log.Info().Str("container", containerID[:12]).Int("code", inspect.ExitCode).Msg("exec exited")
+		b.log.Debug().Str("container", containerID[:12]).Int("code", inspect.ExitCode).Msg("exec exited")
 		return utilexec.CodeExitError{
 			Err:  fmt.Errorf("command terminated with exit code %d", inspect.ExitCode),
 			Code: inspect.ExitCode,
@@ -285,7 +285,7 @@ func (b *DockerBackend) Attach(ctx context.Context, containerID string, stdin io
 		Stderr: stderr != nil,
 	}
 
-	b.log.Info().Str("container", containerID[:12]).Msg("attach")
+	b.log.Debug().Str("container", containerID[:12]).Msg("attach")
 
 	attachResp, err := b.client.ContainerAttach(ctx, containerID, opts)
 	if err != nil {
@@ -319,7 +319,7 @@ func (b *DockerBackend) PortForward(ctx context.Context, podSandboxID string, po
 		return fmt.Errorf("no IP address for sandbox %s", podSandboxID)
 	}
 
-	b.log.Info().Str("sandbox", podSandboxID[:12]).Int32("port", port).Str("ip", ip).Msg("port-forward")
+	b.log.Debug().Str("sandbox", podSandboxID[:12]).Int32("port", port).Str("ip", ip).Msg("port-forward")
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 10*time.Second)
 	if err != nil {

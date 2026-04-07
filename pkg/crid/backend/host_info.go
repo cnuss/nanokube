@@ -88,13 +88,13 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 			if out != "" {
 				h.WithHostname(out)
 			}
-			log.Info().Str("hostname", h.Hostname).Msg("probed hostname")
+			log.Debug().Str("hostname", h.Hostname).Msg("probed hostname")
 			return nil
 		}},
 		{"machine-id", "cat /etc/machine-id 2>/dev/null || echo ''", func(out string) error {
 			if out != "" {
 				h.WithMachineID(out)
-				log.Info().Str("machineID", h.MachineID).Msg("probed machine-id")
+				log.Debug().Str("machineID", h.MachineID).Msg("probed machine-id")
 			} else {
 				log.Warn().Msg("machine-id not available, falling back to empty")
 				h.WithMachineID("")
@@ -106,7 +106,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 				return fmt.Errorf("empty output")
 			}
 			h.WithCpuInfo(out)
-			log.Info().Int("cpus", len(h.CpuInfo)).Msg("probed cpuinfo")
+			log.Debug().Int("cpus", len(h.CpuInfo)).Msg("probed cpuinfo")
 			return nil
 		}},
 		{"boot_id", "cat /proc/sys/kernel/random/boot_id", func(out string) error {
@@ -114,13 +114,13 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 				return fmt.Errorf("empty output")
 			}
 			h.WithBootID(out)
-			log.Info().Str("bootID", h.BootID).Msg("probed boot_id")
+			log.Debug().Str("bootID", h.BootID).Msg("probed boot_id")
 			return nil
 		}},
 		{"system_uuid", "cat /host/sys/class/dmi/id/product_uuid 2>/dev/null || echo ''", func(out string) error {
 			if out != "" {
 				h.WithSystemUUID(out)
-				log.Info().Str("systemUUID", h.SystemUUID).Msg("probed system_uuid")
+				log.Debug().Str("systemUUID", h.SystemUUID).Msg("probed system_uuid")
 			} else {
 				log.Warn().Msg("product_uuid not available, falling back to boot_id")
 				h.WithSystemUUID(h.BootID)
@@ -132,7 +132,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 				return fmt.Errorf("empty output")
 			}
 			h.WithKernelVersion(out)
-			log.Info().Str("kernel", h.KernelVersion).Msg("probed kernel version")
+			log.Debug().Str("kernel", h.KernelVersion).Msg("probed kernel version")
 			return nil
 		}},
 		{"os-release", "cat /etc/os-release 2>/dev/null || echo ''", func(out string) error {
@@ -149,7 +149,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 				log.Warn().Msg("os-release not available, falling back to unknown")
 				h.WithOSVersion("unknown")
 			} else {
-				log.Info().Str("os", h.OSVersion).Msg("probed os-release")
+				log.Debug().Str("os", h.OSVersion).Msg("probed os-release")
 			}
 			return nil
 		}},
@@ -198,7 +198,7 @@ func NewHostInfo(driver Driver, hosts Hosts) (*HostInfo, error) {
 	if len(h.Nameservers) == 0 {
 		return nil, fmt.Errorf("failed to probe nameservers: no nameserver lines in /etc/resolv.conf")
 	}
-	log.Info().Strs("nameservers", h.Nameservers).Msg("probed nameservers")
+	log.Debug().Strs("nameservers", h.Nameservers).Msg("probed nameservers")
 
 	return h, nil
 }

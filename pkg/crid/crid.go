@@ -51,12 +51,12 @@ type CRID struct {
 
 func NewCRID(ctx context.Context, name, dataDir string, clean bool) *CRID {
 	log := component.NewLogger("crid")
-	log.Info().Msg("initializing")
+	log.Debug().Msg("initializing")
 	return &CRID{ctx: ctx, log: log, name: name, dataDir: dataDir, clean: clean}
 }
 
 func (c *CRID) Start(ctx context.Context) (component.Started, error) {
-	c.log.Info().Msg("starting")
+	c.log.Debug().Msg("starting")
 
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
@@ -73,30 +73,26 @@ func (c *CRID) Start(ctx context.Context) (component.Started, error) {
 	}
 
 	for name, backend := range c.Backends() {
-		c.log.Info().Str("backend", string(name)).Msg("starting backend")
 		if err := backend.Start(ctx, c.Hosts(), c.broadcaster, filepath.Join(c.dataDir, "plugins"), filepath.Join(c.dataDir, "plugins_registry"), c.clean); err != nil {
 			cancel()
 			return nil, fmt.Errorf("backend %s: %w", name, err)
 		}
-		c.log.Info().Str("backend", string(name)).Msg("backend started")
 	}
 
 	return component.Ready(), nil
 }
 
 func (c *CRID) Stop(ctx context.Context) component.Stopped {
-	c.log.Info().Msg("stopping")
+	c.log.Debug().Msg("stopping")
 
 	return component.NotReady(func() {
 		// Stop backends — shuts down gRPC/CRI, preventing the kubelet
 		// from creating new containers during final cleanup.
 		for name, backend := range c.Backends() {
-			c.log.Info().Str("backend", string(name)).Msg("stopping backend")
 			if err := backend.Stop(ctx); err != nil {
 				c.log.Error().Str("backend", string(name)).Err(err).Msg("error stopping backend")
 				continue
 			}
-			c.log.Info().Str("backend", string(name)).Msg("backend stopped")
 		}
 
 		if c.broadcaster != nil {
@@ -114,12 +110,12 @@ func (c *CRID) Stop(ctx context.Context) component.Stopped {
 func (c *CRID) WithKubeClient(client clientset.Interface) {
 	go func() {
 		if c.broadcaster != nil {
-			c.log.Info().Msg("starting event broadcaster")
+			c.log.Debug().Msg("starting event broadcaster")
 			c.broadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: client.CoreV1().Events("")})
 		}
 
 		for _, b := range c.Backends() {
-			c.log.Info().Str("backend", string(b.Name())).Msg("starting CSI provisioner for backend")
+			c.log.Debug().Str("backend", string(b.Name())).Msg("starting CSI provisioner for backend")
 			b.WithKubeClient(client).CSI().StartProvisioner(c.ctx, client, b.Name() == c.DefaultBackend().Name())
 		}
 	}()
@@ -162,7 +158,7 @@ func (c *CRID) Kubeconfig() string {
 			CurrentContext: c.name,
 		}
 
-		c.log.Info().Str("path", c.kubeconfig).Msg("writing kubeconfig")
+		c.log.Debug().Str("path", c.kubeconfig).Msg("writing kubeconfig")
 		clientcmd.WriteToFile(cfg, c.kubeconfig)
 
 		// Merge into ~/.kube/config
@@ -178,7 +174,7 @@ func (c *CRID) Kubeconfig() string {
 		if err := clientcmd.WriteToFile(*dst, recommendedPath); err != nil {
 			c.log.Warn().Err(err).Str("path", recommendedPath).Msg("failed to merge ~/.kube/config")
 		} else {
-			c.log.Info().Str("path", recommendedPath).Str("context", c.name).Msg("merged kubeconfig")
+			c.log.Debug().Str("path", recommendedPath).Str("context", c.name).Msg("merged kubeconfig")
 		}
 	})
 	return c.kubeconfig

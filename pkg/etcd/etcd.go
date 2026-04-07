@@ -29,7 +29,7 @@ func NewEtcd(certs *config.Certs, dataDir string) *Etcd {
 }
 
 func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
-	logger.Info().Str("dataDir", e.dataDir).Msg("starting etcd")
+	logger.Debug().Str("dataDir", e.dataDir).Msg("starting etcd")
 
 	cfg := embed.NewConfig()
 	cfg.Dir = e.dataDir
@@ -66,7 +66,7 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 
 	select {
 	case <-e.server.Server.ReadyNotify():
-		logger.Info().Msg("etcd ready")
+		logger.Debug().Msg("etcd ready")
 	case <-time.After(30 * time.Second):
 		e.server.Close()
 		return nil, fmt.Errorf("etcd took too long to start")
@@ -79,7 +79,7 @@ func (e *Etcd) Start(ctx context.Context) (component.Started, error) {
 }
 
 func (e *Etcd) Stop(ctx context.Context) component.Stopped {
-	logger.Info().Msg("stopping etcd")
+	logger.Debug().Msg("stopping etcd")
 	if e.server != nil {
 		e.server.Close()
 	}

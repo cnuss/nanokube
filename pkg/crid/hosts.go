@@ -46,7 +46,7 @@ func init() {
 		DefaultHosts.log.Error().Err(err).Msg("failed to get interface IPs")
 	}
 
-	DefaultHosts.WithHost(hostname, outboundIps).Log().Info().Str("hostname", hostname).Strs("outboundIPs", outboundIps).Strs("lookupIPs", lookupIps).Strs("interfaceIPs", interfaceIps).Msg("resolved local IP addresses")
+	DefaultHosts.WithHost(hostname, outboundIps).Log().Debug().Str("hostname", hostname).Strs("outboundIPs", outboundIps).Strs("lookupIPs", lookupIps).Strs("interfaceIPs", interfaceIps).Msg("resolved local IP addresses")
 
 	// Sniff test to make sure hostname resolution is working: Check if outbound IPs are included in lookup IPs
 	found := false
@@ -210,7 +210,7 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) ma
 				h.log.Warn().Str("sandbox", sandbox.GetId()).Msg("pod sandbox has no IP address, skipping")
 				continue
 			}
-			h.log.Info().Str("sandbox", sandbox.GetId()).Str("ip", ip).Int("additionalIps", len(ips)).Msg("found pod sandbox IP from backend")
+			h.log.Debug().Str("sandbox", sandbox.GetId()).Str("ip", ip).Int("additionalIps", len(ips)).Msg("found pod sandbox IP from backend")
 			name := sandbox.GetMetadata().GetName()
 			hostname := strings.ToLower(fmt.Sprintf("%s.%s", name, domain))
 			entries[hostname] = append(entries[hostname], ip)
@@ -221,7 +221,7 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) ma
 				continue
 			}
 			for _, container := range containers {
-				h.log.Info().Str("container", container.GetId()).Str("name", container.GetMetadata().GetName()).Str("podSandbox", sandbox.GetId()).Msg("found container in sandbox")
+				h.log.Debug().Str("container", container.GetId()).Str("name", container.GetMetadata().GetName()).Str("podSandbox", sandbox.GetId()).Msg("found container in sandbox")
 				hostnames := []string{
 					strings.ToLower(fmt.Sprintf("%s.%s", container.Metadata.Name, sandbox.Metadata.Namespace)),
 					strings.ToLower(fmt.Sprintf("%s.%s.%s", container.Metadata.Name, sandbox.Metadata.Namespace, domain)),
@@ -235,7 +235,7 @@ func (h *hostsImpl) Entries(ctx context.Context, network backend.NetworkType) ma
 		}
 	}
 
-	h.log.Info().Int("count", len(entries)).Msg("Host Entries")
+	h.log.Debug().Int("count", len(entries)).Msg("Host Entries")
 	return entries
 }
 

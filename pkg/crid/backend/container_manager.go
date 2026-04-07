@@ -62,17 +62,15 @@ func (m *ContainerManagerImpl) Start(ctx context.Context, node *v1.Node, activeP
 		return fmt.Errorf("localStorageCapacityIsolation is not supported")
 	}
 
-	m.log.Info().Str("node", node.Name).Msg("container manager started")
+	m.log.Debug().Str("node", node.Name).Msg("container manager started")
 	return nil
 }
 
 func (m *ContainerManagerImpl) SystemCgroupsLimit() v1.ResourceList {
-	m.log.Warn().Msg("SystemCgroupsLimit not implemented")
 	return v1.ResourceList{}
 }
 
 func (m *ContainerManagerImpl) GetNodeConfig() cm.NodeConfig {
-	m.log.Warn().Msg("GetNodeConfig not implemented")
 	return cm.NodeConfig{}
 }
 
@@ -89,12 +87,10 @@ func (m *ContainerManagerImpl) NewPodContainerManager() cm.PodContainerManager {
 }
 
 func (m *ContainerManagerImpl) GetMountedSubsystems() *cm.CgroupSubsystems {
-	m.log.Warn().Msg("GetMountedSubsystems not implemented")
 	return &cm.CgroupSubsystems{}
 }
 
 func (m *ContainerManagerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {
-	m.log.Warn().Msg("GetQOSContainersInfo not implemented")
 	return cm.QOSContainersInfo{}
 }
 
@@ -115,17 +111,14 @@ func (m *ContainerManagerImpl) GetDevicePluginResourceCapacity() (v1.ResourceLis
 }
 
 func (m *ContainerManagerImpl) UpdateQOSCgroups(logger klog.Logger) error {
-	m.log.Warn().Msg("UpdateQOSCgroups not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) GetResources(ctx context.Context, pod *v1.Pod, container *v1.Container) (*kubecontainer.RunContainerOptions, error) {
-	m.log.Warn().Msg("GetResources not implemented")
 	return &kubecontainer.RunContainerOptions{}, nil
 }
 
 func (m *ContainerManagerImpl) UpdatePluginResources(*schedulerframework.NodeInfo, *lifecycle.PodAdmitAttributes) error {
-	m.log.Warn().Msg("UpdatePluginResources not implemented")
 	return nil
 }
 
@@ -137,22 +130,18 @@ func (m *ContainerManagerImpl) InternalContainerLifecycle() cm.InternalContainer
 }
 
 func (m *ContainerManagerImpl) GetPodCgroupRoot() string {
-	m.log.Warn().Msg("GetPodCgroupRoot not implemented")
 	return ""
 }
 
 func (m *ContainerManagerImpl) GetPluginRegistrationHandlers() map[string]cache.PluginHandler {
-	m.log.Warn().Msg("GetPluginRegistrationHandlers not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) GetHealthCheckers() []healthz.HealthChecker {
-	m.log.Warn().Msg("GetHealthCheckers not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) ShouldResetExtendedResourceCapacity() bool {
-	m.log.Warn().Msg("ShouldResetExtendedResourceCapacity not implemented")
 	return false
 }
 
@@ -184,22 +173,18 @@ func (m *ContainerManagerImpl) GetNodeAllocatableAbsolute() v1.ResourceList {
 }
 
 func (m *ContainerManagerImpl) PrepareDynamicResources(ctx context.Context, pod *v1.Pod) error {
-	m.log.Warn().Msg("PrepareDynamicResources not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) UnprepareDynamicResources(ctx context.Context, pod *v1.Pod) error {
-	m.log.Warn().Msg("UnprepareDynamicResources not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
-	m.log.Warn().Msg("PodMightNeedToUnprepareResources not implemented")
 	return false
 }
 
 func (m *ContainerManagerImpl) UpdateAllocatedResourcesStatus(pod *v1.Pod, status *v1.PodStatus) {
-	m.log.Warn().Msg("UpdateAllocatedResourcesStatus not implemented")
 }
 
 func (m *ContainerManagerImpl) Updates() <-chan resourceupdates.Update {
@@ -222,7 +207,7 @@ func (m *ContainerManagerImpl) Updates() <-chan resourceupdates.Update {
 					if uid == "" {
 						continue
 					}
-					m.log.Info().Str("action", string(ev.Action)).Str("id", ev.ID[:min(12, len(ev.ID))]).Str("pod", uid).Msg("update event")
+					m.log.Debug().Str("action", string(ev.Action)).Str("id", ev.ID[:min(12, len(ev.ID))]).Str("pod", uid).Msg("update event")
 					select {
 					case m.updates <- resourceupdates.Update{PodUIDs: []string{uid}}:
 					case <-m.ctx.Done():
@@ -236,55 +221,45 @@ func (m *ContainerManagerImpl) Updates() <-chan resourceupdates.Update {
 }
 
 func (m *ContainerManagerImpl) PodHasExclusiveCPUs(pod *v1.Pod) bool {
-	m.log.Warn().Msg("PodHasExclusiveCPUs not implemented")
 	return false
 }
 
 func (m *ContainerManagerImpl) ContainerHasExclusiveCPUs(pod *v1.Pod, container *v1.Container) bool {
-	m.log.Warn().Msg("ContainerHasExclusiveCPUs not implemented")
 	return false
 }
 
 // podresources.DevicesProvider
 func (m *ContainerManagerImpl) UpdateAllocatedDevices() {
-	m.log.Warn().Msg("UpdateAllocatedDevices not implemented")
 }
 
 func (m *ContainerManagerImpl) GetDevices(podUID, containerName string) []*podresourcesapi.ContainerDevices {
-	m.log.Warn().Msg("GetDevices not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) GetAllocatableDevices() []*podresourcesapi.ContainerDevices {
-	m.log.Warn().Msg("GetAllocatableDevices not implemented")
 	return nil
 }
 
 // podresources.CPUsProvider
 func (m *ContainerManagerImpl) GetCPUs(podUID, containerName string) []int64 {
-	m.log.Warn().Msg("GetCPUs not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) GetAllocatableCPUs() []int64 {
-	m.log.Warn().Msg("GetAllocatableCPUs not implemented")
 	return nil
 }
 
 // podresources.MemoryProvider
 func (m *ContainerManagerImpl) GetMemory(podUID, containerName string) []*podresourcesapi.ContainerMemory {
-	m.log.Warn().Msg("GetMemory not implemented")
 	return nil
 }
 
 func (m *ContainerManagerImpl) GetAllocatableMemory() []*podresourcesapi.ContainerMemory {
-	m.log.Warn().Msg("GetAllocatableMemory not implemented")
 	return nil
 }
 
 // podresources.DynamicResourcesProvider
 func (m *ContainerManagerImpl) GetDynamicResources(pod *v1.Pod, container *v1.Container) []*podresourcesapi.DynamicResource {
-	m.log.Warn().Msg("GetDynamicResources not implemented")
 	return nil
 }
 
@@ -353,37 +328,30 @@ func (p *podContainerManager) Exists(pod *v1.Pod) bool {
 }
 
 func (p *podContainerManager) Destroy(logger klog.Logger, name cm.CgroupName) error {
-	p.log.Warn().Msg("Destroy not implemented")
 	return nil
 }
 
 func (p *podContainerManager) ReduceCPULimits(logger klog.Logger, name cm.CgroupName) error {
-	p.log.Warn().Msg("ReduceCPULimits not implemented")
 	return nil
 }
 
 func (p *podContainerManager) GetAllPodsFromCgroups() (map[types.UID]cm.CgroupName, error) {
-	p.log.Warn().Msg("GetAllPodsFromCgroups not implemented")
 	return nil, nil
 }
 
 func (p *podContainerManager) IsPodCgroup(cgroupfs string) (bool, types.UID) {
-	p.log.Warn().Msg("IsPodCgroup not implemented")
 	return false, ""
 }
 
 func (p *podContainerManager) GetPodCgroupMemoryUsage(pod *v1.Pod) (uint64, error) {
-	p.log.Warn().Msg("GetPodCgroupMemoryUsage not implemented")
 	return 0, nil
 }
 
 func (p *podContainerManager) GetPodCgroupConfig(pod *v1.Pod, resource v1.ResourceName) (*cm.ResourceConfig, error) {
-	p.log.Warn().Msg("GetPodCgroupConfig not implemented")
 	return nil, nil
 }
 
 func (p *podContainerManager) SetPodCgroupConfig(logger klog.Logger, pod *v1.Pod, resourceConfig *cm.ResourceConfig) error {
-	p.log.Warn().Msg("SetPodCgroupConfig not implemented")
 	return nil
 }
 
@@ -396,7 +364,7 @@ type podAdmitHandler struct {
 
 func (p *podAdmitHandler) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attrs.Pod
-	p.log.Info().Str("pod", pod.Name).Str("namespace", pod.Namespace).Msg("admitting pod")
+	p.log.Debug().Str("pod", pod.Name).Str("namespace", pod.Namespace).Msg("admitting pod")
 
 	if h := p.backend.Hosts(); h != nil {
 		network := NetworkBridge

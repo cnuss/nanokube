@@ -39,21 +39,21 @@ func (e *EventRecorderImpl) Recorder() record.EventRecorder {
 
 // AnnotatedEventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	e.log.Info().Str("fn", "AnnotatedEventf").Str("eventtype", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
+	e.log.Debug().Str("fn", "AnnotatedEventf").Str("eventtype", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
 	e.checkNodeReady(object, eventtype, reason)
 	e.Recorder().AnnotatedEventf(object, annotations, eventtype, reason, messageFmt, args...)
 }
 
 // Event implements [record.EventRecorder].
 func (e *EventRecorderImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
-	e.log.Info().Str("fn", "Event").Str("type", eventtype).Str("reason", reason).Msg(message)
+	e.log.Debug().Str("fn", "Event").Str("type", eventtype).Str("reason", reason).Msg(message)
 	e.checkNodeReady(object, eventtype, reason)
 	e.Recorder().Event(object, eventtype, reason, message)
 }
 
 // Eventf implements [record.EventRecorder].
 func (e *EventRecorderImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	e.log.Info().Str("fn", "Eventf").Str("eventtype", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
+	e.log.Debug().Str("fn", "Eventf").Str("eventtype", eventtype).Str("reason", reason).Msg(fmt.Sprintf(messageFmt, args...))
 	e.checkNodeReady(object, eventtype, reason)
 	e.Recorder().Eventf(object, eventtype, reason, messageFmt, args...)
 }
@@ -63,7 +63,7 @@ func (e *EventRecorderImpl) checkNodeReady(_ runtime.Object, eventtype string, r
 		return
 	}
 	e.nodeReadyOnce.Do(func() {
-		e.log.Info().Msg("NodeReady event detected")
+		e.log.Debug().Msg("NodeReady event detected")
 		close(e.nodeReady)
 	})
 }

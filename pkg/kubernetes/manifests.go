@@ -35,7 +35,7 @@ func NewManifests(crid *crid.CRID) *Manifests {
 
 func (m *Manifests) Start(ctx context.Context) (component.Started, error) {
 	version := strings.SplitN(versionutil.Get().GitVersion, "-", 2)[0]
-	m.log.Info().Str("version", version).Msg("starting manifests")
+	m.log.Debug().Str("version", version).Msg("starting manifests")
 
 	pod := &v1.Pod{}
 	if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(kubeSystemManifest), 4096).Decode(pod); err != nil {

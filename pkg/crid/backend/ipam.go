@@ -143,7 +143,7 @@ func (i *IpamImpl) initService() {
 			carry = sum >> 8
 		}
 
-		i.log.Info().
+		i.log.Debug().
 			Str("defaultNetwork", defaultNet.Name).
 			Str("defaultSubnet", defaultNet.Network.String()).
 			Str("reservedSubnet", reservedNet.Network.String()).
@@ -155,10 +155,10 @@ func (i *IpamImpl) initService() {
 
 func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSandboxConfig) (*NetworkSpec, error) {
 	i.initService()
-	i.log.Info().Str("pod", config.Metadata.Name).Msg("allocating network for pod")
+	i.log.Debug().Str("pod", config.Metadata.Name).Msg("allocating network for pod")
 
 	if config != nil && config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
-		i.log.Info().Str("pod", config.Metadata.Name).Msg("skipping network allocation for static pod")
+		i.log.Debug().Str("pod", config.Metadata.Name).Msg("skipping network allocation for static pod")
 		return i.StaticPodNet(), nil
 	}
 
@@ -205,10 +205,10 @@ func (i *IpamImpl) AllocateNetwork(ctx context.Context, config *runtimeapi.PodSa
 }
 
 func (i *IpamImpl) DeallocateNetwork(ctx context.Context, status *runtimeapi.PodSandboxStatus) error {
-	i.log.Info().Str("pod", status.GetMetadata().GetName()).Msg("deallocating network for pod")
+	i.log.Debug().Str("pod", status.GetMetadata().GetName()).Msg("deallocating network for pod")
 
 	if status.GetAnnotations()["kubernetes.io/config.source"] == "file" {
-		i.log.Info().Str("pod", status.GetMetadata().GetName()).Msg("skipping network deallocation for static pod")
+		i.log.Debug().Str("pod", status.GetMetadata().GetName()).Msg("skipping network deallocation for static pod")
 		return nil
 	}
 

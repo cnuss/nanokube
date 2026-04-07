@@ -63,7 +63,7 @@ func NewKubelet(crid *crid.CRID, featureGates map[string]bool) *Kubelet {
 
 func (k *Kubelet) Name() string {
 	k.nameOnce.Do(func() {
-		k.log.Info().Msg("initializing name")
+		k.log.Debug().Msg("initializing name")
 		k.name = k.crid.DefaultBackend().HostnameOverride()
 	})
 	return k.name
@@ -71,7 +71,7 @@ func (k *Kubelet) Name() string {
 
 func (k *Kubelet) Flags() *options.KubeletFlags {
 	k.flagsOnce.Do(func() {
-		k.log.Info().Msg("initializing flags")
+		k.log.Debug().Msg("initializing flags")
 		dataDirs := k.crid.DataDirs()
 
 		k.flags = options.NewKubeletFlags()
@@ -87,7 +87,7 @@ func (k *Kubelet) Flags() *options.KubeletFlags {
 
 func (k *Kubelet) Config() *kubeletconfig.KubeletConfiguration {
 	k.configOnce.Do(func() {
-		k.log.Info().Msg("initializing config")
+		k.log.Debug().Msg("initializing config")
 		hostInfo, _ := k.crid.DefaultBackend().HostInfo()
 		dataDirs := k.crid.DataDirs()
 
@@ -141,7 +141,7 @@ func (k *Kubelet) Config() *kubeletconfig.KubeletConfiguration {
 // both the standard and heartbeat clients. Safe to call from a goroutine.
 func (k *Kubelet) Clients() Clients {
 	k.clientsOnce.Do(func() {
-		k.log.Info().Msg("initializing kube clients")
+		k.log.Debug().Msg("initializing kube clients")
 		kubeconfigPath := k.crid.Kubeconfig()
 
 		// Standard client
@@ -155,7 +155,7 @@ func (k *Kubelet) Clients() Clients {
 			k.log.Error().Err(err).Msg("kube client failed")
 			return
 		}
-		k.log.Info().Msg("kube client ready")
+		k.log.Debug().Msg("kube client ready")
 		k.clients.Standard = client
 
 		// Heartbeat client — lower timeout, unlimited QPS
@@ -177,7 +177,7 @@ func (k *Kubelet) Clients() Clients {
 			return
 		}
 		k.clients.Heartbeat = hbClient
-		k.log.Info().Msg("heartbeat client ready")
+		k.log.Debug().Msg("heartbeat client ready")
 	})
 	return k.clients
 }
@@ -191,7 +191,7 @@ func (k *Kubelet) HeartbeatClient() *clientset.Clientset {
 }
 
 func (k *Kubelet) SetNotReady(ctx context.Context, reason, message string) {
-	k.log.Info().Str("node", k.Name()).Msg("marking node not ready")
+	k.log.Debug().Str("node", k.Name()).Msg("marking node not ready")
 
 	node := &v1.Node{
 		Spec: v1.NodeSpec{
@@ -220,18 +220,18 @@ func (k *Kubelet) SetNotReady(ctx context.Context, reason, message string) {
 }
 
 func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
-	k.log.Info().Msg("stopping kubelet")
+	k.log.Debug().Msg("stopping kubelet")
 	k.SetNotReady(ctx, "Stopping", "Kubelet is stopping")
 
 	if k.deps != nil && k.deps.PodConfig != nil {
-		k.log.Info().Msg("closing pod config updates channel")
+		k.log.Debug().Msg("closing pod config updates channel")
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					k.log.Warn().Interface("recover", r).Msg("failed to close pod config updates channel")
 					return
 				}
-				k.log.Info().Msg("pod config updates channel closed")
+				k.log.Debug().Msg("pod config updates channel closed")
 			}()
 			field := reflect.ValueOf(k.deps.PodConfig).Elem().FieldByName("updates")
 			ch := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
@@ -242,7 +242,7 @@ func (k *Kubelet) Stop(ctx context.Context) component.Stopped {
 }
 
 func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
-	k.log.Info().Msg("starting kubelet")
+	k.log.Debug().Msg("starting kubelet")
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
@@ -277,10 +277,10 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 	for {
 		select {
 		case <-ctx.Done():
-			k.log.Info().Msg("context cancelled")
+			k.log.Debug().Msg("context cancelled")
 			return nil, ctx.Err()
 		case <-k.ready:
-			k.log.Info().Msg("kubelet is ready")
+			k.log.Debug().Msg("kubelet is ready")
 			k.crid.WithKubeClient(k.KubeClient())
 			return component.Ready(), nil
 		}
@@ -288,7 +288,7 @@ func (k *Kubelet) Start(ctx context.Context) (component.Started, error) {
 }
 
 func (k *Kubelet) WaitForApiServer(ctx context.Context) {
-	k.log.Info().Msg("waiting for api server")
+	k.log.Debug().Msg("waiting for api server")
 	for {
 		if _, err := k.KubeClient().Discovery().ServerVersion(); err == nil {
 			break
@@ -300,13 +300,13 @@ func (k *Kubelet) WaitForApiServer(ctx context.Context) {
 		}
 	}
 
-	k.log.Info().Msg("api server is available")
+	k.log.Debug().Msg("api server is available")
 	k.SetNotReady(ctx, "Starting", "Kubelet is starting")
 
 	if svc := k.crid.DefaultBackend().IPAM().Service(); svc != nil {
 		if existing, err := k.KubeClient().CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{}); err == nil {
 			if existing.Spec.ClusterIP != svc.IP.String() {
-				k.log.Info().Str("old", existing.Spec.ClusterIP).Str("new", svc.IP.String()).Msg("deleting stale kubernetes service")
+				k.log.Debug().Str("old", existing.Spec.ClusterIP).Str("new", svc.IP.String()).Msg("deleting stale kubernetes service")
 				k.KubeClient().CoreV1().Services("default").Delete(ctx, "kubernetes", metav1.DeleteOptions{})
 			}
 		}
@@ -315,11 +315,11 @@ func (k *Kubelet) WaitForApiServer(ctx context.Context) {
 }
 
 func (k *Kubelet) WaitForNodeReady(ctx context.Context) {
-	k.log.Info().Msg("waiting for node ready")
+	k.log.Debug().Msg("waiting for node ready")
 	if err := k.crid.DefaultBackend().EventRecorder().WaitForNodeReady(ctx); err != nil {
 		k.log.Warn().Err(err).Msg("wait for node ready cancelled")
 		return
 	}
-	k.log.Info().Msg("node is ready")
+	k.log.Debug().Msg("node is ready")
 	k.readyOnce.Do(func() { close(k.ready) })
 }

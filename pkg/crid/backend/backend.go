@@ -244,7 +244,6 @@ func (b *BackendImpl) Context() context.Context {
 }
 
 func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record.EventBroadcaster, pluginsDir, registrationDir string, clean bool) error {
-	b.log.Info().Str("backend", string(b.Name())).Msg("starting")
 	b.ctx = ctx
 	b.hosts = hosts
 	b.broadcaster = broadcaster
@@ -263,9 +262,8 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 		return component.WrapErr(b.log, err)
 	}
 	go func() {
-		b.log.Info().Msg("backend streaming server starting")
 		if err := b.streaming.Start(true); err != nil {
-			b.log.Info().Err(err).Msg("backend streaming server exited")
+			b.log.Warn().Err(err).Msg("backend streaming server exited")
 		}
 	}()
 
@@ -274,7 +272,6 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 	runtimeapi.RegisterImageServiceServer(b.grpc, b.ImageServer())
 
 	go func() {
-		b.log.Info().Str("socket", b.socket()).Msg("backend gRPC server listening")
 		if err := b.grpc.Serve(lis); err != nil {
 			b.log.Error().Err(err).Msg("backend gRPC server exited")
 		}
@@ -285,21 +282,20 @@ func (b *BackendImpl) Start(ctx context.Context, hosts Hosts, broadcaster record
 		return component.WrapErr(b.log, err)
 	}
 
-	b.log.Info().Msg("backend started")
+	b.log.Debug().Str("backend", string(b.Name())).Str("socket", b.socket()).Msg("backend started")
 	return nil
 }
 
 func (b *BackendImpl) clean() error {
-	b.log.Info().Str("backend", string(b.Name())).Msg("clean")
+	b.log.Debug().Str("backend", string(b.Name())).Msg("clean")
 	containerServer := b.ContainerServer()
 	volumeServer := b.VolumeServer()
 	var errs []error
 
 	// Remove sandboxes (and thus all containers) via CRI Server
-	b.log.Info().Msg("removing sandboxes")
 	if sandboxes, err := containerServer.ListPodSandbox(b.ctx, nil); err == nil {
 		for _, sb := range sandboxes.GetItems() {
-			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
+			b.log.Debug().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
 			if _, err := containerServer.RemovePodSandbox(b.ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: sb.Id}); err != nil {
 				errs = append(errs, fmt.Errorf("remove sandbox %s: %w", sb.Id, err))
 			}
@@ -307,10 +303,9 @@ func (b *BackendImpl) clean() error {
 	}
 
 	// Remove volumes via CSI Server
-	b.log.Info().Msg("removing volumes")
 	if volumes, err := volumeServer.ListVolumes(b.ctx, &csipb.ListVolumesRequest{}); err == nil {
 		for _, vol := range volumes.GetEntries() {
-			b.log.Info().Str("id", vol.GetVolume().GetVolumeId()[:min(12, len(vol.GetVolume().GetVolumeId()))]).Msg("removing volume")
+			b.log.Debug().Str("id", vol.GetVolume().GetVolumeId()[:min(12, len(vol.GetVolume().GetVolumeId()))]).Msg("removing volume")
 			if _, err := volumeServer.DeleteVolume(b.ctx, &csipb.DeleteVolumeRequest{VolumeId: vol.GetVolume().GetVolumeId()}); err != nil {
 				errs = append(errs, fmt.Errorf("delete volume %s: %w", vol.GetVolume().GetVolumeId(), err))
 			}
@@ -368,8 +363,6 @@ func (b *BackendImpl) Subscribe() <-chan Event {
 }
 
 func (b *BackendImpl) Stop(ctx context.Context) error {
-	b.log.Info().Str("backend", string(b.Name())).Msg("stopping")
-
 	containers := b.ContainerServer()
 	if containers == nil {
 		return nil
@@ -378,7 +371,7 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 	// Stop running sandboxes via CRI
 	if running, err := containers.ListPodSandbox(ctx, &runtimeapi.ListPodSandboxRequest{Filter: &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_READY}}}); err == nil {
 		for _, sb := range running.GetItems() {
-			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
+			b.log.Debug().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("stopping sandbox")
 			if _, err := containers.StopPodSandbox(ctx, &runtimeapi.StopPodSandboxRequest{PodSandboxId: sb.Id}); err != nil {
 				b.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to stop sandbox")
 			}
@@ -388,7 +381,7 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 	// Remove stopped sandboxes via CRI
 	if stopped, err := containers.ListPodSandbox(ctx, &runtimeapi.ListPodSandboxRequest{Filter: &runtimeapi.PodSandboxFilter{State: &runtimeapi.PodSandboxStateValue{State: runtimeapi.PodSandboxState_SANDBOX_NOTREADY}}}); err == nil {
 		for _, sb := range stopped.GetItems() {
-			b.log.Info().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
+			b.log.Debug().Str("id", sb.Id[:min(12, len(sb.Id))]).Msg("removing sandbox")
 			if _, err := containers.RemovePodSandbox(ctx, &runtimeapi.RemovePodSandboxRequest{PodSandboxId: sb.Id}); err != nil {
 				b.log.Error().Str("id", sb.Id[:min(12, len(sb.Id))]).Err(err).Msg("failed to remove sandbox")
 			}
@@ -408,12 +401,12 @@ func (b *BackendImpl) Stop(ctx context.Context) error {
 	if b.streaming != nil {
 		err := b.streaming.Stop()
 		if err != nil {
-			b.log.Info().Err(err).Msg("backend streaming server exited")
+			b.log.Warn().Err(err).Msg("backend streaming server exited")
 		}
 	}
 
 	os.Remove(b.socket())
-	b.log.Info().Str("backend", string(b.Name())).Msg("backend stopped")
+	b.log.Debug().Str("backend", string(b.Name())).Msg("backend stopped")
 	return nil
 }
 
