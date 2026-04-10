@@ -2,154 +2,191 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
-	"time"
 
-	"github.com/cnuss/nanokube/pkg/component"
-	"github.com/cnuss/nanokube/pkg/config"
-	"github.com/cnuss/nanokube/pkg/crid"
-	"github.com/cnuss/nanokube/pkg/etcd"
-	"github.com/cnuss/nanokube/pkg/kubernetes"
-	"github.com/rs/zerolog/log"
-	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
+	"github.com/cnuss/nanokube/pkg"
+	"github.com/cnuss/nanokube/pkg/awslambda"
+	"github.com/cnuss/nanokube/pkg/docker"
+	"github.com/cnuss/nanokube/pkg/nanokube"
+	"github.com/cnuss/nanokube/pkg/podman"
+	"k8s.io/kubernetes/pkg/kubemark"
 )
 
-var featureGates = map[string]bool{
-	"APIServerIdentity":         false,
-	"RuntimeClassInImageCriApi": false,
-	"KubeletInUserNamespace":    true,
-}
+// var featureGates = map[string]bool{
+// 	"APIServerIdentity":         false,
+// 	"RuntimeClassInImageCriApi": false,
+// 	"KubeletInUserNamespace":    true,
+// }
 
-var rootCmd = &cobra.Command{
-	Use:           "nanokube [flags]",
-	Short:         "A minimal Kubernetes distribution",
-	SilenceUsage:  true,
-	SilenceErrors: true,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if options.DataDir == "" {
-			options.DataDir = config.DefaultDataDir(options.Name)
-		}
-		return options.Validate()
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		sigCtx := cmd.Context()
-		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
-		log.Debug().Msg("debug logging enabled")
+// var rootCmd = &cobra.Command{
+// 	Use:           "nanokube [flags]",
+// 	Short:         "A minimal Kubernetes distribution",
+// 	SilenceUsage:  true,
+// 	SilenceErrors: true,
+// 	PreRunE: func(cmd *cobra.Command, args []string) error {
+// 		if options.DataDir == "" {
+// 			options.DataDir = config.DefaultDataDir(options.Name)
+// 		}
+// 		return options.Validate()
+// 	},
+// 	RunE: func(cmd *cobra.Command, args []string) error {
+// 		sigCtx := cmd.Context()
+// 		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
+// 		log.Debug().Msg("debug logging enabled")
 
-		crid := crid.NewCRID(sigCtx, options.Name, options.DataDir, options.Clean)
-		etcd := etcd.NewEtcd(crid.Certs(), crid.DataDirs().Etcd)
-		manifests := kubernetes.NewManifests(crid)
+// 		crid := crid.NewCRID(sigCtx, options.Name, options.DataDir, options.Clean)
+// 		etcd := etcd.NewEtcd(crid.Certs(), crid.DataDirs().Etcd)
+// 		manifests := kubernetes.NewManifests(crid)
 
-		components := []component.Component{etcd, crid, manifests}
+// 		components := []component.Component{etcd, crid, manifests}
 
-		if options.Kubelet {
-			components = append(components, kubernetes.NewKubelet(crid, featureGates))
-		}
+// 		if options.Kubelet {
+// 			components = append(components, kubernetes.NewKubelet(crid, featureGates))
+// 		}
 
-		// Each component gets its own context so we can cancel them
-		// in reverse order during shutdown, keeping dependencies alive.
-		cancels := make([]context.CancelFunc, len(components))
-		started := 0
-		for i, c := range components {
-			compCtx, cancel := context.WithCancel(context.Background())
-			cancels[i] = cancel
+// 		// Each component gets its own context so we can cancel them
+// 		// in reverse order during shutdown, keeping dependencies alive.
+// 		cancels := make([]context.CancelFunc, len(components))
+// 		started := 0
+// 		for i, c := range components {
+// 			compCtx, cancel := context.WithCancel(context.Background())
+// 			cancels[i] = cancel
 
-			// Allow ctrl+c to abort startup
-			done := make(chan error, 1)
-			go func() {
-				s, err := c.Start(compCtx)
-				if err != nil {
-					done <- err
-					return
-				}
-				<-s
-				done <- nil
-			}()
+// 			// Allow ctrl+c to abort startup
+// 			done := make(chan error, 1)
+// 			go func() {
+// 				s, err := c.Start(compCtx)
+// 				if err != nil {
+// 					done <- err
+// 					return
+// 				}
+// 				<-s
+// 				done <- nil
+// 			}()
 
-			select {
-			case err := <-done:
-				if err != nil {
-					cancel()
-					return err
-				}
-				started = i + 1
-			case <-sigCtx.Done():
-				cancel()
-				log.Info().Msg("startup interrupted")
-				goto shutdown
-			}
-		}
+// 			select {
+// 			case err := <-done:
+// 				if err != nil {
+// 					cancel()
+// 					return err
+// 				}
+// 				started = i + 1
+// 			case <-sigCtx.Done():
+// 				cancel()
+// 				log.Info().Msg("startup interrupted")
+// 				goto shutdown
+// 			}
+// 		}
 
-		<-sigCtx.Done()
-	shutdown:
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════╗")
-		fmt.Fprintln(os.Stderr, "║          SIGNAL RECEIVED — SHUTTING DOWN         ║")
-		fmt.Fprintln(os.Stderr, "║                                                  ║")
-		fmt.Fprintln(os.Stderr, "║  Initiating graceful shutdown sequence...        ║")
-		fmt.Fprintln(os.Stderr, "║  Components will be stopped in reverse order.    ║")
-		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════╝")
-		fmt.Fprintln(os.Stderr, "")
+// 		<-sigCtx.Done()
+// 	shutdown:
+// 		fmt.Fprintln(os.Stderr, "")
+// 		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════╗")
+// 		fmt.Fprintln(os.Stderr, "║          SIGNAL RECEIVED — SHUTTING DOWN         ║")
+// 		fmt.Fprintln(os.Stderr, "║                                                  ║")
+// 		fmt.Fprintln(os.Stderr, "║  Initiating graceful shutdown sequence...        ║")
+// 		fmt.Fprintln(os.Stderr, "║  Components will be stopped in reverse order.    ║")
+// 		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════╝")
+// 		fmt.Fprintln(os.Stderr, "")
 
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer shutdownCancel()
+// 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+// 		defer shutdownCancel()
 
-		names := make([]string, len(components))
-		for i, c := range components {
-			names[i] = fmt.Sprintf("%T", c)
-		}
-		for i := started - 1; i >= 0; i-- {
-			log.Debug().Str("component", names[i]).Msg("stopping")
-			cancels[i]()
-			<-components[i].Stop(shutdownCtx)
-			log.Debug().Str("component", names[i]).Msg("stopped")
-		}
-		return nil
-	},
-}
+// 		names := make([]string, len(components))
+// 		for i, c := range components {
+// 			names[i] = fmt.Sprintf("%T", c)
+// 		}
+// 		for i := started - 1; i >= 0; i-- {
+// 			log.Debug().Str("component", names[i]).Msg("stopping")
+// 			cancels[i]()
+// 			<-components[i].Stop(shutdownCtx)
+// 			log.Debug().Str("component", names[i]).Msg("stopped")
+// 		}
+// 		return nil
+// 	},
+// }
 
-var options *config.Options
+// var options *config.Options
+
+// func init() {
+// 	options = config.NewOptions(rootCmd)
+// }
 
 func init() {
-	options = config.NewOptions(rootCmd)
+	// System Runtimes
+	pkg.Runtimes["docker"] = docker.Detect
+	pkg.Runtimes["podman"] = podman.Detect
+
+	// Cloud Runtimes
+	pkg.Runtimes["awslambda"] = awslambda.Detect
 }
 
 func main() {
-	// Prevent Kubernetes components from killing the process via klog.Fatal/FlushAndExit.
-	// In an embedded binary, no component should call os.Exit — the shutdown loop handles cleanup.
-	// runtime.Goexit terminates the calling goroutine without affecting others.
-	klog.OsExit = func(code int) {
-		log.Warn().Int("code", code).Msg("klog.OsExit intercepted")
-		runtime.Goexit()
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
-	// Replace wait.NeverStop so all k8s wait.Until/JitterUntil loops
-	// (kubelet syncLoop, node status, lease controller, etc.) exit on shutdown.
-	stopCh := make(chan struct{})
-	wait.NeverStop = stopCh
-	go func() {
-		<-ctx.Done()
-		close(stopCh)
+	config, cancel, err := pkg.NewConfig(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	defer func() {
+		cancel(nil)
+		if cause := context.Cause(config.Context()); cause != nil {
+			var fatal *pkg.FatalError
+			if errors.As(cause, &fatal) {
+				fmt.Fprintln(os.Stderr, fatal)
+				os.Exit(fatal.Code())
+			}
+		}
 	}()
 
-	rootCmd, logger, cleanup := component.Setup(rootCmd)
-	rootCmd.SetContext(ctx)
-	log.Logger = logger
-	component.SetupKlog()
-	defer cleanup()
+	config = config.
+		WithStorageFactory(nanokube.NewStorageFactory(config.Options())).
+		WithApiServer(nanokube.NewHollowApiServer(config.Kube().ApiServerOptions())).
+		WithKubelet(kubemark.NewHollowKubelet(
+			config.Kube().KubeletFlags(),
+			config.Kube().KubeletConfiguration(),
+			config.Kube().Client(),
+			config.Kube().HeartbeatClient(),
+			config.Crid().DefaultBackend().Cadvisor(),
+			config.Crid().DefaultBackend().ImageService(),
+			config.Crid().DefaultBackend().RuntimeService(),
+			config.Crid().DefaultBackend().ContainerManager(),
+		))
 
-	if err := rootCmd.Execute(); err != nil {
-		if err.Error() != "context canceled" {
-			log.Fatal().Err(err).Msg("fatal error")
-		}
-	}
+	go runKubelet(ctx, cancel, config)
+	go runApiServer(ctx, cancel, config)
+	go runStorage(ctx, cancel, config)
+
+	go waitForApiServer(ctx, cancel, config)
+	go waitForNodeReady(ctx, cancel, config)
+
+	<-config.Context().Done()
+}
+
+func runKubelet(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+	config.Kube().Kubelet().Run(ctx)
+	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
+}
+
+func runApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+	config.Kube().ApiServer().Run(ctx)
+	cancel(pkg.NewFatalError(fmt.Errorf("apiserver exited unexpectedly")))
+}
+
+func runStorage(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+	config.Kube().StorageFactory().Run(ctx)
+	cancel(pkg.NewFatalError(fmt.Errorf("storage exited unexpectedly")))
+}
+
+func waitForApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+}
+
+func waitForNodeReady(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
 }

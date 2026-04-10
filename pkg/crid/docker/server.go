@@ -1027,16 +1027,7 @@ func (s *Server) UpdateRuntimeConfig(ctx context.Context, req *runtimeapi.Update
 
 // Version implements [v1.RuntimeServiceServer].
 func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*runtimeapi.VersionResponse, error) {
-	v, err := s.backend.client.ServerVersion(ctx)
-	if err != nil {
-		return nil, component.WrapErr(s.log, err)
-	}
-	return &runtimeapi.VersionResponse{
-		Version:           req.GetVersion(),
-		RuntimeName:       string(s.backend.Name()),
-		RuntimeVersion:    v.Version,
-		RuntimeApiVersion: req.GetVersion(),
-	}, nil
+	return nil, fmt.Errorf("moved")
 }
 
 // ImageFsInfo implements [v1.ImageServiceServer].

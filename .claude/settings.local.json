@@ -1,4 +1,7 @@
 {
+  "env": {
+    "ENABLE_LSP_TOOL": "1"
+  },
   "permissions": {
     "allow": [
       "Bash(tee /tmp/e2e-results.log)",
@@ -64,7 +67,9 @@
       "Read(//home/vscode/.nanokube/**)",
       "Read(//home/vscode/**)",
       "Bash(ls:*)",
-      "Bash(go doc:*)"
+      "Bash(go doc:*)",
+      "Bash(find:*)",
+      "Bash(tee /tmp/logging-cleanup-build.log)"
     ]
   }
 }
