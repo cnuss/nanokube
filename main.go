@@ -147,8 +147,12 @@ func main() {
 	}()
 
 	config = config.
-		WithStorageFactory(nanokube.NewStorageFactory(config.Options())).
-		WithApiServer(nanokube.NewHollowApiServer(config.Kube().ApiServerOptions())).
+		WithStorageFactory(
+			nanokube.NewStorageFactory(config.Options())).
+		WithApiServer(nanokube.NewApiServer(
+			config.Kube().ApiServerOptions(),
+			config.Kube().ApiServerConfig(),
+			config.Kube().StorageFactory().Default())).
 		WithKubelet(kubemark.NewHollowKubelet(
 			config.Kube().KubeletFlags(),
 			config.Kube().KubeletConfiguration(),
@@ -182,7 +186,7 @@ func runApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pk
 
 func runStorage(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
 	config.Kube().StorageFactory().Run(ctx)
-	cancel(pkg.NewFatalError(fmt.Errorf("storage exited unexpectedly")))
+	cancel(pkg.NewFatalError(fmt.Errorf("storage factory exited unexpectedly")))
 }
 
 func waitForApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {

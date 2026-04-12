@@ -25,8 +25,8 @@ type Config interface {
 	Crid() Crid
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Config
-	WithApiServer(apiserver *nanokube.HollowApiServer) Config
-	WithStorageFactory(storageFactory nanokube.StorageFactory) Config
+	WithApiServer(apiserver *nanokube.ApiServer) Config
+	WithStorageFactory(storagefactory nanokube.StorageFactory) Config
 }
 
 type ConfigImpl struct {
@@ -126,12 +126,12 @@ func (c *ConfigImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Config {
 	return c
 }
 
-func (c *ConfigImpl) WithApiServer(apiserver *nanokube.HollowApiServer) Config {
+func (c *ConfigImpl) WithApiServer(apiserver *nanokube.ApiServer) Config {
 	c.Kube().WithApiServer(apiserver)
 	return c
 }
 
-func (c *ConfigImpl) WithStorageFactory(storageFactory nanokube.StorageFactory) Config {
-	c.Kube().WithStorageFactory(storageFactory)
+func (c *ConfigImpl) WithStorageFactory(storagefactory nanokube.StorageFactory) Config {
+	c.Kube().WithStorageFactory(storagefactory)
 	return c
 }

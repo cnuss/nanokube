@@ -10,11 +10,13 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	apiserver "k8s.io/apiserver/pkg/server"
+	storage "k8s.io/apiserver/pkg/server/storage"
 	client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
+	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
-	apiserveroptions "k8s.io/kubernetes/pkg/controlplane/apiserver/options"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/server"
@@ -29,9 +31,10 @@ var FeatureGates = map[string]bool{
 }
 
 type Kube interface {
+	ApiServerOptions() *apiserveroptions.CompletedOptions
+	ApiServerConfig() *apiserver.Config
 	KubeletFlags() *kubeletoptions.KubeletFlags
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
-	ApiServerOptions() *apiserveroptions.Options
 
 	Client() *client.Clientset
 	HeartbeatClient() *client.Clientset
@@ -45,15 +48,21 @@ type Kube interface {
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Kube
 	Kubelet() *kubemark.HollowKubelet
-	WithApiServer(apiserver *nanokube.HollowApiServer) Kube
-	ApiServer() *nanokube.HollowApiServer
-	WithStorageFactory(storageFactory nanokube.StorageFactory) Kube
+	WithApiServer(apiserver *nanokube.ApiServer) Kube
+	ApiServer() *nanokube.ApiServer
+	WithStorageFactory(storagefactory nanokube.StorageFactory) Kube
 	StorageFactory() nanokube.StorageFactory
 }
 
 type KubeImpl struct {
 	ctx    context.Context
 	config Config
+
+	apiServerOptions     *apiserveroptions.CompletedOptions
+	apiServerOptionsOnce sync.Once
+
+	apiServerConfig     *apiserver.Config
+	apiServerConfigOnce sync.Once
 
 	kubeletTunnel     Tunnel
 	kubeletTunnelOnce sync.Once
@@ -63,9 +72,6 @@ type KubeImpl struct {
 
 	kubeletConfig     *kubeletconfig.KubeletConfiguration
 	kubeletConfigOnce sync.Once
-
-	apiserverOptions     *apiserveroptions.Options
-	apiserverOptionsOnce sync.Once
 
 	client     *client.Clientset
 	clientOnce sync.Once
@@ -91,14 +97,17 @@ type KubeImpl struct {
 	hostUtil     hostutil.HostUtils
 	hostUtilOnce sync.Once
 
+	defaultStorageFactory     *storage.DefaultStorageFactory
+	defaultStorageFactoryOnce sync.Once
+
 	kubelet         *kubemark.HollowKubelet
 	kubeletProvided chan struct{}
 
-	apiserver         *nanokube.HollowApiServer
+	apiserver         *nanokube.ApiServer
 	apiserverProvided chan struct{}
 
-	storageFactory         nanokube.StorageFactory
-	storageFactoryProvided chan struct{}
+	storagefactory         nanokube.StorageFactory
+	storagefactoryProvided chan struct{}
 }
 
 var _ Kube = &KubeImpl{}
@@ -124,10 +133,30 @@ func newKube(config Config) Kube {
 		config:                 config,
 		kubeletProvided:        make(chan struct{}),
 		apiserverProvided:      make(chan struct{}),
-		storageFactoryProvided: make(chan struct{}),
+		storagefactoryProvided: make(chan struct{}),
 	}
 
 	return kube
+}
+
+func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
+	k.apiServerOptionsOnce.Do(func() {
+		opts := apiserveroptions.NewServerRunOptions()
+		// TODO: set options
+		complete, err := opts.Complete(k.config.Context())
+		if err != nil {
+			klog.Fatalf("Failed to complete apiserver options: %v", err)
+		}
+		k.apiServerOptions = &complete
+	})
+	return k.apiServerOptions
+}
+
+func (k *KubeImpl) ApiServerConfig() *apiserver.Config {
+	k.apiServerConfigOnce.Do(func() {
+		k.apiServerConfig = nil
+	})
+	return k.apiServerConfig
 }
 
 func (k *KubeImpl) KubeletTunnel() Tunnel {
@@ -155,13 +184,6 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		k.kubeletConfig.SyncFrequency = v1.Duration{Duration: 10 * time.Second}
 	})
 	return k.kubeletConfig
-}
-
-func (k *KubeImpl) ApiServerOptions() *apiserveroptions.Options {
-	k.apiserverOptionsOnce.Do(func() {
-		k.apiserverOptions = &apiserveroptions.Options{}
-	})
-	return k.apiserverOptions
 }
 
 func (k *KubeImpl) Client() *client.Clientset {
@@ -238,25 +260,25 @@ func (k *KubeImpl) Kubelet() *kubemark.HollowKubelet {
 	return k.kubelet
 }
 
-func (k *KubeImpl) WithApiServer(apiserver *nanokube.HollowApiServer) Kube {
+func (k *KubeImpl) WithApiServer(apiserver *nanokube.ApiServer) Kube {
 	// TODO Build configs
 	k.apiserver = apiserver
 	close(k.apiserverProvided)
 	return k
 }
 
-func (k *KubeImpl) ApiServer() *nanokube.HollowApiServer {
+func (k *KubeImpl) ApiServer() *nanokube.ApiServer {
 	<-k.apiserverProvided
 	return k.apiserver
 }
 
-func (k *KubeImpl) WithStorageFactory(storageFactory nanokube.StorageFactory) Kube {
-	k.storageFactory = storageFactory
-	close(k.storageFactoryProvided)
+func (k *KubeImpl) WithStorageFactory(storagefactory nanokube.StorageFactory) Kube {
+	k.storagefactory = storagefactory
+	close(k.storagefactoryProvided)
 	return k
 }
 
 func (k *KubeImpl) StorageFactory() nanokube.StorageFactory {
-	<-k.storageFactoryProvided
-	return k.storageFactory
+	<-k.storagefactoryProvided
+	return k.storagefactory
 }

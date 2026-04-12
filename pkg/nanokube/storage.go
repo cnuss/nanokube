@@ -14,20 +14,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/apiserver/pkg/registry/generic"
 	serveroptions "k8s.io/apiserver/pkg/server/options"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
-	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubeapiserver"
 )
 
 type StorageFactory interface {
 	serverstorage.StorageFactory
-	Decorator() generic.StorageDecorator
+	Default() *serverstorage.DefaultStorageFactory
 	Run(ctx context.Context)
 	Port() int
 }
@@ -35,8 +32,8 @@ type StorageFactory interface {
 type StorageFactoryImpl struct {
 	options Options
 
-	inner   *serverstorage.DefaultStorageFactory
-	destroy factory.DestroyFunc
+	inner     *serverstorage.DefaultStorageFactory
+	innerOnce sync.Once
 
 	config        *kubeapiserver.StorageFactoryConfig
 	storageConfig *storagebackend.Config
@@ -55,15 +52,6 @@ func NewStorageFactory(options Options) StorageFactory {
 	}
 	factory.storageConfig.Transport.ServerList = []string{fmt.Sprintf("http://localhost:%d", factory.Port())}
 
-	etcd := serveroptions.NewEtcdOptions(factory.storageConfig)
-	factoryComplete := factory.config.Complete(etcd)
-
-	inner, err := factoryComplete.New()
-	if err != nil {
-		klog.Fatalf("Failed to create storage factory: %v", err)
-	}
-
-	factory.inner = inner
 	return factory
 }
 
@@ -109,6 +97,21 @@ func (s *StorageFactoryImpl) Run(ctx context.Context) {
 	server.Close()
 }
 
+func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
+	s.innerOnce.Do(func() {
+		etcd := serveroptions.NewEtcdOptions(s.storageConfig)
+		factoryComplete := s.config.Complete(etcd)
+
+		inner, err := factoryComplete.New()
+		if err != nil {
+			klog.Fatalf("Failed to create storage factory: %v", err)
+		}
+
+		s.inner = inner
+	})
+	return s.inner
+}
+
 func (s *StorageFactoryImpl) Port() int {
 	s.portOnce.Do(func() {
 		port, err := net.Listen("tcp", "127.0.0.1:0")
@@ -122,40 +125,22 @@ func (s *StorageFactoryImpl) Port() int {
 }
 
 func (s *StorageFactoryImpl) Backends() []serverstorage.Backend {
-	return s.inner.Backends()
+	return s.Default().Backends()
 }
 
 func (s *StorageFactoryImpl) Configs() []storagebackend.Config {
-	return s.inner.Configs()
+	return s.Default().Configs()
 }
 
 func (s *StorageFactoryImpl) NewConfig(groupResource schema.GroupResource, obj runtime.Object) (*storagebackend.ConfigForResource, error) {
-	return s.inner.NewConfig(groupResource, obj)
+	return s.Default().NewConfig(groupResource, obj)
 }
 
 func (s *StorageFactoryImpl) ResourcePrefix(groupResource schema.GroupResource) string {
-	return s.inner.ResourcePrefix(groupResource)
+	return s.Default().ResourcePrefix(groupResource)
 }
 
-func (s *StorageFactoryImpl) Decorator() generic.StorageDecorator {
-	return func(
-		config *storagebackend.ConfigForResource,
-		resourcePrefix string,
-		keyFunc func(obj runtime.Object) (string, error),
-		newFunc func() runtime.Object,
-		newListFunc func() runtime.Object,
-		getAttrsFunc storage.AttrFunc,
-		trigger storage.IndexerFuncs,
-		indexers *cache.Indexers,
-	) (storage.Interface, factory.DestroyFunc, error) {
-		inner, destroy, err := generic.NewRawStorage(config, newFunc, newListFunc, resourcePrefix)
-		if err != nil {
-			return nil, nil, err
-		}
-		return &StorageImpl{inner: inner}, destroy, nil
-	}
-}
-
+// TODO: make StorageFactoryImpl return Storage
 type Storage interface {
 	storage.Interface
 }
