@@ -21,6 +21,8 @@ const (
 	DataDirLogs    DataDir = "logs"
 	DataDirEtcd    DataDir = "etcd"
 
+	CertFile    FileName = "apiserver.crt"
+	KeyFile     FileName = "apiserver.key"
 	KubeletLock FileName = "kubelet.lock"
 )
 

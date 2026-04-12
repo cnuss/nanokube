@@ -3,6 +3,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"net"
 	"runtime"
 	"sync"
 	"time"
@@ -10,9 +11,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	apiserver "k8s.io/apiserver/pkg/server"
 	storage "k8s.io/apiserver/pkg/server/storage"
-	client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
@@ -32,12 +31,10 @@ var FeatureGates = map[string]bool{
 
 type Kube interface {
 	ApiServerOptions() *apiserveroptions.CompletedOptions
-	ApiServerConfig() *apiserver.Config
+	Client() nanokube.Client
+
 	KubeletFlags() *kubeletoptions.KubeletFlags
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
-
-	Client() *client.Clientset
-	HeartbeatClient() *client.Clientset
 
 	TLSOptions() *server.TLSOptions
 	Recorder() record.EventRecorder
@@ -48,8 +45,8 @@ type Kube interface {
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Kube
 	Kubelet() *kubemark.HollowKubelet
-	WithApiServer(apiserver *nanokube.ApiServer) Kube
-	ApiServer() *nanokube.ApiServer
+	WithApiServer(apiserver nanokube.ApiServer) Kube
+	ApiServer() nanokube.ApiServer
 	WithStorageFactory(storagefactory nanokube.StorageFactory) Kube
 	StorageFactory() nanokube.StorageFactory
 }
@@ -61,8 +58,8 @@ type KubeImpl struct {
 	apiServerOptions     *apiserveroptions.CompletedOptions
 	apiServerOptionsOnce sync.Once
 
-	apiServerConfig     *apiserver.Config
-	apiServerConfigOnce sync.Once
+	apiServerTunnel     Tunnel
+	apiServerTunnelOnce sync.Once
 
 	kubeletTunnel     Tunnel
 	kubeletTunnelOnce sync.Once
@@ -72,12 +69,6 @@ type KubeImpl struct {
 
 	kubeletConfig     *kubeletconfig.KubeletConfiguration
 	kubeletConfigOnce sync.Once
-
-	client     *client.Clientset
-	clientOnce sync.Once
-
-	heartbeatClient     *client.Clientset
-	heartbeatClientOnce sync.Once
 
 	tlsOptions     *server.TLSOptions
 	tlsOptionsOnce sync.Once
@@ -103,7 +94,7 @@ type KubeImpl struct {
 	kubelet         *kubemark.HollowKubelet
 	kubeletProvided chan struct{}
 
-	apiserver         *nanokube.ApiServer
+	apiserver         nanokube.ApiServer
 	apiserverProvided chan struct{}
 
 	storagefactory         nanokube.StorageFactory
@@ -142,21 +133,37 @@ func newKube(config Config) Kube {
 func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	k.apiServerOptionsOnce.Do(func() {
 		opts := apiserveroptions.NewServerRunOptions()
-		// TODO: set options
+		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s:%d", k.ApiServerTunnel().Hostname(), k.ApiServerTunnel().Port())}
+		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.config.Options().FilePathAt(nanokube.DataDirCerts, nanokube.KeyFile)}
+		opts.Authorization.Modes = []string{"Node", "RBAC"}
+		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
+		opts.GenericServerRunOptions.ExternalHost = k.ApiServerTunnel().Hostname()
+		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
+		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
+		opts.SecureServing.DisableHTTP2Serving = true
+		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
+		opts.ServiceAccountSigningKeyFile = k.config.Options().FilePathAt(nanokube.DataDirCerts, nanokube.KeyFile)
+		opts.ServiceClusterIPRanges = "10.0.0.0/16" // TODO
+
 		complete, err := opts.Complete(k.config.Context())
 		if err != nil {
 			klog.Fatalf("Failed to complete apiserver options: %v", err)
+		}
+
+		errs := complete.Validate()
+		if len(errs) > 0 {
+			klog.Fatalf("Failed to validate apiserver options: %v", errs)
 		}
 		k.apiServerOptions = &complete
 	})
 	return k.apiServerOptions
 }
 
-func (k *KubeImpl) ApiServerConfig() *apiserver.Config {
-	k.apiServerConfigOnce.Do(func() {
-		k.apiServerConfig = nil
+func (k *KubeImpl) ApiServerTunnel() Tunnel {
+	k.apiServerTunnelOnce.Do(func() {
+		k.apiServerTunnel = k.config.Tunnel()
 	})
-	return k.apiServerConfig
+	return k.apiServerTunnel
 }
 
 func (k *KubeImpl) KubeletTunnel() Tunnel {
@@ -172,7 +179,7 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		k.kubeletFlags.LockFilePath = k.config.Options().FilePathAt(nanokube.DataDirLock, nanokube.KubeletLock)
-		// k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
+		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
 	})
 	return k.kubeletFlags
 }
@@ -186,18 +193,8 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 	return k.kubeletConfig
 }
 
-func (k *KubeImpl) Client() *client.Clientset {
-	k.clientOnce.Do(func() {
-		k.client = nil
-	})
-	return k.client
-}
-
-func (k *KubeImpl) HeartbeatClient() *client.Clientset {
-	k.heartbeatClientOnce.Do(func() {
-		k.heartbeatClient = nil
-	})
-	return k.heartbeatClient
+func (k *KubeImpl) Client() nanokube.Client {
+	return k.ApiServer().Client(k.ctx)
 }
 
 func (k *KubeImpl) TLSOptions() *server.TLSOptions {
@@ -260,14 +257,14 @@ func (k *KubeImpl) Kubelet() *kubemark.HollowKubelet {
 	return k.kubelet
 }
 
-func (k *KubeImpl) WithApiServer(apiserver *nanokube.ApiServer) Kube {
-	// TODO Build configs
+func (k *KubeImpl) WithApiServer(apiserver nanokube.ApiServer) Kube {
+	apiserver.Config().KubeAPIs.ControlPlane.StorageFactory = k.StorageFactory()
 	k.apiserver = apiserver
 	close(k.apiserverProvided)
 	return k
 }
 
-func (k *KubeImpl) ApiServer() *nanokube.ApiServer {
+func (k *KubeImpl) ApiServer() nanokube.ApiServer {
 	<-k.apiserverProvided
 	return k.apiserver
 }

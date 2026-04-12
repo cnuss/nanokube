@@ -11,105 +11,116 @@ import (
 	"time"
 
 	"go.etcd.io/etcd/server/v3/embed"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/watch"
-	serveroptions "k8s.io/apiserver/pkg/server/options"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
-	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/kubeapiserver"
 )
 
 type StorageFactory interface {
 	serverstorage.StorageFactory
-	Default() *serverstorage.DefaultStorageFactory
-	Run(ctx context.Context)
+
+	ServerList() []string
 	Port() int
+	WithDefault(factory *serverstorage.DefaultStorageFactory) StorageFactory
+	Default() *serverstorage.DefaultStorageFactory
+
+	Ready() chan struct{}
 }
 
 type StorageFactoryImpl struct {
+	ctx     context.Context
 	options Options
 
-	inner     *serverstorage.DefaultStorageFactory
-	innerOnce sync.Once
-
-	config        *kubeapiserver.StorageFactoryConfig
-	storageConfig *storagebackend.Config
+	defaultStorageFactory         *serverstorage.DefaultStorageFactory
+	defaultStorageFactoryProvided chan struct{}
 
 	port     int
 	portOnce sync.Once
+
+	runOnce sync.Once
+	ready   chan struct{}
 }
 
 var _ StorageFactory = &StorageFactoryImpl{}
 
-func NewStorageFactory(options Options) StorageFactory {
-	factory := &StorageFactoryImpl{
-		options:       options,
-		config:        kubeapiserver.NewStorageFactoryConfig(),
-		storageConfig: storagebackend.NewDefaultConfig(fmt.Sprintf("/%s", options.Name()), nil),
+func NewStorageFactory(ctx context.Context, options Options) StorageFactory {
+	return &StorageFactoryImpl{
+		ctx:                           ctx,
+		options:                       options,
+		defaultStorageFactoryProvided: make(chan struct{}),
+		ready:                         make(chan struct{}),
 	}
-	factory.storageConfig.Transport.ServerList = []string{fmt.Sprintf("http://localhost:%d", factory.Port())}
-
-	return factory
 }
 
-func (s *StorageFactoryImpl) Run(ctx context.Context) {
-	dataDir := s.options.DataDirAt(DataDirEtcd)
-	port := s.Port()
+func (s *StorageFactoryImpl) Ready() chan struct{} {
+	return s.ready
+}
 
-	clientURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-	peerURL, _ := url.Parse("http://127.0.0.1:0")
-
-	cfg := embed.NewConfig()
-	cfg.Dir = filepath.Join(dataDir, "data")
-	cfg.ListenClientUrls = []url.URL{*clientURL}
-	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
-	cfg.ListenPeerUrls = []url.URL{*peerURL}
-	cfg.AdvertisePeerUrls = []url.URL{*peerURL}
-	cfg.InitialCluster = "default=" + peerURL.String()
-	// Restart: if WAL exists, this is an existing cluster
-	if _, err := os.Stat(filepath.Join(cfg.Dir, "member", "wal")); err == nil {
-		cfg.ClusterState = embed.ClusterStateFlagExisting
-	}
-
-	cfg.AutoCompactionRetention = "0"
-	cfg.LogLevel = "fatal"
-
-	server, err := embed.StartEtcd(cfg)
-	if err != nil {
-		klog.Fatalf("Failed to start etcd: %v", err)
-	}
-
-	select {
-	case <-server.Server.ReadyNotify():
-		klog.V(2).Infof("etcd ready on port %d", port)
-	case <-time.After(30 * time.Second):
-		server.Close()
-		klog.Fatalf("etcd took too long to start")
-	case <-ctx.Done():
-		server.Close()
-		return
-	}
-
-	<-ctx.Done()
-	server.Close()
+func (s *StorageFactoryImpl) WithDefault(factory *serverstorage.DefaultStorageFactory) StorageFactory {
+	s.defaultStorageFactory = factory
+	close(s.defaultStorageFactoryProvided)
+	return s
 }
 
 func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
-	s.innerOnce.Do(func() {
-		etcd := serveroptions.NewEtcdOptions(s.storageConfig)
-		factoryComplete := s.config.Complete(etcd)
+	<-s.defaultStorageFactoryProvided
 
-		inner, err := factoryComplete.New()
-		if err != nil {
-			klog.Fatalf("Failed to create storage factory: %v", err)
+	s.runOnce.Do(func() {
+		dataDir := s.options.DataDirAt(DataDirEtcd)
+		port := s.Port()
+
+		clientURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+		peerURL, _ := url.Parse("http://127.0.0.1:0")
+
+		cfg := embed.NewConfig()
+		cfg.Dir = filepath.Join(dataDir, "data")
+		cfg.ListenClientUrls = []url.URL{*clientURL}
+		cfg.AdvertiseClientUrls = []url.URL{*clientURL}
+		cfg.ListenPeerUrls = []url.URL{*peerURL}
+		cfg.AdvertisePeerUrls = []url.URL{*peerURL}
+		cfg.InitialCluster = "default=" + peerURL.String()
+		// Restart: if WAL exists, this is an existing cluster
+		if _, err := os.Stat(filepath.Join(cfg.Dir, "member", "wal")); err == nil {
+			cfg.ClusterState = embed.ClusterStateFlagExisting
 		}
 
-		s.inner = inner
+		cfg.AutoCompactionRetention = "0"
+		cfg.LogLevel = "info"
+		cfg.ZapLoggerBuilder = newKlogZapLoggerBuilder()
+
+		server, err := embed.StartEtcd(cfg)
+		if err != nil {
+			klog.Fatalf("Failed to start etcd: %v", err)
+		}
+
+		select {
+		case <-server.Server.ReadyNotify():
+			klog.V(2).Infof("etcd ready on port %d", port)
+			close(s.ready)
+		case <-time.After(30 * time.Second):
+			server.Close()
+			klog.Fatalf("etcd took too long to start")
+		case <-s.ctx.Done():
+			server.Close()
+			return
+		}
+
+		go func() {
+			<-s.ctx.Done()
+			server.Close()
+		}()
 	})
-	return s.inner
+
+	<-s.Ready()
+	return s.defaultStorageFactory
+}
+
+func (s *StorageFactoryImpl) ServerList() []string {
+	return []string{fmt.Sprintf("http://127.0.0.1:%d", s.Port())}
 }
 
 func (s *StorageFactoryImpl) Port() int {
@@ -125,80 +136,108 @@ func (s *StorageFactoryImpl) Port() int {
 }
 
 func (s *StorageFactoryImpl) Backends() []serverstorage.Backend {
-	return s.Default().Backends()
+	backends := s.Default().Backends()
+	// TODO: intercept backends
+	return backends
 }
 
 func (s *StorageFactoryImpl) Configs() []storagebackend.Config {
-	return s.Default().Configs()
+	configs := s.Default().Configs()
+	// TODO: intercept configs
+	return configs
 }
 
 func (s *StorageFactoryImpl) NewConfig(groupResource schema.GroupResource, obj runtime.Object) (*storagebackend.ConfigForResource, error) {
-	return s.Default().NewConfig(groupResource, obj)
+	config, err := s.Default().NewConfig(groupResource, obj)
+	// TODO: intercept
+	return config, err
 }
 
 func (s *StorageFactoryImpl) ResourcePrefix(groupResource schema.GroupResource) string {
-	return s.Default().ResourcePrefix(groupResource)
+	resourcePrefix := s.Default().ResourcePrefix(groupResource)
+	// TODO intercept
+	return resourcePrefix
 }
 
-// TODO: make StorageFactoryImpl return Storage
-type Storage interface {
-	storage.Interface
+// klogWriter adapts klog as a zapcore.WriteSyncer so etcd logs flow through klog.
+type klogWriter struct{}
+
+func (klogWriter) Write(p []byte) (int, error) {
+	klog.InfoDepth(1, string(p))
+	return len(p), nil
 }
 
-type StorageImpl struct {
-	inner storage.Interface
+func (klogWriter) Sync() error { return nil }
+
+func newKlogZapLoggerBuilder() func(*embed.Config) error {
+	return embed.NewZapLoggerBuilder(
+		zap.New(zapcore.NewCore(
+			zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
+			klogWriter{},
+			zap.NewAtomicLevelAt(zapcore.InfoLevel),
+		)),
+	)
 }
 
-var _ Storage = &StorageImpl{}
+// // TODO: make StorageFactoryImpl return Storage
+// type Storage interface {
+// 	storage.Interface
+// }
 
-func (s *StorageImpl) CompactRevision() int64 {
-	return s.inner.CompactRevision()
-}
+// type StorageImpl struct {
+// 	inner storage.Interface
+// }
 
-func (s *StorageImpl) Create(ctx context.Context, key string, obj runtime.Object, out runtime.Object, ttl uint64) error {
-	return s.inner.Create(ctx, key, obj, out, ttl)
-}
+// var _ Storage = &StorageImpl{}
 
-func (s *StorageImpl) Delete(ctx context.Context, key string, out runtime.Object, preconditions *storage.Preconditions, validateDeletion storage.ValidateObjectFunc, cachedExistingObject runtime.Object, opts storage.DeleteOptions) error {
-	return s.inner.Delete(ctx, key, out, preconditions, validateDeletion, cachedExistingObject, opts)
-}
+// func (s *StorageImpl) CompactRevision() int64 {
+// 	return s.inner.CompactRevision()
+// }
 
-func (s *StorageImpl) EnableResourceSizeEstimation(keysFunc storage.KeysFunc) error {
-	return s.inner.EnableResourceSizeEstimation(keysFunc)
-}
+// func (s *StorageImpl) Create(ctx context.Context, key string, obj runtime.Object, out runtime.Object, ttl uint64) error {
+// 	return s.inner.Create(ctx, key, obj, out, ttl)
+// }
 
-func (s *StorageImpl) Get(ctx context.Context, key string, opts storage.GetOptions, objPtr runtime.Object) error {
-	return s.inner.Get(ctx, key, opts, objPtr)
-}
+// func (s *StorageImpl) Delete(ctx context.Context, key string, out runtime.Object, preconditions *storage.Preconditions, validateDeletion storage.ValidateObjectFunc, cachedExistingObject runtime.Object, opts storage.DeleteOptions) error {
+// 	return s.inner.Delete(ctx, key, out, preconditions, validateDeletion, cachedExistingObject, opts)
+// }
 
-func (s *StorageImpl) GetCurrentResourceVersion(ctx context.Context) (uint64, error) {
-	return s.inner.GetCurrentResourceVersion(ctx)
-}
+// func (s *StorageImpl) EnableResourceSizeEstimation(keysFunc storage.KeysFunc) error {
+// 	return s.inner.EnableResourceSizeEstimation(keysFunc)
+// }
 
-func (s *StorageImpl) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
-	return s.inner.GetList(ctx, key, opts, listObj)
-}
+// func (s *StorageImpl) Get(ctx context.Context, key string, opts storage.GetOptions, objPtr runtime.Object) error {
+// 	return s.inner.Get(ctx, key, opts, objPtr)
+// }
 
-func (s *StorageImpl) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
-	return s.inner.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, cachedExistingObject)
-}
+// func (s *StorageImpl) GetCurrentResourceVersion(ctx context.Context) (uint64, error) {
+// 	return s.inner.GetCurrentResourceVersion(ctx)
+// }
 
-func (s *StorageImpl) ReadinessCheck() error {
-	return s.inner.ReadinessCheck()
-}
+// func (s *StorageImpl) GetList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
+// 	return s.inner.GetList(ctx, key, opts, listObj)
+// }
 
-func (s *StorageImpl) RequestWatchProgress(ctx context.Context) error {
-	return s.inner.RequestWatchProgress(ctx)
-}
+// func (s *StorageImpl) GuaranteedUpdate(ctx context.Context, key string, destination runtime.Object, ignoreNotFound bool, preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
+// 	return s.inner.GuaranteedUpdate(ctx, key, destination, ignoreNotFound, preconditions, tryUpdate, cachedExistingObject)
+// }
 
-func (s *StorageImpl) Stats(ctx context.Context) (storage.Stats, error) {
-	return s.inner.Stats(ctx)
-}
+// func (s *StorageImpl) ReadinessCheck() error {
+// 	return s.inner.ReadinessCheck()
+// }
 
-func (s *StorageImpl) Versioner() storage.Versioner {
-	return s.inner.Versioner()
-}
+// func (s *StorageImpl) RequestWatchProgress(ctx context.Context) error {
+// 	return s.inner.RequestWatchProgress(ctx)
+// }
 
-func (s *StorageImpl) Watch(ctx context.Context, key string, opts storage.ListOptions) (watch.Interface, error) {
-	return s.inner.Watch(ctx, key, opts)
-}
+// func (s *StorageImpl) Stats(ctx context.Context) (storage.Stats, error) {
+// 	return s.inner.Stats(ctx)
+// }
+
+// func (s *StorageImpl) Versioner() storage.Versioner {
+// 	return s.inner.Versioner()
+// }
+
+// func (s *StorageImpl) Watch(ctx context.Context, key string, opts storage.ListOptions) (watch.Interface, error) {
+// 	return s.inner.Watch(ctx, key, opts)
+// }

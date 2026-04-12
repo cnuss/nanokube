@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/awslambda"
@@ -148,16 +149,15 @@ func main() {
 
 	config = config.
 		WithStorageFactory(
-			nanokube.NewStorageFactory(config.Options())).
+			nanokube.NewStorageFactory(ctx, config.Options())).
 		WithApiServer(nanokube.NewApiServer(
 			config.Kube().ApiServerOptions(),
-			config.Kube().ApiServerConfig(),
-			config.Kube().StorageFactory().Default())).
+			config.Kube().StorageFactory())).
 		WithKubelet(kubemark.NewHollowKubelet(
 			config.Kube().KubeletFlags(),
 			config.Kube().KubeletConfiguration(),
-			config.Kube().Client(),
-			config.Kube().HeartbeatClient(),
+			config.Kube().Client().Clientset(),
+			config.Kube().Client().WithHeartbeat(30*time.Second).Clientset(),
 			config.Crid().DefaultBackend().Cadvisor(),
 			config.Crid().DefaultBackend().ImageService(),
 			config.Crid().DefaultBackend().RuntimeService(),
@@ -165,11 +165,8 @@ func main() {
 		))
 
 	go runKubelet(ctx, cancel, config)
-	go runApiServer(ctx, cancel, config)
-	go runStorage(ctx, cancel, config)
-
-	go waitForApiServer(ctx, cancel, config)
-	go waitForNodeReady(ctx, cancel, config)
+	// go waitForApiServer(ctx, cancel, config)
+	// go waitForNodeReady(ctx, cancel, config)
 
 	<-config.Context().Done()
 }
@@ -179,18 +176,8 @@ func runKubelet(ctx context.Context, cancel context.CancelCauseFunc, config pkg.
 	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
-func runApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
-	config.Kube().ApiServer().Run(ctx)
-	cancel(pkg.NewFatalError(fmt.Errorf("apiserver exited unexpectedly")))
-}
+// func waitForApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+// }
 
-func runStorage(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
-	config.Kube().StorageFactory().Run(ctx)
-	cancel(pkg.NewFatalError(fmt.Errorf("storage factory exited unexpectedly")))
-}
-
-func waitForApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
-}
-
-func waitForNodeReady(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
-}
+// func waitForNodeReady(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+// }
