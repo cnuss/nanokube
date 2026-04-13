@@ -1104,20 +1104,7 @@ func (s *Server) ImageStatus(ctx context.Context, req *runtimeapi.ImageStatusReq
 
 // ListImages implements [v1.ImageServiceServer].
 func (s *Server) ListImages(ctx context.Context, req *runtimeapi.ListImagesRequest) (*runtimeapi.ListImagesResponse, error) {
-	images, err := s.backend.client.ImageList(ctx, image.ListOptions{})
-	if err != nil {
-		return nil, component.WrapErr(s.log, err)
-	}
-	result := make([]*runtimeapi.Image, len(images))
-	for i, img := range images {
-		result[i] = &runtimeapi.Image{
-			Id:          img.ID,
-			RepoTags:    img.RepoTags,
-			RepoDigests: img.RepoDigests,
-			Size:        uint64(img.Size),
-		}
-	}
-	return &runtimeapi.ListImagesResponse{Images: result}, nil
+	panic("migrated")
 }
 
 // PullImage implements [v1.ImageServiceServer].
