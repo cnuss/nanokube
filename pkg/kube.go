@@ -5,22 +5,16 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
-	"k8s.io/kubernetes/pkg/volume/util/hostutil"
-	"k8s.io/kubernetes/pkg/volume/util/subpath"
-	"k8s.io/mount-utils"
 )
 
 var FeatureGates = map[string]bool{
@@ -36,10 +30,6 @@ type Kube interface {
 
 	TLSOptions() *server.TLSOptions
 	Recorder() record.EventRecorder
-	OSInterface() container.OSInterface
-	Mounter() mount.Interface
-	Subpather() subpath.Interface
-	HostUtil() hostutil.HostUtils
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Kube
 	Kubelet() *kubemark.HollowKubelet
@@ -73,18 +63,6 @@ type KubeImpl struct {
 
 	recorder     record.EventRecorder
 	recorderOnce sync.Once
-
-	osInterface     container.OSInterface
-	osInterfaceOnce sync.Once
-
-	mounter     mount.Interface
-	mounterOnce sync.Once
-
-	subpather     subpath.Interface
-	subpatherOnce sync.Once
-
-	hostUtil     hostutil.HostUtils
-	hostUtilOnce sync.Once
 
 	defaultStorageFactory     *storage.DefaultStorageFactory
 	defaultStorageFactoryOnce sync.Once
@@ -170,9 +148,12 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 
 func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 	k.kubeletConfigOnce.Do(func() {
-		k.kubeletConfig = &kubeletconfig.KubeletConfiguration{}
-		k.kubeletConfig.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
-		k.kubeletConfig.SyncFrequency = v1.Duration{Duration: 10 * time.Second}
+		config, err := kubeletoptions.NewKubeletConfiguration()
+		if err != nil {
+			klog.Fatalf("Failed to create kubelet configuration: %v", err)
+		}
+		config.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
+		k.kubeletConfig = config
 	})
 	return k.kubeletConfig
 }
@@ -195,42 +176,14 @@ func (k *KubeImpl) Recorder() record.EventRecorder {
 	return k.recorder
 }
 
-func (k *KubeImpl) OSInterface() container.OSInterface {
-	k.osInterfaceOnce.Do(func() {
-		k.osInterface = nil
-	})
-	return k.osInterface
-}
-
-func (k *KubeImpl) Mounter() mount.Interface {
-	k.mounterOnce.Do(func() {
-		k.mounter = nil
-	})
-	return k.mounter
-}
-
-func (k *KubeImpl) Subpather() subpath.Interface {
-	k.subpatherOnce.Do(func() {
-		k.subpather = nil
-	})
-	return k.subpather
-}
-
-func (k *KubeImpl) HostUtil() hostutil.HostUtils {
-	k.hostUtilOnce.Do(func() {
-		k.hostUtil = nil
-	})
-	return k.hostUtil
-}
-
 func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
 	kubelet.KubeletDeps.ProbeManager = nil
 	kubelet.KubeletDeps.TLSOptions = k.TLSOptions()
 	kubelet.KubeletDeps.Recorder = k.Recorder()
-	kubelet.KubeletDeps.OSInterface = k.OSInterface()
-	kubelet.KubeletDeps.Mounter = k.Mounter()
-	kubelet.KubeletDeps.Subpather = k.Subpather()
-	kubelet.KubeletDeps.HostUtil = k.HostUtil()
+	kubelet.KubeletDeps.OSInterface = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
 	k.kubelet = kubelet
 	close(k.kubeletProvided)
 	return k
@@ -243,6 +196,7 @@ func (k *KubeImpl) Kubelet() *kubemark.HollowKubelet {
 
 func (k *KubeImpl) WithApiServer(apiserver nanokube.ApiServer) Kube {
 	apiserver.Config().KubeAPIs.ControlPlane.StorageFactory = k.StorageFactory()
+	// TODO: set apiserver config on kubelet
 	k.apiserver = apiserver
 	close(k.apiserverProvided)
 	return k

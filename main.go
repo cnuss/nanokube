@@ -185,10 +185,10 @@ func main() {
 				config.Kube().KubeletConfiguration(),
 				config.Kube().Client().Clientset(),
 				config.Kube().Client().WithHeartbeat(30*time.Second).Clientset(),
-				config.Crid().DefaultBackend().Cadvisor(),
-				config.Crid().DefaultBackend().ImageService(),
-				config.Crid().DefaultBackend().RuntimeService(),
-				config.Crid().DefaultBackend().ContainerManager(),
+				config.Crid().DefaultBackend(),
+				config.Crid().DefaultBackend().Driver(),
+				config.Crid().DefaultBackend().Driver(),
+				config.Crid().DefaultBackend().Manager(),
 			))
 
 		go runKubelet(ctx, cancel, config)

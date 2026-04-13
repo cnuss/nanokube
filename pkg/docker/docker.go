@@ -214,15 +214,15 @@ func (d *driver) UpdateRuntimeConfig(ctx context.Context, runtimeConfig *v1.Runt
 	return fmt.Errorf("unimplemented")
 }
 
-func (d *driver) Version(ctx context.Context, apiVersion string) (*v1.VersionResponse, error) {
+func (d *driver) Version(ctx context.Context, version string) (*v1.VersionResponse, error) {
 	v, err := d.client.ServerVersion(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return &v1.VersionResponse{
-		Version:           d.config.Version(),
+		Version:           version,
 		RuntimeName:       d.Name(),
-		RuntimeVersion:    v.Version,
-		RuntimeApiVersion: apiVersion,
+		RuntimeVersion:    v.APIVersion,
+		RuntimeApiVersion: "v1",
 	}, nil
 }
