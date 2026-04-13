@@ -2,12 +2,10 @@ package nanokube
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
@@ -107,29 +105,13 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 			klog.Fatalf("Failed to prepare API server: %v", err)
 		}
 
-		host, port, err := prepared.GenericAPIServer.SecureServingInfo.HostPort()
-		if err != nil {
-			klog.Fatalf("Failed to get API server host and port: %v", err)
-		}
-
-		cert, key := prepared.GenericAPIServer.SecureServingInfo.Cert.CurrentCertKeyContent()
-		if cert == nil || key == nil {
-			klog.Fatalf("API server TLS cert or key is nil")
-		}
-
-		h.client = NewClient(&rest.Config{
-			Host: fmt.Sprintf("https://%s:%d", host, port),
-			TLSClientConfig: rest.TLSClientConfig{
-				CertData: cert,
-				KeyData:  key,
-				CAData:   cert,
-			},
-		})
+		loopback := prepared.GenericAPIServer.LoopbackClientConfig
+		h.client = NewClient(loopback)
 
 		go func() {
 			for {
-				if _, err := h.client.Discovery().ServerVersion(); err == nil {
-					Log.Info("API server is ready", "host", host, "port", port)
+				if version, err := h.client.Discovery().ServerVersion(); err == nil {
+					Log.Info("API server is ready", "host", loopback.Host, "version", version.GitVersion)
 					close(h.ready)
 					break
 				}
@@ -142,7 +124,6 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 		}()
 
 		go func() {
-			Log.Info("Starting API Server")
 			if err := prepared.Run(ctx); err != nil {
 				klog.Fatalf("API server exited with error: %v", err)
 			}
