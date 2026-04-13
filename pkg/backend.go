@@ -60,6 +60,7 @@ type Backend interface {
 
 	Driver() Driver
 	Manager() Manager
+	Ready() <-chan struct{}
 }
 
 type BackendImpl struct {
@@ -68,6 +69,9 @@ type BackendImpl struct {
 
 	manager     Manager
 	managerOnce sync.Once
+
+	startOnce sync.Once
+	ready     chan struct{}
 }
 
 var _ Backend = &BackendImpl{}
@@ -76,6 +80,7 @@ func NewBackend(driver Driver) Backend {
 	return &BackendImpl{
 		driver:  driver,
 		options: driver.Options(),
+		ready:   make(chan struct{}),
 	}
 }
 
@@ -342,8 +347,16 @@ func (b *BackendImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) 
 	return nanokube.Unimplemented()
 }
 
+func (b *BackendImpl) Ready() <-chan struct{} {
+	return b.ready
+}
+
 func (b *BackendImpl) Start() error {
-	return nanokube.Unimplemented()
+	b.startOnce.Do(func() {
+		// TODO(partial): add any initialization logic as needed
+		close(b.ready)
+	})
+	return nil
 }
 
 func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {

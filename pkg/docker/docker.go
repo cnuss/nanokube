@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
@@ -172,39 +173,33 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 		if !d.matchLabels(c.Labels, selector) {
 			continue
 		}
-		result = append(result, d.toContainer(c))
+		prefix := d.Name()
+		var containerState v1.ContainerState
+		switch c.State {
+		case "created":
+			containerState = v1.ContainerState_CONTAINER_CREATED
+		case "running":
+			containerState = v1.ContainerState_CONTAINER_RUNNING
+		default:
+			containerState = v1.ContainerState_CONTAINER_EXITED
+		}
+		result = append(result, &v1.Container{
+			Id:           c.ID,
+			PodSandboxId: nanokube.TagParentUID(prefix, c.Labels),
+			Metadata: &v1.ContainerMetadata{
+				Name:    nanokube.TagName(prefix, c.Labels),
+				Attempt: nanokube.TagAttempt(prefix, c.Labels),
+			},
+			Image:       &v1.ImageSpec{Image: c.Image},
+			ImageRef:    c.ImageID,
+			State:       containerState,
+			CreatedAt:   c.Created * int64(time.Second),
+			Labels:      nanokube.TagExtractLabels(prefix, c.Labels),
+			Annotations: nanokube.TagExtractAnnotations(prefix, c.Labels),
+		})
 	}
 
 	return result, nil
-}
-
-func (d *driver) toContainer(c container.Summary) *v1.Container {
-	prefix := d.Name()
-	return &v1.Container{
-		Id:           c.ID,
-		PodSandboxId: nanokube.TagParentUID(prefix, c.Labels),
-		Metadata: &v1.ContainerMetadata{
-			Name:    nanokube.TagName(prefix, c.Labels),
-			Attempt: nanokube.TagAttempt(prefix, c.Labels),
-		},
-		Image:       &v1.ImageSpec{Image: c.Image},
-		ImageRef:    c.ImageID,
-		State:       d.containerState(c.State),
-		CreatedAt:   c.Created * int64(time.Second),
-		Labels:      nanokube.TagExtractLabels(prefix, c.Labels),
-		Annotations: nanokube.TagExtractAnnotations(prefix, c.Labels),
-	}
-}
-
-func (d *driver) containerState(state string) v1.ContainerState {
-	switch state {
-	case "created":
-		return v1.ContainerState_CONTAINER_CREATED
-	case "running":
-		return v1.ContainerState_CONTAINER_RUNNING
-	default:
-		return v1.ContainerState_CONTAINER_EXITED
-	}
 }
 
 func (d *driver) matchLabels(dockerLabels map[string]string, selector map[string]string) bool {
@@ -243,7 +238,62 @@ func (d *driver) ListMetricDescriptors(ctx context.Context) ([]*v1.MetricDescrip
 }
 
 func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter) ([]*v1.PodSandbox, error) {
-	return []*v1.PodSandbox{}, nanokube.Unimplemented()
+	tb := nanokube.NewTagBuilder(d.Name(), nil).WithType(nanokube.ResourceSandbox)
+	f := filters.NewArgs()
+	for k, v := range tb.InternalTags() {
+		if v != "" {
+			f.Add("label", k+"="+v)
+		}
+	}
+
+	if filter != nil {
+		if filter.Id != "" {
+			f.Add("id", filter.Id)
+		}
+		if filter.State != nil {
+			if filter.State.State == v1.PodSandboxState_SANDBOX_READY {
+				f.Add("status", container.StateRunning)
+			} else {
+				f.Add("status", container.StateCreated)
+				f.Add("status", container.StateRestarting)
+				f.Add("status", container.StatePaused)
+				f.Add("status", container.StateRemoving)
+				f.Add("status", container.StateExited)
+				f.Add("status", container.StateDead)
+			}
+		}
+	}
+
+	containers, err := d.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, err
+	}
+
+	selector := filter.GetLabelSelector()
+	var result []*v1.PodSandbox
+	for _, c := range containers {
+		if !d.matchLabels(c.Labels, selector) {
+			continue
+		}
+		prefix := d.Name()
+		podState := v1.PodSandboxState_SANDBOX_NOTREADY
+		if c.State == "running" {
+			podState = v1.PodSandboxState_SANDBOX_READY
+		}
+		result = append(result, &v1.PodSandbox{
+			Id: c.ID,
+			Metadata: &v1.PodSandboxMetadata{
+				Name:      nanokube.TagName(prefix, c.Labels),
+				Namespace: nanokube.TagNamespace(prefix, c.Labels),
+				Uid:       nanokube.TagUID(prefix, c.Labels),
+			},
+			State:       podState,
+			CreatedAt:   c.Created * int64(time.Second),
+			Labels:      nanokube.TagExtractLabels(prefix, c.Labels),
+			Annotations: nanokube.TagExtractAnnotations(prefix, c.Labels),
+		})
+	}
+	return result, nil
 }
 
 func (d *driver) ListPodSandboxMetrics(ctx context.Context) ([]*v1.PodSandboxMetrics, error) {
@@ -299,7 +349,24 @@ func (d *driver) StartContainer(ctx context.Context, containerID string) error {
 }
 
 func (d *driver) Status(ctx context.Context, verbose bool) (*v1.StatusResponse, error) {
-	return nil, nanokube.Unimplemented()
+	info, err := d.client.Info(ctx)
+	_, netErr := d.client.NetworkInspect(ctx, "bridge", network.InspectOptions{})
+
+	resp := &v1.StatusResponse{
+		Status: &v1.RuntimeStatus{
+			Conditions: []*v1.RuntimeCondition{
+				{Type: "RuntimeReady", Status: err == nil, Reason: "DockerIsUp"},
+				{Type: "NetworkReady", Status: netErr == nil, Reason: "BridgeNetworkReady"},
+			},
+		},
+	}
+	if verbose && err == nil {
+		resp.Info = map[string]string{
+			"storageDriver": info.Driver,
+			"serverVersion": info.ServerVersion,
+		}
+	}
+	return resp, nil
 }
 
 func (d *driver) StopContainer(ctx context.Context, containerID string, timeout int64) error {

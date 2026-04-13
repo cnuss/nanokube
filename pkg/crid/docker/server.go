@@ -545,44 +545,7 @@ func (s *Server) ListMetricDescriptors(_ context.Context, req *runtimeapi.ListMe
 
 // ListPodSandbox implements [v1.RuntimeServiceServer].
 func (s *Server) ListPodSandbox(ctx context.Context, req *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
-	if req == nil {
-		req = &runtimeapi.ListPodSandboxRequest{}
-	}
-
-	f := s.backend.Into.Filters(s.backend.labels.NewBuilder(nil).WithType(labels.TypeSandbox))
-
-	if filter := req.GetFilter(); filter != nil {
-		if filter.Id != "" {
-			f.Add("id", filter.Id)
-		}
-		if filter.State != nil {
-			if filter.State.State == runtimeapi.PodSandboxState_SANDBOX_READY {
-				f.Add("status", container.StateRunning)
-			} else {
-				f.Add("status", container.StateCreated)
-				f.Add("status", container.StateRestarting)
-				f.Add("status", container.StatePaused)
-				f.Add("status", container.StateRemoving)
-				f.Add("status", container.StateExited)
-				f.Add("status", container.StateDead)
-			}
-		}
-	}
-
-	containers, err := s.backend.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
-	if err != nil {
-		return nil, component.WrapErr(s.log, err)
-	}
-
-	selector := req.GetFilter().GetLabelSelector()
-	var result []*runtimeapi.PodSandbox
-	for _, c := range containers {
-		if !s.matchLabels(c.Labels, selector) {
-			continue
-		}
-		result = append(result, s.backend.Into.PodSandbox(c))
-	}
-	return &runtimeapi.ListPodSandboxResponse{Items: result}, nil
+	panic("moved")
 }
 
 // ListPodSandboxMetrics implements [v1.RuntimeServiceServer].
@@ -932,24 +895,7 @@ func (s *Server) StartContainer(ctx context.Context, req *runtimeapi.StartContai
 
 // Status implements [v1.RuntimeServiceServer].
 func (s *Server) Status(ctx context.Context, req *runtimeapi.StatusRequest) (*runtimeapi.StatusResponse, error) {
-	info, err := s.backend.client.Info(ctx)
-	_, netErr := s.backend.client.NetworkInspect(ctx, "bridge", network.InspectOptions{})
-
-	resp := &runtimeapi.StatusResponse{
-		Status: &runtimeapi.RuntimeStatus{
-			Conditions: []*runtimeapi.RuntimeCondition{
-				{Type: "RuntimeReady", Status: err == nil, Reason: "DockerIsUp"},
-				{Type: "NetworkReady", Status: netErr == nil, Reason: "BridgeNetworkReady"},
-			},
-		},
-	}
-	if req.GetVerbose() && err == nil {
-		resp.Info = map[string]string{
-			"storageDriver": info.Driver,
-			"serverVersion": info.ServerVersion,
-		}
-	}
-	return resp, nil
+	panic("moved")
 }
 
 // StopContainer implements [v1.RuntimeServiceServer].
