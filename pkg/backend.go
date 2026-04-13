@@ -46,6 +46,7 @@ type Manager interface {
 	cm.ContainerManager
 	lifecycle.PodAdmitHandler
 	cm.InternalContainerLifecycle
+	cm.PodContainerManager
 	Ready() <-chan struct{}
 }
 
@@ -191,7 +192,7 @@ func (b *BackendImpl) CleanSubPaths(poodDir string, volumeName string) error {
 }
 
 func (b *BackendImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
-	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
+	return b.GetDirFsInfo("/")
 }
 
 func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOptions) (map[string]cadvisorv2.ContainerInfo, error) {
@@ -356,7 +357,7 @@ func (b *BackendImpl) Rename(oldpath string, newpath string) error {
 }
 
 func (b *BackendImpl) RootFsInfo() (cadvisorv2.FsInfo, error) {
-	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
+	return b.GetDirFsInfo("/")
 }
 
 func (b *BackendImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
@@ -419,19 +420,23 @@ func newManager(backend Backend) Manager {
 }
 
 func (c *managerImpl) ContainerHasExclusiveCPUs(pod *corev1.Pod, container *corev1.Container) bool {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return false
 }
 
 func (c *managerImpl) GetAllocatableCPUs() []int64 {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetAllocatableDevices() []*podresourcesv1.ContainerDevices {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetAllocatableMemory() []*podresourcesv1.ContainerMemory {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHandler {
@@ -439,11 +444,15 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 }
 
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return lifecycle.PodAdmitResult{
+		Admit: false,
+	}
 }
 
 func (c *managerImpl) GetCPUs(podUID string, containerName string) []int64 {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetCapacity(localStorageCapacityIsolation bool) corev1.ResourceList {
@@ -465,11 +474,13 @@ func (c *managerImpl) GetDevicePluginResourceCapacity() (corev1.ResourceList, co
 }
 
 func (c *managerImpl) GetDevices(podUID string, containerName string) []*podresourcesv1.ContainerDevices {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetDynamicResources(pod *corev1.Pod, container *corev1.Container) []*podresourcesv1.DynamicResource {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetHealthCheckers() []healthz.HealthChecker {
@@ -479,11 +490,13 @@ func (c *managerImpl) GetHealthCheckers() []healthz.HealthChecker {
 }
 
 func (c *managerImpl) GetMemory(podUID string, containerName string) []*podresourcesv1.ContainerMemory {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetMountedSubsystems() *cm.CgroupSubsystems {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) GetNodeAllocatableAbsolute() corev1.ResourceList {
@@ -523,7 +536,8 @@ func (c *managerImpl) GetPodCgroupRoot() string {
 }
 
 func (c *managerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return cm.QOSContainersInfo{}
 }
 
 func (c *managerImpl) GetResources(ctx context.Context, pod *corev1.Pod, container *corev1.Container) (*container.RunContainerOptions, error) {
@@ -547,15 +561,17 @@ func (c *managerImpl) PostStopContainer(_ klog.Logger, _ string) error {
 }
 
 func (c *managerImpl) NewPodContainerManager() cm.PodContainerManager {
-	panic("unimplemented")
+	return c
 }
 
 func (c *managerImpl) PodHasExclusiveCPUs(pod *corev1.Pod) bool {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return false
 }
 
 func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return false
 }
 
 func (c *managerImpl) PrepareDynamicResources(context.Context, *corev1.Pod) error {
@@ -563,7 +579,9 @@ func (c *managerImpl) PrepareDynamicResources(context.Context, *corev1.Pod) erro
 }
 
 func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
-	panic("unimplemented")
+	// DEVNOTE: old impl checked device manager checkpoints; returns true after kubelet restart
+	// to clear stale extended resources. No device plugins here, so always false.
+	return false
 }
 
 func (c *managerImpl) Ready() <-chan struct{} {
@@ -589,7 +607,8 @@ func (c *managerImpl) Status() cm.Status {
 }
 
 func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
-	panic("unimplemented")
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (c *managerImpl) UnprepareDynamicResources(context.Context, *corev1.Pod) error {
@@ -597,11 +616,11 @@ func (c *managerImpl) UnprepareDynamicResources(context.Context, *corev1.Pod) er
 }
 
 func (c *managerImpl) UpdateAllocatedDevices() {
-	panic("unimplemented")
+	nanokube.Unimplemented()
 }
 
 func (c *managerImpl) UpdateAllocatedResourcesStatus(pod *corev1.Pod, status *corev1.PodStatus) {
-	panic("unimplemented")
+	nanokube.Unimplemented()
 }
 
 func (c *managerImpl) UpdatePluginResources(*framework.NodeInfo, *lifecycle.PodAdmitAttributes) error {
@@ -616,4 +635,47 @@ func (c *managerImpl) Updates() <-chan resourceupdates.Update {
 	// TODO(partial): return device plugin / DRA resource update channel
 	// DEVNOTE: old impl returned cm.resourceUpdates channel fed by device and DRA managers
 	return nil
+}
+
+func (c *managerImpl) Destroy(logger klog.Logger, name cm.CgroupName) error {
+	return nanokube.Unimplemented()
+}
+
+func (c *managerImpl) EnsureExists(logger klog.Logger, pod *corev1.Pod) error {
+	return nanokube.Unimplemented()
+}
+
+func (c *managerImpl) Exists(*corev1.Pod) bool {
+	nanokube.Unimplemented()
+	return false
+}
+
+func (c *managerImpl) GetAllPodsFromCgroups() (map[types.UID]cm.CgroupName, error) {
+	return nil, nanokube.Unimplemented()
+}
+
+func (c *managerImpl) GetPodCgroupConfig(pod *corev1.Pod, resource corev1.ResourceName) (*cm.ResourceConfig, error) {
+	return nil, nanokube.Unimplemented()
+}
+
+func (c *managerImpl) GetPodCgroupMemoryUsage(pod *corev1.Pod) (uint64, error) {
+	return 0, nanokube.Unimplemented()
+}
+
+func (c *managerImpl) GetPodContainerName(*corev1.Pod) (cm.CgroupName, string) {
+	nanokube.Unimplemented()
+	return nil, ""
+}
+
+func (c *managerImpl) IsPodCgroup(cgroupfs string) (bool, types.UID) {
+	nanokube.Unimplemented()
+	return false, ""
+}
+
+func (c *managerImpl) ReduceCPULimits(logger klog.Logger, name cm.CgroupName) error {
+	return nanokube.Unimplemented()
+}
+
+func (c *managerImpl) SetPodCgroupConfig(logger klog.Logger, pod *corev1.Pod, resourceConfig *cm.ResourceConfig) error {
+	return nanokube.Unimplemented()
 }
