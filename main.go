@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/docker"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/podman"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
@@ -136,6 +139,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Override wait.NeverStop
+	stopCh := make(chan struct{})
+	wait.NeverStop = stopCh
+	go func() {
+		<-config.Context().Done()
+		close(stopCh)
+	}()
+
+	klog.OsExit = func(code int) {
+		cancel(pkg.NewFatalError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
+		runtime.Goexit()
+	}
+
 	defer func() {
 		cancel(nil)
 		if cause := context.Cause(config.Context()); cause != nil {
@@ -147,28 +163,42 @@ func main() {
 		}
 	}()
 
-	config = config.
-		WithStorageFactory(
-			nanokube.NewStorageFactory(ctx, config.Options())).
-		WithApiServer(nanokube.NewApiServer(
-			config.Kube().ApiServerOptions(),
-			config.Kube().StorageFactory())).
-		WithKubelet(kubemark.NewHollowKubelet(
-			config.Kube().KubeletFlags(),
-			config.Kube().KubeletConfiguration(),
-			config.Kube().Client().Clientset(),
-			config.Kube().Client().WithHeartbeat(30*time.Second).Clientset(),
-			config.Crid().DefaultBackend().Cadvisor(),
-			config.Crid().DefaultBackend().ImageService(),
-			config.Crid().DefaultBackend().RuntimeService(),
-			config.Crid().DefaultBackend().ContainerManager(),
-		))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if recover() != nil && ctx.Err() == nil {
+				panic("unexpected panic during init")
+			}
+		}()
+		config = config.
+			WithStorageFactory(
+				nanokube.NewStorageFactory(ctx, config.Options())).
+			WithApiServer(nanokube.NewApiServer(
+				config.Kube().ApiServerOptions(),
+				config.Kube().StorageFactory())).
+			WithKubelet(kubemark.NewHollowKubelet(
+				config.Kube().KubeletFlags(),
+				config.Kube().KubeletConfiguration(),
+				config.Kube().Client().Clientset(),
+				config.Kube().Client().WithHeartbeat(30*time.Second).Clientset(),
+				config.Crid().DefaultBackend().Cadvisor(),
+				config.Crid().DefaultBackend().ImageService(),
+				config.Crid().DefaultBackend().RuntimeService(),
+				config.Crid().DefaultBackend().ContainerManager(),
+			))
 
-	go runKubelet(ctx, cancel, config)
-	// go waitForApiServer(ctx, cancel, config)
-	// go waitForNodeReady(ctx, cancel, config)
+		go runKubelet(ctx, cancel, config)
+		// go waitForApiServer(ctx, cancel, config)
+		// go waitForNodeReady(ctx, cancel, config)
 
-	<-config.Context().Done()
+		<-config.Context().Done()
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 func runKubelet(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {

@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"go.etcd.io/etcd/server/v3/embed"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
@@ -89,8 +87,7 @@ func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
 		}
 
 		cfg.AutoCompactionRetention = "0"
-		cfg.LogLevel = "info"
-		cfg.ZapLoggerBuilder = newKlogZapLoggerBuilder()
+		cfg.LogLevel = "fatal"
 
 		server, err := embed.StartEtcd(cfg)
 		if err != nil {
@@ -157,26 +154,6 @@ func (s *StorageFactoryImpl) ResourcePrefix(groupResource schema.GroupResource) 
 	resourcePrefix := s.Default().ResourcePrefix(groupResource)
 	// TODO intercept
 	return resourcePrefix
-}
-
-// klogWriter adapts klog as a zapcore.WriteSyncer so etcd logs flow through klog.
-type klogWriter struct{}
-
-func (klogWriter) Write(p []byte) (int, error) {
-	klog.InfoDepth(1, string(p))
-	return len(p), nil
-}
-
-func (klogWriter) Sync() error { return nil }
-
-func newKlogZapLoggerBuilder() func(*embed.Config) error {
-	return embed.NewZapLoggerBuilder(
-		zap.New(zapcore.NewCore(
-			zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
-			klogWriter{},
-			zap.NewAtomicLevelAt(zapcore.InfoLevel),
-		)),
-	)
 }
 
 // // TODO: make StorageFactoryImpl return Storage

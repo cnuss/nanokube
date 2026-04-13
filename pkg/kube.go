@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"runtime"
 	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -104,21 +102,6 @@ type KubeImpl struct {
 var _ Kube = &KubeImpl{}
 
 func newKube(config Config) Kube {
-	// Override wait.NeverStop
-	stopCh := make(chan struct{})
-	wait.NeverStop = stopCh
-	go func() {
-		<-config.Context().Done()
-		close(stopCh)
-	}()
-
-	// Override klog logging
-	// klog.SetLogger(config.Logger("klog"))
-	klog.OsExit = func(code int) {
-		config.Cancel(NewFatalError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
-		runtime.Goexit()
-	}
-
 	kube := &KubeImpl{
 		ctx:                    config.Context(),
 		config:                 config,
@@ -138,6 +121,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
 		opts.GenericServerRunOptions.ExternalHost = k.ApiServerTunnel().Hostname()
+		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
 		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
 		opts.SecureServing.DisableHTTP2Serving = true

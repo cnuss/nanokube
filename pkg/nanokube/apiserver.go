@@ -147,6 +147,6 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 		}()
 	})
 
-	<-h.ready
+	<-h.Ready()
 	return h.client
 }
