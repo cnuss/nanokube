@@ -978,26 +978,7 @@ func (s *Server) Version(ctx context.Context, req *runtimeapi.VersionRequest) (*
 
 // ImageFsInfo implements [v1.ImageServiceServer].
 func (s *Server) ImageFsInfo(ctx context.Context, req *runtimeapi.ImageFsInfoRequest) (*runtimeapi.ImageFsInfoResponse, error) {
-	info, err := s.backend.client.Info(ctx)
-	if err != nil {
-		return nil, component.WrapErr(s.log, err)
-	}
-	resp, err := s.ListImages(ctx, &runtimeapi.ListImagesRequest{})
-	if err != nil {
-		return nil, component.WrapErr(s.log, err)
-	}
-	var totalSize uint64
-	for _, img := range resp.Images {
-		totalSize += img.Size
-	}
-	return &runtimeapi.ImageFsInfoResponse{
-		ImageFilesystems: []*runtimeapi.FilesystemUsage{
-			{
-				FsId:      &runtimeapi.FilesystemIdentifier{Mountpoint: info.DockerRootDir},
-				UsedBytes: &runtimeapi.UInt64Value{Value: totalSize},
-			},
-		},
-	}, nil
+	panic("moved")
 }
 
 // ImageStatus implements [v1.ImageServiceServer].

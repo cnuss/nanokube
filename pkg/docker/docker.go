@@ -119,7 +119,26 @@ func (d *driver) GetContainerEvents(ctx context.Context, containerEventsCh chan 
 }
 
 func (d *driver) ImageFsInfo(ctx context.Context) (*v1.ImageFsInfoResponse, error) {
-	return nil, nanokube.Unimplemented()
+	info, err := d.client.Info(ctx)
+	if err != nil {
+		return nil, err
+	}
+	images, err := d.ListImages(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	var totalSize uint64
+	for _, img := range images {
+		totalSize += img.Size
+	}
+	return &v1.ImageFsInfoResponse{
+		ImageFilesystems: []*v1.FilesystemUsage{
+			{
+				FsId:      &v1.FilesystemIdentifier{Mountpoint: info.DockerRootDir},
+				UsedBytes: &v1.UInt64Value{Value: totalSize},
+			},
+		},
+	}, nil
 }
 
 func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose bool) (*v1.ImageStatusResponse, error) {

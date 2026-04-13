@@ -46,6 +46,7 @@ type Manager interface {
 	cm.ContainerManager
 	lifecycle.PodAdmitHandler
 	cm.InternalContainerLifecycle
+	Ready() <-chan struct{}
 }
 
 type Backend interface {
@@ -194,7 +195,11 @@ func (b *BackendImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error
 }
 
 func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOptions) (map[string]cadvisorv2.ContainerInfo, error) {
-	return nil, nanokube.Unimplemented()
+	return map[string]cadvisorv2.ContainerInfo{
+		// TODO(partial): port container metrics from crid/backend/cadvisor.go
+		// DEVNOTE: old impl queried ContainerStats+ContainerStatus via CRI for each container.
+		// For root "/", synthesized info from HostInfo. Recursive mode listed all containers.
+	}, nil
 }
 
 func (b *BackendImpl) Create(path string) (*os.File, error) {
@@ -210,7 +215,12 @@ func (b *BackendImpl) EvalHostSymlinks(pathname string) (string, error) {
 }
 
 func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
-	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
+	return cadvisorv2.FsInfo{
+		// TODO(partial): probe VM filesystem via RunOnce
+		// DEVNOTE: old impl ran busybox in a container with bind-mounted path, executed
+		// "stat -f -c '%S %b %a'" to get block size/total/available, computed capacity/usage.
+		// Results cached with 60s TTL.
+	}, nil
 }
 
 func (b *BackendImpl) GetFileType(pathname string) (hostutil.FileType, error) {
@@ -250,7 +260,10 @@ func (b *BackendImpl) Hostname() (name string, err error) {
 }
 
 func (b *BackendImpl) ImagesFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
-	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
+	return cadvisorv2.FsInfo{
+		// TODO(partial): report image filesystem info from VM
+		// DEVNOTE: old impl delegated to ContainerFsInfo -> GetDirFsInfo("/")
+	}, nil
 }
 
 func (b *BackendImpl) IsLikelyNotMountPoint(file string) (bool, error) {
@@ -271,6 +284,8 @@ func (b *BackendImpl) MachineInfo() (*cadvisorv1.MachineInfo, error) {
 		NumCores:       runtime.NumCPU(),
 		MemoryCapacity: memory.TotalMemory(),
 		// TODO(partial): fill in more fields as needed
+		// DEVNOTE: old impl also set InstanceID, BootID, SystemUUID, MachineID from HostInfo
+		// (probed via docker container with host namespaces)
 	}, nil
 }
 
@@ -279,7 +294,8 @@ func (b *BackendImpl) MakeRShared(path string) error {
 }
 
 func (b *BackendImpl) MkdirAll(path string, perm os.FileMode) error {
-	// TODO(partial): skipped for now
+	// TODO(partial): route to host os.MkdirAll or VM depending on path
+	// DEVNOTE: kubelet calls this for pod log dirs, plugin dirs, etc.
 	return nil
 }
 
@@ -354,6 +370,7 @@ func (b *BackendImpl) Ready() <-chan struct{} {
 func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
 		// TODO(partial): add any initialization logic as needed
+		// DEVNOTE: old cadvisor Start() was a no-op; real init happened in MachineInfo
 		close(b.ready)
 	})
 	return nil
@@ -372,7 +389,11 @@ func (b *BackendImpl) Unmount(target string) error {
 }
 
 func (b *BackendImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {
-	return nil, nanokube.Unimplemented()
+	return &cadvisorv1.VersionInfo{
+		// TODO(partial): KernelVersion, ContainerOsVersion from VM HostInfo
+		// DEVNOTE: old impl got KernelVersion (uname -r) and OSVersion (/etc/os-release)
+		// from HostInfo probed inside the VM
+	}, nil
 }
 
 func (b *BackendImpl) Manager() Manager {
@@ -383,7 +404,9 @@ func (b *BackendImpl) Manager() Manager {
 }
 
 type managerImpl struct {
-	backend Backend
+	backend   Backend
+	startOnce sync.Once
+	ready     chan struct{}
 }
 
 var _ Manager = &managerImpl{}
@@ -391,6 +414,7 @@ var _ Manager = &managerImpl{}
 func newManager(backend Backend) Manager {
 	return &managerImpl{
 		backend: backend,
+		ready:   make(chan struct{}),
 	}
 }
 
@@ -423,11 +447,21 @@ func (c *managerImpl) GetCPUs(podUID string, containerName string) []int64 {
 }
 
 func (c *managerImpl) GetCapacity(localStorageCapacityIsolation bool) corev1.ResourceList {
-	panic("unimplemented")
+	return corev1.ResourceList{
+		// TODO(partial): report CPU, memory, ephemeral-storage capacity
+		// DEVNOTE: old impl returned cm.capacity (built from MachineInfo during Start).
+		// If localStorageCapacityIsolation, fetched RootFsInfo from cadvisor for ephemeral-storage.
+	}
 }
 
 func (c *managerImpl) GetDevicePluginResourceCapacity() (corev1.ResourceList, corev1.ResourceList, []string) {
-	panic("unimplemented")
+	return corev1.ResourceList{
+			// TODO(partial): report device plugin capacity
+			// DEVNOTE: old impl delegated to cm.deviceManager.GetCapacity()
+		}, corev1.ResourceList{
+			// TODO(partial): report device plugin allocatable
+			// DEVNOTE: old impl delegated to cm.deviceManager.GetCapacity() (second return value)
+		}, nil
 }
 
 func (c *managerImpl) GetDevices(podUID string, containerName string) []*podresourcesv1.ContainerDevices {
@@ -440,6 +474,7 @@ func (c *managerImpl) GetDynamicResources(pod *corev1.Pod, container *corev1.Con
 
 func (c *managerImpl) GetHealthCheckers() []healthz.HealthChecker {
 	// TODO(partial): add health checkers as needed
+	// DEVNOTE: old impl returned deviceManager's health checker
 	return nil
 }
 
@@ -454,21 +489,32 @@ func (c *managerImpl) GetMountedSubsystems() *cm.CgroupSubsystems {
 func (c *managerImpl) GetNodeAllocatableAbsolute() corev1.ResourceList {
 	return corev1.ResourceList{
 		// TODO(partial): report actual allocatable resources
+		// DEVNOTE: old impl subtracted SystemReserved and KubeReserved from capacity,
+		// clamping negative values to zero
 	}
 }
 
 func (c *managerImpl) GetNodeAllocatableReservation() corev1.ResourceList {
-	panic("unimplemented")
+	return corev1.ResourceList{
+		// TODO(partial): report reserved resources
+		// DEVNOTE: old impl summed SystemReserved + KubeReserved + hardEvictionReservation
+	}
 }
 
 func (c *managerImpl) GetNodeConfig() cm.NodeConfig {
 	return cm.NodeConfig{
 		// TODO(partial): add fields as needed
+		// DEVNOTE: old impl returned cm.NodeConfig populated during construction with
+		// cgroup settings, CPU/memory/topology manager policies, runtime cgroups, etc.
 	}
 }
 
 func (c *managerImpl) GetPluginRegistrationHandlers() map[string]cache.PluginHandler {
-	panic("unimplemented")
+	return map[string]cache.PluginHandler{
+		// TODO(partial): add device plugin, DRA handlers
+		// DEVNOTE: old impl returned map with DevicePlugin and DRA handlers from
+		// deviceManager and draManager
+	}
 }
 
 func (c *managerImpl) GetPodCgroupRoot() string {
@@ -520,12 +566,26 @@ func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
 	panic("unimplemented")
 }
 
+func (c *managerImpl) Ready() <-chan struct{} {
+	return c.ready
+}
+
 func (c *managerImpl) Start(context.Context, *corev1.Node, cm.ActivePodsFunc, cm.GetNodeFunc, config.SourcesReady, status.PodStatusProvider, cri.RuntimeService, bool) error {
-	return nanokube.Unimplemented()
+	c.startOnce.Do(func() {
+		// TODO(partial): initialize container manager resources
+		// DEVNOTE: old impl initialized DRA manager, CPU manager, memory manager,
+		// cached node info, populated ephemeral storage capacity, validated node
+		// allocatable, started device manager and periodic cgroup ensure tasks
+		close(c.ready)
+	})
+	return nil
 }
 
 func (c *managerImpl) Status() cm.Status {
-	panic("unimplemented")
+	return cm.Status{
+		// TODO(partial): report soft requirement errors if any
+		// DEVNOTE: old impl returned cm.status with SoftRequirements error (read-locked)
+	}
 }
 
 func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
@@ -553,5 +613,7 @@ func (c *managerImpl) UpdateQOSCgroups(logger klog.Logger) error {
 }
 
 func (c *managerImpl) Updates() <-chan resourceupdates.Update {
-	panic("unimplemented")
+	// TODO(partial): return device plugin / DRA resource update channel
+	// DEVNOTE: old impl returned cm.resourceUpdates channel fed by device and DRA managers
+	return nil
 }
