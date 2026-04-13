@@ -1,9 +1,13 @@
 package docker
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -457,4 +462,65 @@ func (d *driver) Version(ctx context.Context, version string) (*v1.VersionRespon
 		RuntimeVersion:    v.APIVersion,
 		RuntimeApiVersion: "v1",
 	}, nil
+}
+
+func (d *driver) ExecHost(img string, cmd []string, mounts []string) (string, error) {
+	reader, err := d.client.ImagePull(d.Context(), img, image.PullOptions{})
+	if err != nil {
+		return "", err
+	}
+	io.Copy(io.Discard, reader)
+	reader.Close()
+
+	hostConfig := &container.HostConfig{
+		AutoRemove: true,
+		Binds: func() []string {
+			var binds []string
+			for _, mount := range mounts {
+				binds = append(binds, fmt.Sprintf("/host/%s", mount))
+			}
+			return binds
+		}(),
+		NetworkMode: "host",
+		PidMode:     "host",
+		IpcMode:     "host",
+		Privileged:  true,
+	}
+
+	resp, err := d.client.ContainerCreate(d.Context(), &container.Config{
+		Image:        img,
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, hostConfig, nil, nil, "")
+	if err != nil {
+		return "", err
+	}
+
+	attach, err := d.client.ContainerAttach(d.Context(), resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return "", err
+	}
+	defer attach.Close()
+
+	if err := d.client.ContainerStart(d.Context(), resp.ID, container.StartOptions{}); err != nil {
+		return "", err
+	}
+
+	var stdout, stderr bytes.Buffer
+	stdcopy.StdCopy(&stdout, &stderr, attach.Reader)
+
+	waitCh, errCh := d.client.ContainerWait(d.Context(), resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			return "", fmt.Errorf("exit code %d: %s", result.StatusCode, strings.TrimSpace(stderr.String()))
+		}
+	case err := <-errCh:
+		if err != nil {
+			return "", fmt.Errorf("waiting for container: %w", err)
+		}
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
 }

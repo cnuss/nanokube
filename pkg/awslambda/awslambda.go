@@ -2,7 +2,6 @@ package awslambda
 
 import (
 	"context"
-
 	"os"
 	"time"
 
@@ -192,4 +191,8 @@ func (d *driver) Version(ctx context.Context, apiVersion string) (*v1.VersionRes
 		RuntimeVersion:    "0.0.0", // TODO from lambda
 		RuntimeApiVersion: apiVersion,
 	}, nil
+}
+
+func (d *driver) ExecHost(img string, cmd []string, mounts []string) (string, error) {
+	return "", nanokube.Unimplemented()
 }

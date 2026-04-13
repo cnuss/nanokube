@@ -1,6 +1,7 @@
 package nanokube
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -38,5 +39,21 @@ func SetupLogging(verbosity int) {
 	klog.SetSlogLogger(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
 		Level:      level,
 		TimeFormat: time.TimeOnly,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.LevelKey {
+				l := a.Value.Any().(slog.Level)
+				switch {
+				case l >= slog.LevelError:
+					a.Value = slog.StringValue("ERR")
+				case l >= slog.LevelWarn:
+					a.Value = slog.StringValue("WRN")
+				case l >= slog.LevelInfo:
+					a.Value = slog.StringValue("INF")
+				default:
+					a.Value = slog.StringValue(fmt.Sprintf("V(%d)", -int(l)))
+				}
+			}
+			return a
+		},
 	})))
 }

@@ -41,6 +41,8 @@ type Driver interface {
 	Options() nanokube.Options
 	Name() string
 	CgroupRoot() string
+
+	ExecHost(image string, cmd []string, mounts []string) (string, error)
 }
 
 type Manager interface {
@@ -59,7 +61,6 @@ type Backend interface {
 	hostutil.HostUtils
 
 	Context() context.Context
-	RunOnce(image string, cmd []string, mounts []string) (string, error)
 
 	Driver() Driver
 	Manager() Manager
@@ -95,86 +96,6 @@ func (b *BackendImpl) Driver() Driver {
 	return b.driver
 }
 
-func (b *BackendImpl) RunOnce(image string, cmd []string, mounts []string) (string, error) {
-	_, err := b.ImageService().PullImage(b.Context(), &criv1.ImageSpec{Image: image}, nil, nil)
-	if err != nil {
-		return "", err
-	}
-
-	var sandboxID string
-	var containerID string
-
-	defer func() {
-		if containerID != "" {
-			if err := b.RuntimeService().StopContainer(b.Context(), containerID, 0); err != nil {
-				klog.Warningf("Failed to stop container %q: %v", containerID, err)
-			}
-			if err := b.RuntimeService().RemoveContainer(b.Context(), containerID); err != nil {
-				klog.Warningf("Failed to remove container %q: %v", containerID, err)
-			}
-		}
-		if sandboxID != "" {
-			if err := b.RuntimeService().StopPodSandbox(b.Context(), sandboxID); err != nil {
-				klog.Warningf("Failed to stop pod sandbox %q: %v", sandboxID, err)
-			}
-			if err := b.RuntimeService().RemovePodSandbox(b.Context(), sandboxID); err != nil {
-				klog.Warningf("Failed to remove pod sandbox %q: %v", sandboxID, err)
-			}
-		}
-	}()
-
-	sandboxID, err = b.RuntimeService().RunPodSandbox(b.Context(), &criv1.PodSandboxConfig{
-		Linux: &criv1.LinuxPodSandboxConfig{
-			SecurityContext: &criv1.LinuxSandboxSecurityContext{
-				Privileged: true,
-			},
-		},
-	}, b.Driver().Name())
-	if err != nil {
-		return "", err
-	}
-
-	containerID, err = b.RuntimeService().CreateContainer(b.Context(), sandboxID, &criv1.ContainerConfig{
-		Image:   &criv1.ImageSpec{Image: image},
-		Command: []string{"tail", "-f", "/dev/null"},
-		Mounts: func() []*criv1.Mount {
-			var mountsList []*criv1.Mount
-			for _, mount := range mounts {
-				mountsList = append(mountsList, &criv1.Mount{
-					ContainerPath: fmt.Sprintf("/host/%s", mount),
-					HostPath:      mount,
-				})
-			}
-			return mountsList
-		}(),
-	}, nil)
-	if err != nil {
-		return "", err
-	}
-
-	if err := b.RuntimeService().StartContainer(b.Context(), containerID); err != nil {
-		return "", err
-	}
-
-	stdout, stderr, err := b.RuntimeService().ExecSync(b.Context(), containerID, cmd, 30*time.Second)
-	if err != nil {
-		return "", err
-	}
-
-	if len(stderr) > 0 {
-		return "", fmt.Errorf("command failed with stderr: %s", string(stderr))
-	}
-
-	return string(stdout), nil
-}
-
-func (b *BackendImpl) ImageService() cri.ImageManagerService {
-	return b.Driver()
-}
-
-func (b *BackendImpl) RuntimeService() cri.RuntimeService {
-	return b.Driver()
-}
 
 func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
 	return false
