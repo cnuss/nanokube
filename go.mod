@@ -10,12 +10,14 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-logr/logr v1.4.3
 	github.com/google/cadvisor v0.53.0
+	github.com/lmittmann/tint v1.1.3
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	go.etcd.io/etcd/server/v3 v3.6.8
 	go.opentelemetry.io/otel/trace v1.36.0
+	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.72.2
 	k8s.io/api v0.35.0
 	k8s.io/apiextensions-apiserver v0.35.0
@@ -144,7 +146,6 @@ require (
 	go.opentelemetry.io/otel/sdk v1.36.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.47.0 // indirect

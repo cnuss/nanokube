@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"go.etcd.io/etcd/server/v3/embed"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
@@ -87,7 +89,23 @@ func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
 		}
 
 		cfg.AutoCompactionRetention = "0"
-		cfg.LogLevel = "fatal"
+
+		var etcdLevel zapcore.Level
+		switch {
+		case s.options.Verbosity() >= 3:
+			etcdLevel = zapcore.DebugLevel
+		case s.options.Verbosity() >= 2:
+			etcdLevel = zapcore.InfoLevel
+		case s.options.Verbosity() >= 1:
+			etcdLevel = zapcore.WarnLevel
+		default:
+			etcdLevel = zapcore.FatalLevel
+		}
+		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zap.New(zapcore.NewCore(
+			zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
+			zapcore.AddSync(klogWriter{}),
+			etcdLevel,
+		)))
 
 		server, err := embed.StartEtcd(cfg)
 		if err != nil {
@@ -155,6 +173,15 @@ func (s *StorageFactoryImpl) ResourcePrefix(groupResource schema.GroupResource) 
 	// TODO intercept
 	return resourcePrefix
 }
+
+type klogWriter struct{}
+
+func (klogWriter) Write(p []byte) (int, error) {
+	klog.V(2).Info(string(p))
+	return len(p), nil
+}
+
+func (klogWriter) Sync() error { return nil }
 
 // // TODO: make StorageFactoryImpl return Storage
 // type Storage interface {

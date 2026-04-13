@@ -139,6 +139,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	pkg.SetupLogging(config.Options().Verbosity())
+	pkg.Log.Info("starting nanokube", "version", config.Version())
+
 	// Override wait.NeverStop
 	stopCh := make(chan struct{})
 	wait.NeverStop = stopCh
