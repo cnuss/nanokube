@@ -2,7 +2,9 @@ package pkg
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	cadvisorv1 "github.com/google/cadvisor/info/v1"
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
@@ -10,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server/healthz"
 	cri "k8s.io/cri-api/pkg/apis"
+	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 	podresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
@@ -27,10 +30,15 @@ import (
 type Driver interface {
 	cri.ImageManagerService
 	cri.RuntimeService
+
+	Context() context.Context
+	Name() string
 }
 
 type Backend interface {
+	Context() context.Context
 	Driver() Driver
+	RunOnce(image string, cmd []string, mounts []string) (string, error)
 
 	ImageService() cri.ImageManagerService
 	RuntimeService() cri.RuntimeService
@@ -57,8 +65,85 @@ func NewBackend(driver Driver) Backend {
 	}
 }
 
+func (b *BackendImpl) Context() context.Context {
+	return b.driver.Context()
+}
+
 func (b *BackendImpl) Driver() Driver {
 	return b.driver
+}
+
+func (b *BackendImpl) RunOnce(image string, cmd []string, mounts []string) (string, error) {
+	_, err := b.ImageService().PullImage(b.Context(), &criv1.ImageSpec{Image: image}, nil, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var sandboxID string
+	var containerID string
+
+	defer func() {
+		if containerID != "" {
+			if err := b.RuntimeService().StopContainer(b.Context(), containerID, 0); err != nil {
+				klog.Warningf("Failed to stop container %q: %v", containerID, err)
+			}
+			if err := b.RuntimeService().RemoveContainer(b.Context(), containerID); err != nil {
+				klog.Warningf("Failed to remove container %q: %v", containerID, err)
+			}
+		}
+		if sandboxID != "" {
+			if err := b.RuntimeService().StopPodSandbox(b.Context(), sandboxID); err != nil {
+				klog.Warningf("Failed to stop pod sandbox %q: %v", sandboxID, err)
+			}
+			if err := b.RuntimeService().RemovePodSandbox(b.Context(), sandboxID); err != nil {
+				klog.Warningf("Failed to remove pod sandbox %q: %v", sandboxID, err)
+			}
+		}
+	}()
+
+	sandboxID, err = b.RuntimeService().RunPodSandbox(b.Context(), &criv1.PodSandboxConfig{
+		Linux: &criv1.LinuxPodSandboxConfig{
+			SecurityContext: &criv1.LinuxSandboxSecurityContext{
+				Privileged: true,
+			},
+		},
+	}, b.Driver().Name())
+	if err != nil {
+		return "", err
+	}
+
+	containerID, err = b.RuntimeService().CreateContainer(b.Context(), sandboxID, &criv1.ContainerConfig{
+		Image:   &criv1.ImageSpec{Image: image},
+		Command: []string{"tail", "-f", "/dev/null"},
+		Mounts: func() []*criv1.Mount {
+			var mountsList []*criv1.Mount
+			for _, mount := range mounts {
+				mountsList = append(mountsList, &criv1.Mount{
+					ContainerPath: fmt.Sprintf("/host/%s", mount),
+					HostPath:      mount,
+				})
+			}
+			return mountsList
+		}(),
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+
+	if err := b.RuntimeService().StartContainer(b.Context(), containerID); err != nil {
+		return "", err
+	}
+
+	stdout, stderr, err := b.RuntimeService().ExecSync(b.Context(), containerID, cmd, 30*time.Second)
+	if err != nil {
+		return "", err
+	}
+
+	if len(stderr) > 0 {
+		return "", fmt.Errorf("command failed with stderr: %s", string(stderr))
+	}
+
+	return string(stdout), nil
 }
 
 func (b *BackendImpl) ImageService() cri.ImageManagerService {
@@ -71,14 +156,14 @@ func (b *BackendImpl) RuntimeService() cri.RuntimeService {
 
 func (b *BackendImpl) Cadvisor() cadvisor.Interface {
 	b.cadvisorOnce.Do(func() {
-		b.cadvisor = &cadvisorImpl{backend: b}
+		b.cadvisor = newCadvisor(b)
 	})
 	return b.cadvisor
 }
 
 func (b *BackendImpl) ContainerManager() cm.ContainerManager {
 	b.containerManagerOnce.Do(func() {
-		b.containerManager = &containerManagerImpl{backend: b}
+		b.containerManager = newContainerManager(b)
 	})
 	return b.containerManager
 }
@@ -88,6 +173,12 @@ type cadvisorImpl struct {
 }
 
 var _ cadvisor.Interface = &cadvisorImpl{}
+
+func newCadvisor(backend Backend) *cadvisorImpl {
+	return &cadvisorImpl{
+		backend: backend,
+	}
+}
 
 func (c *cadvisorImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
 	panic("unimplemented")
@@ -118,7 +209,7 @@ func (c *cadvisorImpl) RootFsInfo() (cadvisorv2.FsInfo, error) {
 }
 
 func (c *cadvisorImpl) Start() error {
-	panic("unimplemented")
+	return nil
 }
 
 func (c *cadvisorImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {
@@ -126,10 +217,18 @@ func (c *cadvisorImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {
 }
 
 type containerManagerImpl struct {
+	ctx     context.Context
 	backend Backend
 }
 
 var _ cm.ContainerManager = &containerManagerImpl{}
+
+func newContainerManager(backend Backend) *containerManagerImpl {
+	return &containerManagerImpl{
+		ctx:     backend.Context(),
+		backend: backend,
+	}
+}
 
 // ContainerHasExclusiveCPUs implements [cm.ContainerManager].
 func (c *containerManagerImpl) ContainerHasExclusiveCPUs(pod *corev1.Pod, container *corev1.Container) bool {
@@ -218,7 +317,7 @@ func (c *containerManagerImpl) GetPluginRegistrationHandlers() map[string]cache.
 
 // GetPodCgroupRoot implements [cm.ContainerManager].
 func (c *containerManagerImpl) GetPodCgroupRoot() string {
-	panic("unimplemented")
+	return ""
 }
 
 // GetQOSContainersInfo implements [cm.ContainerManager].
@@ -263,7 +362,7 @@ func (c *containerManagerImpl) ShouldResetExtendedResourceCapacity() bool {
 
 // Start implements [cm.ContainerManager].
 func (c *containerManagerImpl) Start(context.Context, *corev1.Node, cm.ActivePodsFunc, cm.GetNodeFunc, config.SourcesReady, status.PodStatusProvider, cri.RuntimeService, bool) error {
-	panic("unimplemented")
+	return nil
 }
 
 // Status implements [cm.ContainerManager].

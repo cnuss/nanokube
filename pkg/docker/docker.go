@@ -70,6 +70,10 @@ func (d *driver) Name() string {
 	return "docker"
 }
 
+func (d *driver) Context() context.Context {
+	return d.config.Context()
+}
+
 func (d *driver) Attach(ctx context.Context, req *v1.AttachRequest) (*v1.AttachResponse, error) {
 	return nil, fmt.Errorf("unimplemented")
 }
