@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	cadvisorv1 "github.com/google/cadvisor/info/v1"
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
 	"github.com/pbnjay/memory"
@@ -37,6 +38,7 @@ type Driver interface {
 	cri.RuntimeService
 
 	Context() context.Context
+	Options() nanokube.Options
 	Name() string
 }
 
@@ -61,7 +63,8 @@ type Backend interface {
 }
 
 type BackendImpl struct {
-	driver Driver
+	driver  Driver
+	options nanokube.Options
 
 	manager     Manager
 	managerOnce sync.Once
@@ -71,7 +74,8 @@ var _ Backend = &BackendImpl{}
 
 func NewBackend(driver Driver) Backend {
 	return &BackendImpl{
-		driver: driver,
+		driver:  driver,
+		options: driver.Options(),
 	}
 }
 
@@ -165,95 +169,95 @@ func (b *BackendImpl) RuntimeService() cri.RuntimeService {
 }
 
 func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
-	panic("unimplemented")
+	return false
 }
 
 func (b *BackendImpl) Chmod(path string, perm os.FileMode) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Chtimes(path string, atime time.Time, mtime time.Time) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) CleanSubPaths(poodDir string, volumeName string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
-	panic("unimplemented")
+	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOptions) (map[string]cadvisorv2.ContainerInfo, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Create(path string) (*os.File, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) DeviceOpened(pathname string) (bool, error) {
-	panic("unimplemented")
+	return false, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) EvalHostSymlinks(pathname string) (string, error) {
-	panic("unimplemented")
+	return "", nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
-	panic("unimplemented")
+	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetFileType(pathname string) (hostutil.FileType, error) {
-	panic("unimplemented")
+	return "", nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetMode(pathname string) (os.FileMode, error) {
-	panic("unimplemented")
+	return 0, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetMountRefs(pathname string) ([]string, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetOwner(pathname string) (int64, int64, error) {
-	panic("unimplemented")
+	return 0, 0, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetRequestedContainersInfo(containerName string, options cadvisorv2.RequestOptions) (map[string]*cadvisorv1.ContainerInfo, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetSELinuxMountContext(pathname string) (string, error) {
-	panic("unimplemented")
+	return "", nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetSELinuxSupport(pathname string) (bool, error) {
-	panic("unimplemented")
+	return false, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Glob(pattern string) ([]string, error) {
-	panic("unimplemented")
+	return nil, fmt.Errorf("unsupported")
 }
 
 func (b *BackendImpl) Hostname() (name string, err error) {
-	panic("unimplemented")
+	return "", nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) ImagesFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
-	panic("unimplemented")
+	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) IsLikelyNotMountPoint(file string) (bool, error) {
-	panic("unimplemented")
+	return false, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) IsMountPoint(file string) (bool, error) {
-	panic("unimplemented")
+	return false, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) List() ([]mount.MountPoint, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) MachineInfo() (*cadvisorv1.MachineInfo, error) {
@@ -266,95 +270,96 @@ func (b *BackendImpl) MachineInfo() (*cadvisorv1.MachineInfo, error) {
 }
 
 func (b *BackendImpl) MakeRShared(path string) error {
-	panic("unimplemented")
+	return nil
 }
 
 func (b *BackendImpl) MkdirAll(path string, perm os.FileMode) error {
-	panic("unimplemented")
+	// TODO(partial): skipped for now
+	return nil
 }
 
 func (b *BackendImpl) Mount(source string, target string, fstype string, options []string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Open(name string) (*os.File, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) PathExists(pathname string) (bool, error) {
-	panic("unimplemented")
+	return false, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) PathIsDevice(pathname string) (bool, error) {
-	panic("unimplemented")
+	return false, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Pipe() (r *os.File, w *os.File, err error) {
-	panic("unimplemented")
+	return nil, nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	panic("unimplemented")
+	return "", nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Remove(path string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) RemoveAll(path string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Rename(oldpath string, newpath string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) RootFsInfo() (cadvisorv2.FsInfo, error) {
-	panic("unimplemented")
+	return cadvisorv2.FsInfo{}, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Start() error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Symlink(oldname string, newname string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Unmount(target string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Manager() Manager {
@@ -463,7 +468,7 @@ func (c *managerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {
 }
 
 func (c *managerImpl) GetResources(ctx context.Context, pod *corev1.Pod, container *corev1.Container) (*container.RunContainerOptions, error) {
-	panic("unimplemented")
+	return nil, nanokube.Unimplemented()
 }
 
 func (c *managerImpl) InternalContainerLifecycle() cm.InternalContainerLifecycle {
@@ -471,15 +476,15 @@ func (c *managerImpl) InternalContainerLifecycle() cm.InternalContainerLifecycle
 }
 
 func (c *managerImpl) PreCreateContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, _ *criv1.ContainerConfig) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) PreStartContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, _ string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) PostStopContainer(_ klog.Logger, _ string) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) NewPodContainerManager() cm.PodContainerManager {
@@ -495,7 +500,7 @@ func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
 }
 
 func (c *managerImpl) PrepareDynamicResources(context.Context, *corev1.Pod) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
@@ -503,7 +508,7 @@ func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
 }
 
 func (c *managerImpl) Start(context.Context, *corev1.Node, cm.ActivePodsFunc, cm.GetNodeFunc, config.SourcesReady, status.PodStatusProvider, cri.RuntimeService, bool) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) Status() cm.Status {
@@ -515,7 +520,7 @@ func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
 }
 
 func (c *managerImpl) UnprepareDynamicResources(context.Context, *corev1.Pod) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) UpdateAllocatedDevices() {
@@ -527,11 +532,11 @@ func (c *managerImpl) UpdateAllocatedResourcesStatus(pod *corev1.Pod, status *co
 }
 
 func (c *managerImpl) UpdatePluginResources(*framework.NodeInfo, *lifecycle.PodAdmitAttributes) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) UpdateQOSCgroups(logger klog.Logger) error {
-	panic("unimplemented")
+	return nanokube.Unimplemented()
 }
 
 func (c *managerImpl) Updates() <-chan resourceupdates.Update {

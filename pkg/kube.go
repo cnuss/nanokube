@@ -153,6 +153,7 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 			klog.Fatalf("Failed to create kubelet configuration: %v", err)
 		}
 		config.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
+		config.ReadOnlyPort = 0
 		k.kubeletConfig = config
 	})
 	return k.kubeletConfig
