@@ -651,7 +651,9 @@ func (c *managerImpl) Exists(*corev1.Pod) bool {
 }
 
 func (c *managerImpl) GetAllPodsFromCgroups() (map[types.UID]cm.CgroupName, error) {
-	return nil, nanokube.Unimplemented()
+	return map[types.UID]cm.CgroupName{
+		// TODO(partial): may need to probe VM cgroups via RunOnce
+	}, nil
 }
 
 func (c *managerImpl) GetPodCgroupConfig(pod *corev1.Pod, resource corev1.ResourceName) (*cm.ResourceConfig, error) {
