@@ -129,6 +129,7 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 		go func() {
 			for {
 				if _, err := h.client.Discovery().ServerVersion(); err == nil {
+					Log.Info("API server is ready", "host", host, "port", port)
 					close(h.ready)
 					break
 				}
@@ -141,6 +142,7 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 		}()
 
 		go func() {
+			Log.Info("Starting API Server")
 			if err := prepared.Run(ctx); err != nil {
 				klog.Fatalf("API server exited with error: %v", err)
 			}
