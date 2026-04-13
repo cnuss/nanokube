@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg"
@@ -66,6 +67,9 @@ func newBackend(config pkg.Config, socket string) (pkg.Backend, error) {
 type driver struct {
 	config pkg.Config
 	client *client.Client
+
+	cgroupRoot     string
+	cgroupRootOnce sync.Once
 }
 
 var _ pkg.Driver = &driver{}
@@ -80,6 +84,23 @@ func (d *driver) Context() context.Context {
 
 func (d *driver) Options() nanokube.Options {
 	return d.config.Options()
+}
+
+func (d *driver) CgroupRoot() string {
+	d.cgroupRootOnce.Do(func() {
+		info, err := d.client.Info(d.Context())
+		if err != nil {
+			d.cgroupRoot = "/"
+			return
+		}
+		switch info.CgroupDriver {
+		case "systemd":
+			d.cgroupRoot = "/system.slice/docker.service"
+		default:
+			d.cgroupRoot = "/docker"
+		}
+	})
+	return d.cgroupRoot
 }
 
 func (d *driver) Attach(ctx context.Context, req *v1.AttachRequest) (*v1.AttachResponse, error) {
@@ -146,7 +167,24 @@ func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose b
 }
 
 func (d *driver) ListContainerStats(ctx context.Context, filter *v1.ContainerStatsFilter) ([]*v1.ContainerStats, error) {
-	return []*v1.ContainerStats{}, nanokube.Unimplemented()
+	containers, err := d.ListContainers(ctx, &v1.ContainerFilter{
+		Id:            filter.GetId(),
+		PodSandboxId:  filter.GetPodSandboxId(),
+		LabelSelector: filter.GetLabelSelector(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var stats []*v1.ContainerStats
+	for _, c := range containers {
+		s, err := d.ContainerStats(ctx, c.Id)
+		if err != nil {
+			continue
+		}
+		stats = append(stats, s)
+	}
+	return stats, nil
 }
 
 func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter) ([]*v1.Container, error) {

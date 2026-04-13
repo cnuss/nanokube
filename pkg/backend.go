@@ -40,6 +40,7 @@ type Driver interface {
 	Context() context.Context
 	Options() nanokube.Options
 	Name() string
+	CgroupRoot() string
 }
 
 type Manager interface {
@@ -196,10 +197,15 @@ func (b *BackendImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error
 }
 
 func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOptions) (map[string]cadvisorv2.ContainerInfo, error) {
+	// TODO(partial): port real container metrics from crid/backend/cadvisor.go
+	// DEVNOTE: old impl queried ContainerStats+ContainerStatus via CRI for each container.
+	// For root "/", synthesized info from HostInfo. Recursive mode listed all containers.
 	return map[string]cadvisorv2.ContainerInfo{
-		// TODO(partial): port container metrics from crid/backend/cadvisor.go
-		// DEVNOTE: old impl queried ContainerStats+ContainerStatus via CRI for each container.
-		// For root "/", synthesized info from HostInfo. Recursive mode listed all containers.
+		name: {
+			Stats: []*cadvisorv2.ContainerStats{
+				{Timestamp: time.Now()},
+			},
+		},
 	}, nil
 }
 
@@ -341,7 +347,9 @@ func (b *BackendImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath s
 }
 
 func (b *BackendImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
-	return nil, nanokube.Unimplemented()
+	return []os.DirEntry{
+		// TODO(partial): route to host or VM depending on path
+	}, nil
 }
 
 func (b *BackendImpl) Remove(path string) error {
@@ -519,6 +527,7 @@ func (c *managerImpl) GetNodeConfig() cm.NodeConfig {
 		// TODO(partial): add fields as needed
 		// DEVNOTE: old impl returned cm.NodeConfig populated during construction with
 		// cgroup settings, CPU/memory/topology manager policies, runtime cgroups, etc.
+		CgroupRoot: c.backend.Driver().CgroupRoot(),
 	}
 }
 
@@ -531,8 +540,7 @@ func (c *managerImpl) GetPluginRegistrationHandlers() map[string]cache.PluginHan
 }
 
 func (c *managerImpl) GetPodCgroupRoot() string {
-	// TODO(revisit): Find out if we can inspect the VM for this
-	return ""
+	return c.backend.Driver().CgroupRoot()
 }
 
 func (c *managerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {

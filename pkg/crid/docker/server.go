@@ -469,28 +469,7 @@ func (s *Server) GetContainerEvents(req *runtimeapi.GetEventsRequest, stream grp
 
 // ListContainerStats implements [v1.RuntimeServiceServer].
 func (s *Server) ListContainerStats(ctx context.Context, req *runtimeapi.ListContainerStatsRequest) (*runtimeapi.ListContainerStatsResponse, error) {
-	filter := req.GetFilter()
-	containers, err := s.ListContainers(ctx, &runtimeapi.ListContainersRequest{
-		Filter: &runtimeapi.ContainerFilter{
-			Id:            filter.GetId(),
-			PodSandboxId:  filter.GetPodSandboxId(),
-			LabelSelector: filter.GetLabelSelector(),
-		},
-	})
-	if err != nil {
-		return nil, component.WrapErr(s.log, err)
-	}
-
-	var stats []*runtimeapi.ContainerStats
-	for _, c := range containers.Containers {
-		resp, err := s.ContainerStats(ctx, &runtimeapi.ContainerStatsRequest{ContainerId: c.Id})
-		if err != nil {
-			s.log.Warn().Str("id", c.Id).Err(err).Msg("ListContainerStats: skipping container")
-			continue
-		}
-		stats = append(stats, resp.Stats)
-	}
-	return &runtimeapi.ListContainerStatsResponse{Stats: stats}, nil
+	panic("moved")
 }
 
 // ListContainers implements [v1.RuntimeServiceServer].

@@ -56,6 +56,11 @@ func (d *driver) Options() nanokube.Options {
 	return d.config.Options()
 }
 
+func (d *driver) CgroupRoot() string {
+	nanokube.Unimplemented()
+	return "/"
+}
+
 func (d *driver) Attach(ctx context.Context, req *v1.AttachRequest) (*v1.AttachResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
