@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"time"
 
 	"github.com/lmittmann/tint"
@@ -58,11 +57,7 @@ func SetupLogging(verbosity int) {
 			}
 			if a.Key == slog.SourceKey {
 				if src, ok := a.Value.Any().(*slog.Source); ok {
-					if filepath.Base(src.File) == "warnings.go" {
-						a.Value = slog.StringValue(fmt.Sprintf("%s:%d\n%s", filepath.Base(src.File), src.Line, debug.Stack()))
-					} else {
-						a.Value = slog.StringValue(fmt.Sprintf("%s:%d", filepath.Base(src.File), src.Line))
-					}
+					a.Value = slog.StringValue(fmt.Sprintf("%s:%d", filepath.Base(src.File), src.Line))
 				}
 			}
 			return a

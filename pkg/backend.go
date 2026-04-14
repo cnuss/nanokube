@@ -15,6 +15,7 @@ import (
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
 	"github.com/pbnjay/memory"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server/healthz"
 	cri "k8s.io/cri-api/pkg/apis"
@@ -441,11 +442,22 @@ func (c *managerImpl) GetCPUs(podUID string, containerName string) []int64 {
 }
 
 func (c *managerImpl) GetCapacity(localStorageCapacityIsolation bool) corev1.ResourceList {
-	return corev1.ResourceList{
-		// TODO(partial): report CPU, memory, ephemeral-storage capacity
-		// DEVNOTE: old impl returned cm.capacity (built from MachineInfo during Start).
-		// If localStorageCapacityIsolation, fetched RootFsInfo from cadvisor for ephemeral-storage.
+	info, err := c.backend.MachineInfo()
+	if err != nil {
+		return corev1.ResourceList{}
 	}
+	capacity := corev1.ResourceList{
+		corev1.ResourceCPU:    *resource.NewQuantity(int64(info.NumCores), resource.DecimalSI),
+		corev1.ResourceMemory: *resource.NewQuantity(int64(info.MemoryCapacity), resource.BinarySI),
+		corev1.ResourcePods:   *resource.NewQuantity(110, resource.DecimalSI),
+	}
+	if localStorageCapacityIsolation {
+		rootFs, err := c.backend.RootFsInfo()
+		if err == nil {
+			capacity[corev1.ResourceEphemeralStorage] = *resource.NewQuantity(int64(rootFs.Capacity), resource.BinarySI)
+		}
+	}
+	return capacity
 }
 
 func (c *managerImpl) GetDevicePluginResourceCapacity() (corev1.ResourceList, corev1.ResourceList, []string) {

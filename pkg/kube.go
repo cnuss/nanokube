@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
+	_ "unsafe"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	storage "k8s.io/apiserver/pkg/server/storage"
@@ -16,6 +18,13 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
+
+//go:linkname nodeReadyGracePeriod k8s.io/kubernetes/pkg/kubelet.nodeReadyGracePeriod
+var nodeReadyGracePeriod time.Duration
+
+func init() {
+	nodeReadyGracePeriod = 30 * time.Second // TODO(remove): temporary override for debugging
+}
 
 var FeatureGates = map[string]bool{
 	"KubeletInUserNamespace": true,
