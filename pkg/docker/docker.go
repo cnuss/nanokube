@@ -464,7 +464,7 @@ func (d *driver) Version(ctx context.Context, version string) (*v1.VersionRespon
 	}, nil
 }
 
-func (d *driver) ExecHost(img string, cmd []string, mounts []string) (string, error) {
+func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (string, error) {
 	reader, err := d.client.ImagePull(d.Context(), img, image.PullOptions{})
 	if err != nil {
 		return "", err
@@ -477,7 +477,7 @@ func (d *driver) ExecHost(img string, cmd []string, mounts []string) (string, er
 		Binds: func() []string {
 			var binds []string
 			for _, mount := range mounts {
-				binds = append(binds, fmt.Sprintf("/host/%s", mount))
+				binds = append(binds, fmt.Sprintf("%s:/host%s", string(mount), string(mount)))
 			}
 			return binds
 		}(),

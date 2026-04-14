@@ -209,6 +209,6 @@ func (d *driver) Version(ctx context.Context, apiVersion string) (*v1.VersionRes
 	}, nil
 }
 
-func (d *driver) ExecHost(img string, cmd []string, mounts []string) (string, error) {
+func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (string, error) {
 	return "", nanokube.Unimplemented()
 }

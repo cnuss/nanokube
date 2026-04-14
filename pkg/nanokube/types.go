@@ -12,6 +12,7 @@ import (
 type (
 	DataDir  string
 	FileName string
+	Path     string
 )
 
 const (

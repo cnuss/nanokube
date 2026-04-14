@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,7 +44,7 @@ type Driver interface {
 	Name() string
 	CgroupRoot() string
 
-	ExecHost(image string, cmd []string, mounts []string) (string, error)
+	ExecHost(image string, cmd []string, mounts []nanokube.Path) (string, error)
 }
 
 type Manager interface {
@@ -67,6 +69,11 @@ type Backend interface {
 	Ready() <-chan struct{}
 }
 
+type fsCacheEntry struct {
+	info   cadvisorv2.FsInfo
+	expiry time.Time
+}
+
 type BackendImpl struct {
 	driver  Driver
 	options nanokube.Options
@@ -76,6 +83,9 @@ type BackendImpl struct {
 
 	startOnce sync.Once
 	ready     chan struct{}
+
+	fsCacheMu sync.Mutex
+	fsCache   map[string]fsCacheEntry
 }
 
 var _ Backend = &BackendImpl{}
@@ -85,6 +95,7 @@ func NewBackend(driver Driver) Backend {
 		driver:  driver,
 		options: driver.Options(),
 		ready:   make(chan struct{}),
+		fsCache: make(map[string]fsCacheEntry),
 	}
 }
 
@@ -95,7 +106,6 @@ func (b *BackendImpl) Context() context.Context {
 func (b *BackendImpl) Driver() Driver {
 	return b.driver
 }
-
 
 func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
 	return false
@@ -143,12 +153,58 @@ func (b *BackendImpl) EvalHostSymlinks(pathname string) (string, error) {
 }
 
 func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
-	return cadvisorv2.FsInfo{
-		// TODO(partial): probe VM filesystem via RunOnce
-		// DEVNOTE: old impl ran busybox in a container with bind-mounted path, executed
-		// "stat -f -c '%S %b %a'" to get block size/total/available, computed capacity/usage.
-		// Results cached with 60s TTL.
-	}, nil
+	b.fsCacheMu.Lock()
+	if entry, ok := b.fsCache[path]; ok && time.Now().Before(entry.expiry) {
+		b.fsCacheMu.Unlock()
+		return entry.info, nil
+	}
+	b.fsCacheMu.Unlock()
+
+	out, err := b.driver.ExecHost("busybox", []string{"stat", "-f", "-c", "%S %b %a %c %d", "/host" + path}, []nanokube.Path{nanokube.Path(path)})
+	if err != nil {
+		return cadvisorv2.FsInfo{}, err
+	}
+
+	fields := strings.Fields(out)
+	if len(fields) != 5 {
+		return cadvisorv2.FsInfo{}, fmt.Errorf("GetDirFsInfo: expected 5 fields, got %d: %q", len(fields), out)
+	}
+	blockSize, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return cadvisorv2.FsInfo{}, fmt.Errorf("GetDirFsInfo: block size: %w", err)
+	}
+	totalBlocks, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return cadvisorv2.FsInfo{}, fmt.Errorf("GetDirFsInfo: total blocks: %w", err)
+	}
+	availBlocks, err := strconv.ParseUint(fields[2], 10, 64)
+	if err != nil {
+		return cadvisorv2.FsInfo{}, fmt.Errorf("GetDirFsInfo: avail blocks: %w", err)
+	}
+	totalInodes, err := strconv.ParseUint(fields[3], 10, 64)
+	if err != nil {
+		return cadvisorv2.FsInfo{}, fmt.Errorf("GetDirFsInfo: total inodes: %w", err)
+	}
+	freeInodes, err := strconv.ParseUint(fields[4], 10, 64)
+	if err != nil {
+		return cadvisorv2.FsInfo{}, fmt.Errorf("GetDirFsInfo: free inodes: %w", err)
+	}
+
+	capacity := blockSize * totalBlocks
+	available := blockSize * availBlocks
+	info := cadvisorv2.FsInfo{
+		Capacity:   capacity,
+		Available:  available,
+		Usage:      capacity - available,
+		Inodes:     &totalInodes,
+		InodesFree: &freeInodes,
+	}
+
+	b.fsCacheMu.Lock()
+	b.fsCache[path] = fsCacheEntry{info: info, expiry: time.Now().Add(60 * time.Second)}
+	b.fsCacheMu.Unlock()
+
+	return info, nil
 }
 
 func (b *BackendImpl) GetFileType(pathname string) (hostutil.FileType, error) {
