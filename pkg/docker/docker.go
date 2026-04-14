@@ -69,7 +69,7 @@ func newBackend(config pkg.Config, socket string) (pkg.Backend, error) {
 		return nil, err
 	}
 
-	driver := &driver{config: config, client: client, networkProvided: make(chan struct{})}
+	driver := &driver{config: config, client: client}
 
 	return pkg.NewBackend(driver), nil
 }
@@ -80,9 +80,6 @@ type driver struct {
 
 	cgroupRoot     string
 	cgroupRootOnce sync.Once
-
-	network         nanokube.Network
-	networkProvided chan struct{}
 }
 
 var _ pkg.Driver = &driver{}
@@ -497,16 +494,9 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 		hostConfig.ExtraHosts = slices.Compact(extraHosts)
 
 		if networkMode != container.NetworkMode("host") {
-			var networks []string
-
-			// Forces only critest onto bridge
-			if (len(config.Annotations)) == 0 {
-				networks = []string{"bridge"}
-			} else {
-				// TODO(incomplete): move to allocate pod resources
-				if net, err := d.Network().Allocate(config); err == nil {
-					networks = []string{net.Name(), d.Network().Default().Name()}
-				}
+			networks := []string{"bridge"}
+			if networksStr, ok := config.GetAnnotations()[nanokube.TagKey(d.Name(), nanokube.KeyNetworks)]; ok {
+				networks = strings.Split(networksStr, ",")
 			}
 
 			if len(config.GetPortMappings()) > 0 {
@@ -702,19 +692,6 @@ func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (str
 	}
 
 	return strings.TrimSpace(stdout.String()), nil
-}
-
-func (d *driver) WithNetwork(network nanokube.Network) pkg.Driver {
-	// TODO(incomplete): move to allocate pod resources
-	d.network = network
-	close(d.networkProvided)
-	return d
-}
-
-func (d *driver) Network() nanokube.Network {
-	// TODO(incomplete): move to allocate pod resources
-	<-d.networkProvided
-	return d.network
 }
 
 func (d *driver) CreateNetwork(ctx context.Context, name string, networkType nanokube.NetworkType, net *net.IPNet, gateway *net.IP) error {

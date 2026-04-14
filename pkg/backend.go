@@ -48,9 +48,6 @@ type Driver interface {
 	CgroupRoot() string
 
 	ExecHost(image string, cmd []string, mounts []nanokube.Path) (string, error)
-
-	WithNetwork(network nanokube.Network) Driver
-	Network() nanokube.Network
 }
 
 type Manager interface {
@@ -121,8 +118,6 @@ func (b *BackendImpl) Driver() Driver {
 func (b *BackendImpl) Network() nanokube.Network {
 	b.networkOnce.Do(func() {
 		b.network = nanokube.NewNetwork(b.driver)
-		// TODO(incomplete): move to allocate pod resources
-		b.driver = b.driver.WithNetwork(b.network)
 	})
 	return b.network
 }
@@ -708,8 +703,24 @@ func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
 	return false
 }
 
-func (c *managerImpl) PrepareDynamicResources(context.Context, *corev1.Pod) error {
-	return nil // TODO(partial): prepare dynamic resources
+func (c *managerImpl) PrepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
+	prefix := c.backend.Driver().Name()
+	network := c.backend.Network()
+
+	allocated, err := network.Allocate(&criv1.PodSandboxConfig{
+		Metadata:    &criv1.PodSandboxMetadata{Name: pod.Name, Namespace: pod.Namespace, Uid: string(pod.UID)},
+		Annotations: pod.Annotations,
+	})
+	if err != nil {
+		return err
+	}
+
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+	networks := allocated.Name() + "," + network.Default().Name()
+	pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyNetworks)] = networks
+	return nil
 }
 
 func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
@@ -745,8 +756,16 @@ func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
 	return nil
 }
 
-func (c *managerImpl) UnprepareDynamicResources(context.Context, *corev1.Pod) error {
-	return nanokube.Unimplemented()
+func (c *managerImpl) UnprepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
+	prefix := c.backend.Driver().Name()
+	networksStr, ok := pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyNetworks)]
+	if !ok {
+		return nil
+	}
+	for _, name := range strings.Split(networksStr, ",") {
+		c.backend.Driver().RemoveNetwork(ctx, name)
+	}
+	return nil
 }
 
 func (c *managerImpl) UpdateAllocatedDevices() {

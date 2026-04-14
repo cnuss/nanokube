@@ -40,6 +40,7 @@ const (
 	KeyDNSAliases      = "dns-aliases"
 	KeyHostAliases     = "host-aliases"
 	KeySecurityContext = "security-context"
+	KeyNetworks        = "networks"
 )
 
 var (

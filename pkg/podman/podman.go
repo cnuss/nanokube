@@ -214,16 +214,6 @@ func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (str
 	return "", nanokube.Unimplemented()
 }
 
-func (d *driver) WithNetwork(network nanokube.Network) pkg.Driver {
-	nanokube.Unimplemented()
-	return d
-}
-
-func (d *driver) Network() nanokube.Network {
-	nanokube.Unimplemented()
-	return nil
-}
-
 func (d *driver) CreateNetwork(ctx context.Context, name string, networkType nanokube.NetworkType, net *net.IPNet, gateway *net.IP) error {
 	return nanokube.Unimplemented()
 }
