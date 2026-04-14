@@ -67,13 +67,3 @@ func (o *OptionsImpl) DataDirAt(name DataDir) string {
 func (o *OptionsImpl) FilePathAt(dir DataDir, path FileName) string {
 	return filepath.Join(o.DataDirAt(dir), string(path))
 }
-
-func (o *OptionsImpl) FileAt(dir DataDir, name FileNameFn) (string, []byte) {
-	filename := name(o)
-	path := o.FilePathAt(dir, FileName(filename))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return path, nil
-	}
-	return path, data
-}

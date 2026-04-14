@@ -1,30 +1,22 @@
 package nanokube
 
+import "path/filepath"
+
 type (
-	DataDir    string
-	FileName   string
-	FileNameFn func(options Options) string
-	Path       string
-)
-
-const (
-	DataDirLock    DataDir = "lock"
-	DataDirKubelet DataDir = "kubelet"
-	DataDirCerts   DataDir = "certs"
-	DataDirLogs    DataDir = "logs"
-	DataDirEtcd    DataDir = "etcd"
-
-	CertFile FileName = "apiserver.crt"
-	KeyFile  FileName = "apiserver.key"
+	DataDir  string
+	FileName string
+	Path     string
 )
 
 var (
-	CertFileFn FileNameFn = func(options Options) string {
-		return options.Name() + ".crt"
-	}
-	KeyFileFn FileNameFn = func(options Options) string {
-		return options.Name() + ".key"
-	}
+	DataDirLock       DataDir  = "lock"
+	DataDirKubelet    DataDir  = "kubelet"
+	DataDirCerts      DataDir  = "certs"
+	DataDirLogs       DataDir  = "logs"
+	DataDirEtcd       DataDir  = "etcd"
+	DataDirStaticPods DataDir  = DataDir(filepath.Join(string(DataDirKubelet), "static-pods"))
+	CertFile          FileName = "apiserver.crt"
+	KeyFile           FileName = "apiserver.key"
 )
 
 type Options interface {
@@ -36,5 +28,4 @@ type Options interface {
 
 	DataDirAt(name DataDir) string
 	FilePathAt(dir DataDir, path FileName) string
-	FileAt(dir DataDir, name FileNameFn) (string, []byte)
 }

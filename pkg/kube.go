@@ -2,8 +2,11 @@ package pkg
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 	_ "unsafe"
@@ -19,6 +22,9 @@ import (
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
+//go:embed static-pods.yaml
+var staticPodsManifest string
+
 //go:linkname nodeReadyGracePeriod k8s.io/kubernetes/pkg/kubelet.nodeReadyGracePeriod
 var nodeReadyGracePeriod time.Duration
 
@@ -32,12 +38,10 @@ var FeatureGates = map[string]bool{
 
 type Kube interface {
 	ApiServerOptions() *apiserveroptions.CompletedOptions
-	Client() nanokube.Client
-
 	KubeletFlags() *kubeletoptions.KubeletFlags
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
 
-	TLSOptions() *server.TLSOptions
+	Client() nanokube.Client
 	Recorder() record.EventRecorder
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Kube
@@ -46,6 +50,8 @@ type Kube interface {
 	ApiServer() nanokube.ApiServer
 	WithStorageFactory(storagefactory nanokube.StorageFactory) Kube
 	StorageFactory() nanokube.StorageFactory
+
+	writeStaticPods() error
 }
 
 type KubeImpl struct {
@@ -161,7 +167,11 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		if err != nil {
 			klog.Fatalf("Failed to create kubelet configuration: %v", err)
 		}
+		if err := k.writeStaticPods(); err != nil {
+			klog.Fatalf("Failed to write static pods: %v", err)
+		}
 		config.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
+		config.StaticPodPath = k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
 		config.ReadOnlyPort = 0
 		k.kubeletConfig = config
 	})
@@ -172,13 +182,6 @@ func (k *KubeImpl) Client() nanokube.Client {
 	return k.ApiServer().Client(k.ctx)
 }
 
-func (k *KubeImpl) TLSOptions() *server.TLSOptions {
-	k.tlsOptionsOnce.Do(func() {
-		k.tlsOptions = nil
-	})
-	return k.tlsOptions
-}
-
 func (k *KubeImpl) Recorder() record.EventRecorder {
 	k.recorderOnce.Do(func() {
 		k.recorder = nil
@@ -187,19 +190,18 @@ func (k *KubeImpl) Recorder() record.EventRecorder {
 }
 
 func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
-	kubelet.KubeletDeps.ProbeManager = nil
-	kubelet.KubeletDeps.TLSOptions = k.TLSOptions()
-	kubelet.KubeletDeps.Recorder = k.Recorder()
-	kubelet.KubeletDeps.OSInterface = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
 	if k.config.Options().Standalone() {
 		kubelet.KubeletConfiguration.RegisterNode = false
 		kubelet.KubeletDeps.KubeClient = nil
 		kubelet.KubeletDeps.EventClient = nil
 		kubelet.KubeletDeps.HeartbeatClient = nil
 	}
+	kubelet.KubeletDeps.ProbeManager = nil
+	kubelet.KubeletDeps.Recorder = k.Recorder()
+	kubelet.KubeletDeps.OSInterface = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
 	k.kubelet = kubelet
 	close(k.kubeletProvided)
 	return k
@@ -232,4 +234,12 @@ func (k *KubeImpl) WithStorageFactory(storagefactory nanokube.StorageFactory) Ku
 func (k *KubeImpl) StorageFactory() nanokube.StorageFactory {
 	<-k.storagefactoryProvided
 	return k.storagefactory
+}
+
+func (k *KubeImpl) writeStaticPods() error {
+	path := k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
+	if err := os.WriteFile(filepath.Join(path, "static-pods.yaml"), []byte(staticPodsManifest), 0o644); err != nil {
+		return fmt.Errorf("write static pod manifest: %w", err)
+	}
+	return nil
 }

@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nanokube
+  namespace: default
+spec:
+  containers:
+    - name: cnuss-dev
+      image: cnuss/dev:latest
+      command:
+        - busybox
+        - httpd
+        - -f
