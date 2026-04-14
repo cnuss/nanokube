@@ -3,9 +3,10 @@ package nanokube
 import "path/filepath"
 
 type (
-	DataDir  string
-	FileName string
-	Path     string
+	DataDir     string
+	FileName    string
+	Path        string
+	NetworkType string
 )
 
 var (
@@ -17,6 +18,10 @@ var (
 	DataDirStaticPods DataDir  = DataDir(filepath.Join(string(DataDirKubelet), "static-pods"))
 	CertFile          FileName = "apiserver.crt"
 	KeyFile           FileName = "apiserver.key"
+
+	NetworkHost       NetworkType = "host"
+	NetworkBridge     NetworkType = "bridge"
+	NetworkSubnetSize             = 28
 )
 
 type Options interface {

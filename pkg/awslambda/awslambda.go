@@ -2,6 +2,7 @@ package awslambda
 
 import (
 	"context"
+	"net"
 	"os"
 	"time"
 
@@ -195,4 +196,31 @@ func (d *driver) Version(ctx context.Context, apiVersion string) (*v1.VersionRes
 
 func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (string, error) {
 	return "", nanokube.Unimplemented()
+}
+
+func (d *driver) WithNetwork(network nanokube.Network) pkg.Driver {
+	nanokube.Unimplemented()
+	return d
+}
+
+func (d *driver) Network() nanokube.Network {
+	nanokube.Unimplemented()
+	return nil
+}
+
+func (d *driver) CreateNetwork(ctx context.Context, name string, networkType nanokube.NetworkType, net *net.IPNet, gateway *net.IP) error {
+	return nanokube.Unimplemented()
+}
+
+func (d *driver) DefaultNetwork(ctx context.Context) string {
+	nanokube.Unimplemented()
+	return ""
+}
+
+func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokube.NetworkType, *net.IP, *net.IPNet, error) {
+	return nil, nil, nil, nil, nanokube.Unimplemented()
+}
+
+func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
+	return nanokube.Unimplemented()
 }

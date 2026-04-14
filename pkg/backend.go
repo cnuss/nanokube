@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
@@ -39,6 +40,7 @@ import (
 type Driver interface {
 	cri.ImageManagerService
 	cri.RuntimeService
+	nanokube.NetworkService
 
 	Context() context.Context
 	Options() nanokube.Options
@@ -46,6 +48,9 @@ type Driver interface {
 	CgroupRoot() string
 
 	ExecHost(image string, cmd []string, mounts []nanokube.Path) (string, error)
+
+	WithNetwork(network nanokube.Network) Driver
+	Network() nanokube.Network
 }
 
 type Manager interface {
@@ -66,7 +71,9 @@ type Backend interface {
 	Context() context.Context
 
 	Driver() Driver
+	Network() nanokube.Network
 	Manager() Manager
+
 	Ready() <-chan struct{}
 }
 
@@ -81,6 +88,9 @@ type BackendImpl struct {
 
 	manager     Manager
 	managerOnce sync.Once
+
+	network     nanokube.Network
+	networkOnce sync.Once
 
 	startOnce sync.Once
 	ready     chan struct{}
@@ -106,6 +116,15 @@ func (b *BackendImpl) Context() context.Context {
 
 func (b *BackendImpl) Driver() Driver {
 	return b.driver
+}
+
+func (b *BackendImpl) Network() nanokube.Network {
+	b.networkOnce.Do(func() {
+		b.network = nanokube.NewNetwork(b.driver)
+		// TODO(incomplete): move to allocate pod resources
+		b.driver = b.driver.WithNetwork(b.network)
+	})
+	return b.network
 }
 
 func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
@@ -391,6 +410,7 @@ func (b *BackendImpl) Manager() Manager {
 }
 
 type managerImpl struct {
+	ctx       context.Context
 	backend   Backend
 	startOnce sync.Once
 	ready     chan struct{}
@@ -400,6 +420,7 @@ var _ Manager = &managerImpl{}
 
 func newManager(backend Backend) Manager {
 	return &managerImpl{
+		ctx:     backend.Context(),
 		backend: backend,
 		ready:   make(chan struct{}),
 	}
@@ -429,10 +450,126 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 	return c
 }
 
+// SandboxExecSentinel is prepended to rewritten probe commands so that
+// ExecSync can detect them and route execution to the pod sandbox container
+// (which has busybox with wget/nc) instead of the app container.
+const SandboxExecSentinel = "__sandbox__"
+
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
-	nanokube.Unimplemented()
-	return lifecycle.PodAdmitResult{
-		Admit: false,
+	pod := attributes.Pod
+	prefix := c.backend.Driver().Name()
+
+	// DEVNOTE: old impl injected host aliases from Hosts() here:
+	//   if h := p.backend.Hosts(); h != nil {
+	//       network := NetworkBridge
+	//       if pod.Spec.HostNetwork {
+	//           network = NetworkHost
+	//       }
+	//       pod.Spec.HostAliases = append(pod.Spec.HostAliases, h.HostAliases(ctx, network)...)
+	//   }
+
+	// Inject security context as annotation so CreateContainer can apply it on
+	// platforms where kubelet doesn't populate LinuxContainerConfig (e.g. macOS).
+	if sc := pod.Spec.SecurityContext; sc != nil {
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		var user string
+		if sc.RunAsUser != nil {
+			user = strconv.FormatInt(*sc.RunAsUser, 10)
+		}
+		if sc.RunAsGroup != nil {
+			user += ":" + strconv.FormatInt(*sc.RunAsGroup, 10)
+		}
+		if user != "" {
+			pod.Annotations[nanokube.TagKey(prefix, nanokube.KeySecurityContext)] = user
+		}
+	}
+
+	// Inject host aliases as annotation so RunPodSandbox can set ExtraHosts
+	if len(pod.Spec.HostAliases) > 0 {
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		b, _ := json.Marshal(pod.Spec.HostAliases)
+		pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyHostAliases)] = string(b)
+	}
+
+	// Rewrite HTTP/TCP/GRPC probes to exec probes so the upstream kubelet prober
+	// runs them via ExecSync in the sandbox (which shares the pod network namespace)
+	// instead of connecting from the host to podIP (unreachable on macOS).
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		rewriteProbe(c.LivenessProbe)
+		rewriteProbe(c.ReadinessProbe)
+		rewriteProbe(c.StartupProbe)
+	}
+
+	// Inject container names as annotation so RunPodSandbox can set DNS aliases
+	if len(pod.Spec.Containers) > 0 {
+		names := make([]string, 0, len(pod.Spec.Containers))
+		for _, c := range pod.Spec.Containers {
+			names = append(names, c.Name)
+		}
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyDNSAliases)] = strings.Join(names, ",")
+	}
+
+	return lifecycle.PodAdmitResult{Admit: true}
+}
+
+// rewriteProbe converts HTTP/TCP/GRPC probes into exec probes that run
+// wget or nc inside the sandbox container (which shares the pod network namespace).
+func rewriteProbe(probe *corev1.Probe) {
+	if probe == nil {
+		return
+	}
+
+	timeout := probe.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 1
+	}
+
+	switch {
+	case probe.HTTPGet != nil:
+		scheme := "http"
+		if probe.HTTPGet.Scheme == corev1.URISchemeHTTPS {
+			scheme = "https"
+		}
+		port := probe.HTTPGet.Port.IntValue()
+		path := probe.HTTPGet.Path
+		if path == "" {
+			path = "/"
+		}
+		url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
+
+		cmd := []string{SandboxExecSentinel, "wget", "-q", "-O", "/dev/null", "-S", "--no-check-certificate", fmt.Sprintf("--timeout=%d", timeout)}
+		if host := probe.HTTPGet.Host; host != "" {
+			cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
+		}
+		for _, h := range probe.HTTPGet.HTTPHeaders {
+			cmd = append(cmd, "--header", fmt.Sprintf("%s: %s", h.Name, h.Value))
+		}
+		cmd = append(cmd, url)
+
+		probe.HTTPGet = nil
+		probe.Exec = &corev1.ExecAction{Command: cmd}
+
+	case probe.TCPSocket != nil:
+		port := probe.TCPSocket.Port.IntValue()
+		probe.TCPSocket = nil
+		probe.Exec = &corev1.ExecAction{
+			Command: []string{SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+		}
+
+	case probe.GRPC != nil:
+		port := probe.GRPC.Port
+		probe.GRPC = nil
+		probe.Exec = &corev1.ExecAction{
+			Command: []string{SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+		}
 	}
 }
 
@@ -572,7 +709,7 @@ func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
 }
 
 func (c *managerImpl) PrepareDynamicResources(context.Context, *corev1.Pod) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): prepare dynamic resources
 }
 
 func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
@@ -621,11 +758,11 @@ func (c *managerImpl) UpdateAllocatedResourcesStatus(pod *corev1.Pod, status *co
 }
 
 func (c *managerImpl) UpdatePluginResources(*framework.NodeInfo, *lifecycle.PodAdmitAttributes) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): update plugin resources
 }
 
 func (c *managerImpl) UpdateQOSCgroups(logger klog.Logger) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): update QOS cgroups
 }
 
 func (c *managerImpl) Updates() <-chan resourceupdates.Update {
@@ -639,12 +776,20 @@ func (c *managerImpl) Destroy(logger klog.Logger, name cm.CgroupName) error {
 }
 
 func (c *managerImpl) EnsureExists(logger klog.Logger, pod *corev1.Pod) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): ensure pod cgroup exists
 }
 
-func (c *managerImpl) Exists(*corev1.Pod) bool {
-	nanokube.Unimplemented()
-	return false
+func (c *managerImpl) Exists(pod *corev1.Pod) bool {
+	prefix := c.backend.Driver().Name()
+	sandboxes, err := c.backend.Driver().ListPodSandbox(c.ctx, &criv1.PodSandboxFilter{
+		LabelSelector: map[string]string{
+			nanokube.TagUIDKey(prefix): string(pod.UID),
+		},
+	})
+	if err != nil {
+		return true
+	}
+	return len(sandboxes) > 0
 }
 
 func (c *managerImpl) GetAllPodsFromCgroups() (map[types.UID]cm.CgroupName, error) {
@@ -661,9 +806,17 @@ func (c *managerImpl) GetPodCgroupMemoryUsage(pod *corev1.Pod) (uint64, error) {
 	return 0, nanokube.Unimplemented()
 }
 
-func (c *managerImpl) GetPodContainerName(*corev1.Pod) (cm.CgroupName, string) {
-	nanokube.Unimplemented()
-	return nil, ""
+func (c *managerImpl) GetPodContainerName(pod *corev1.Pod) (cm.CgroupName, string) {
+	prefix := c.backend.Driver().Name()
+	sandboxes, err := c.backend.Driver().ListPodSandbox(c.ctx, &criv1.PodSandboxFilter{
+		LabelSelector: map[string]string{
+			nanokube.TagUIDKey(prefix): string(pod.UID),
+		},
+	})
+	if err != nil || len(sandboxes) == 0 {
+		return nil, ""
+	}
+	return nil, sandboxes[0].Id
 }
 
 func (c *managerImpl) IsPodCgroup(cgroupfs string) (bool, types.UID) {
