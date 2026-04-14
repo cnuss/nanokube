@@ -6,6 +6,7 @@ import (
 
 	client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 type Client interface {
@@ -14,6 +15,9 @@ type Client interface {
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
+	WithInsecure(insecure bool) Client
+
+	Kubeconfig(name string) *clientcmdapi.Config
 }
 
 type ClientImpl struct {
@@ -23,7 +27,25 @@ type ClientImpl struct {
 	httpClient *http.Client
 }
 
-// Clientset implements [Client].
+var _ Client = &ClientImpl{}
+
+func NewClient(config *rest.Config) Client {
+	httpClient, err := rest.HTTPClientFor(config)
+	if err != nil {
+		panic(err)
+	}
+	cs, err := client.NewForConfigAndClient(config, httpClient)
+	if err != nil {
+		panic(err)
+	}
+	return &ClientImpl{
+		Interface:  cs,
+		clientset:  cs,
+		config:     config,
+		httpClient: httpClient,
+	}
+}
+
 func (c *ClientImpl) Clientset() *client.Clientset {
 	return c.clientset
 }
@@ -53,19 +75,44 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func NewClient(config *rest.Config) Client {
-	httpClient, err := rest.HTTPClientFor(config)
+func (c *ClientImpl) WithInsecure(insecure bool) Client {
+	cfg := rest.CopyConfig(c.config)
+	cfg.Insecure = insecure
+	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
 	if err != nil {
 		panic(err)
 	}
-	cs, err := client.NewForConfigAndClient(config, httpClient)
-	if err != nil {
-		panic(err)
+	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
+}
+
+func (c *ClientImpl) Kubeconfig(name string) *clientcmdapi.Config {
+	cfg := clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			name: {
+				Server: c.config.Host,
+				CertificateAuthorityData: func() []byte {
+					if c.config.Insecure {
+						return nil
+					}
+					return c.config.CAData
+				}(),
+				InsecureSkipTLSVerify: c.config.Insecure,
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			name: {
+				ClientCertificateData: c.config.CertData,
+				ClientKeyData:         c.config.KeyData,
+				Token:                 c.config.BearerToken,
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			name: {
+				Cluster:  name,
+				AuthInfo: name,
+			},
+		},
+		CurrentContext: name,
 	}
-	return &ClientImpl{
-		Interface:  cs,
-		clientset:  cs,
-		config:     config,
-		httpClient: httpClient,
-	}
+	return &cfg
 }

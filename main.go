@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"runtime"
@@ -16,6 +17,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/podman"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
@@ -192,8 +195,7 @@ func main() {
 			))
 
 		go runKubelet(ctx, cancel, config)
-		// go waitForApiServer(ctx, cancel, config)
-		// go waitForNodeReady(ctx, cancel, config)
+		go updateKubeconfig(config)
 
 		<-config.Context().Done()
 	}()
@@ -209,8 +211,20 @@ func runKubelet(ctx context.Context, cancel context.CancelCauseFunc, config pkg.
 	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
-// func waitForApiServer(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
-// }
+func updateKubeconfig(config pkg.Config) {
+	kubeconfig, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
+	if err != nil {
+		kubeconfig = clientcmdapi.NewConfig()
+	}
+	current := config.Kube().Client().WithInsecure(true).Kubeconfig(config.Options().Name())
+	maps.Copy(kubeconfig.Clusters, current.Clusters)
+	maps.Copy(kubeconfig.AuthInfos, current.AuthInfos)
+	maps.Copy(kubeconfig.Contexts, current.Contexts)
+	kubeconfig.CurrentContext = current.CurrentContext
 
-// func waitForNodeReady(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
-// }
+	if err := clientcmd.WriteToFile(*kubeconfig, clientcmd.RecommendedHomeFile); err != nil {
+		nanokube.Log.Error("failed to update kubeconfig", "path", clientcmd.RecommendedHomeFile, "error", err)
+	} else {
+		nanokube.Log.Info("updated kubeconfig", "path", clientcmd.RecommendedHomeFile, "context", current.CurrentContext)
+	}
+}

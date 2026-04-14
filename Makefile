@@ -56,6 +56,7 @@ clean:
 	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
 	@docker system prune -f >/dev/null 2>&1; true
 	@rm -rf ~/.nanokube ~/.nanokube-e2e ~/.nanokube-critest ~/.nanokube-smoke ~/.nanokube-tmp.*
+	@rm -rf ~/.kube
 
 test:
 	go test ./...

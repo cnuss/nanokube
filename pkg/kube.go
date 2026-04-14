@@ -150,7 +150,6 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
 		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
-		k.kubeletFlags.LockFilePath = k.config.Options().FilePathAt(nanokube.DataDirLock, nanokube.KubeletLock)
 		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
 	})
 	return k.kubeletFlags
@@ -195,6 +194,12 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
 	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
+	if k.config.Options().Standalone() {
+		kubelet.KubeletConfiguration.RegisterNode = false
+		kubelet.KubeletDeps.KubeClient = nil
+		kubelet.KubeletDeps.EventClient = nil
+		kubelet.KubeletDeps.HeartbeatClient = nil
+	}
 	k.kubelet = kubelet
 	close(k.kubeletProvided)
 	return k
