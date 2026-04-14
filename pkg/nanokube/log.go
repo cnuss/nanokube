@@ -21,18 +21,21 @@ var Log = slog.New(tint.NewHandler(os.Stderr, &tint.Options{
 // Verbosity controls what's visible:
 //
 //	0: errors only (quiet)
-//	1: + warnings and klog V(0)
-//	2: + info and klog V(1-2)
-//	3+: everything including debug/trace
+//	1: + warnings, info, klog V(0-2)
+//	2: + klog V(3-4)
+//	3: + klog V(5-6)
+//	4+: + klog V(7-8), everything
 func SetupLogging(verbosity int) {
 	var level slog.Level
 	switch {
+	case verbosity >= 4:
+		level = slog.Level(-8)
 	case verbosity >= 3:
-		level = slog.Level(-10)
+		level = slog.Level(-6)
 	case verbosity >= 2:
-		level = slog.Level(-2)
+		level = slog.Level(-4)
 	case verbosity >= 1:
-		level = slog.LevelInfo
+		level = slog.Level(-2)
 	default:
 		level = slog.LevelError
 	}
