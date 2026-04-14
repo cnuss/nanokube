@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/lmittmann/tint"
@@ -39,6 +41,7 @@ func SetupLogging(verbosity int) {
 	klog.SetSlogLogger(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
 		Level:      level,
 		TimeFormat: time.TimeOnly,
+		AddSource:  true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.LevelKey {
 				l := a.Value.Any().(slog.Level)
@@ -51,6 +54,15 @@ func SetupLogging(verbosity int) {
 					a.Value = slog.StringValue("INF")
 				default:
 					a.Value = slog.StringValue(fmt.Sprintf("V(%d)", -int(l)))
+				}
+			}
+			if a.Key == slog.SourceKey {
+				if src, ok := a.Value.Any().(*slog.Source); ok {
+					if filepath.Base(src.File) == "warnings.go" {
+						a.Value = slog.StringValue(fmt.Sprintf("%s:%d\n%s", filepath.Base(src.File), src.Line, debug.Stack()))
+					} else {
+						a.Value = slog.StringValue(fmt.Sprintf("%s:%d", filepath.Base(src.File), src.Line))
+					}
 				}
 			}
 			return a

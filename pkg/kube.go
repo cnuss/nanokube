@@ -97,6 +97,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s:%d", k.ApiServerTunnel().Hostname(), k.ApiServerTunnel().Port())}
 		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.config.Options().FilePathAt(nanokube.DataDirCerts, nanokube.KeyFile)}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
+		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
 		opts.GenericServerRunOptions.ExternalHost = k.ApiServerTunnel().Hostname()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
