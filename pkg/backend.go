@@ -132,7 +132,7 @@ func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
 
 func (b *BackendImpl) Chmod(path string, perm os.FileMode) error {
 	if !b.options.InDataDir(path) {
-		return fmt.Errorf("Chmod outside data dir: %s", path)
+		return os.ErrPermission
 	}
 	return os.Chmod(path, perm)
 }
@@ -164,7 +164,7 @@ func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOpt
 
 func (b *BackendImpl) Create(path string) (*os.File, error) {
 	if !b.options.InDataDir(path) {
-		return nil, fmt.Errorf("Create outside data dir: %s", path)
+		return nil, os.ErrPermission
 	}
 	return os.Create(path)
 }
@@ -389,14 +389,14 @@ func (b *BackendImpl) Start() error {
 
 func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
 	if !b.options.InDataDir(path) {
-		return nil, fmt.Errorf("Stat outside data dir: %s", path)
+		return nil, os.ErrPermission
 	}
 	return os.Stat(path)
 }
 
 func (b *BackendImpl) Symlink(oldname string, newname string) error {
 	if !b.options.InDataDir(newname) {
-		return fmt.Errorf("Symlink outside data dir: %s", newname)
+		return os.ErrPermission
 	}
 	return os.Symlink(oldname, newname)
 }
