@@ -831,6 +831,7 @@ func (d *driver) ReopenContainerLog(ctx context.Context, containerID string) err
 func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig, runtimeHandler string) (string, error) {
 	meta := config.GetMetadata()
 
+	nanokube.Log.Info("!!! log directory", "dir", config.GetLogDirectory())
 	name, labels, err := nanokube.NewTagBuilder(d.Name(), config.GetLabels()).
 		WithType(nanokube.ResourceSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUID(meta.GetUid()).
 		WithAnnotations(config.GetAnnotations()).

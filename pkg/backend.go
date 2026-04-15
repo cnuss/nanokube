@@ -395,7 +395,10 @@ func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
 }
 
 func (b *BackendImpl) Symlink(oldname string, newname string) error {
-	return nanokube.Unimplemented()
+	if !b.options.InDataDir(newname) {
+		return fmt.Errorf("Symlink outside data dir: %s", newname)
+	}
+	return os.Symlink(oldname, newname)
 }
 
 func (b *BackendImpl) Unmount(target string) error {
