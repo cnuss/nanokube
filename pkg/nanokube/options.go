@@ -32,6 +32,8 @@ func NewOptions(cmd *cobra.Command) Options {
 		return filepath.Join(home, fmt.Sprintf(".%s", options.Name()))
 	}(), "data directory")
 	cmd.Flags().BoolVar(&options.standalone, "standalone", false, "run in standalone mode")
+
+	os.Setenv("NANOKUBE_DATA_DIR", options.dataDir)
 	return options
 }
 

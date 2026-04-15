@@ -16,6 +16,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	cadvisorv1 "github.com/google/cadvisor/info/v1"
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/pbnjay/memory"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -535,6 +536,31 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 			pod.Annotations = make(map[string]string)
 		}
 		pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyDNSAliases)] = strings.Join(names, ",")
+	}
+
+	// BONUS FEATURE: hostPath.path expansion for "~", ".", ".." and env vars
+	for i := range pod.Spec.Volumes {
+		v := &pod.Spec.Volumes[i]
+		if v.HostPath == nil {
+			continue
+		}
+		path := v.HostPath.Path
+		if path == "" {
+			continue
+		}
+		path = os.ExpandEnv(path)
+		path, err := homedir.Expand(path)
+		if err != nil {
+			continue
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			continue
+		}
+		if path != v.HostPath.Path {
+			nanokube.Log.Info("expanding hostPath", "volume", v.Name, "original", v.HostPath.Path, "expanded", path)
+		}
+		v.HostPath.Path = path
 	}
 
 	return lifecycle.PodAdmitResult{Admit: true}

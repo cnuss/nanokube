@@ -12,3 +12,18 @@ spec:
         - busybox
         - httpd
         - -f
+        - -p
+        - "8080"
+        - -h
+        - /data
+      ports:
+        - containerPort: 8080
+          hostPort: 8080
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      hostPath:
+        path: "$NANOKUBE_DATA_DIR"
+        type: Directory
