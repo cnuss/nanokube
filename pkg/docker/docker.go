@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg"
@@ -82,6 +84,8 @@ type driver struct {
 
 	cgroupRoot     string
 	cgroupRootOnce sync.Once
+
+	logStreams sync.Map // containerID -> *LogStream
 }
 
 var _ pkg.Driver = &driver{}
@@ -814,8 +818,14 @@ func (d *driver) RemovePodSandbox(ctx context.Context, podSandboxID string) erro
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) ReopenContainerLog(ctx context.Context, ContainerID string) error {
-	return nil // TODO(incomplete): restart log streaming for container
+func (d *driver) ReopenContainerLog(ctx context.Context, containerID string) error {
+	logStream := d.LogStream(containerID)
+	if logStream == nil {
+		return fmt.Errorf("container %s log stream not found", containerID)
+	}
+	logStream.Stop()
+	logStream.Start()
+	return nil
 }
 
 func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig, runtimeHandler string) (string, error) {
@@ -1020,12 +1030,17 @@ func (d *driver) Status(ctx context.Context, verbose bool) (*v1.StatusResponse, 
 }
 
 func (d *driver) StopContainer(ctx context.Context, containerID string, timeout int64) error {
-	// TODO(incomplete): StopLogs(containerID) — stop streaming container logs
+	logStream := d.LogStream(containerID)
+	if logStream != nil {
+		logStream.Destroy()
+	}
+
 	t := int(timeout)
 	err := d.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t})
 	if err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
+
 	return nil
 }
 
@@ -1246,4 +1261,140 @@ func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
 		return err
 	}
 	return d.client.NetworkRemove(ctx, netName)
+}
+
+func (d *driver) LogStream(containerID string) *nanokube.LogStream {
+	if logStream, ok := d.logStreams.Load(containerID); ok {
+		return logStream.(*nanokube.LogStream)
+	}
+
+	inspect, err := d.client.ContainerInspect(d.Context(), containerID)
+	if err != nil {
+		return nil
+	}
+
+	var ctx context.Context = d.Context()
+	var reader io.ReadCloser
+	var readerCancel context.CancelFunc
+	crioutR, crioutW := io.Pipe()
+	stdoutR, stdoutW := io.Pipe()
+	stderrR, stderrW := io.Pipe()
+	var started, stopped, destroyed atomic.Bool = atomic.Bool{}, atomic.Bool{}, atomic.Bool{}
+
+	stop := func() {
+		if !started.Load() || stopped.Load() || destroyed.Load() {
+			return
+		}
+		stopped.Store(true)
+		if readerCancel != nil {
+			readerCancel()
+		}
+		if reader != nil {
+			reader.Close()
+		}
+	}
+
+	start := func() {
+		if destroyed.Load() {
+			return
+		}
+		started.Store(true)
+		stopped.Store(false)
+
+		ctx, readerCancel = context.WithCancel(ctx)
+		reader, err = d.client.ContainerLogs(ctx, inspect.ID, container.LogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Follow:     true,
+			Timestamps: true,
+		})
+		if err != nil {
+			stop()
+			return
+		}
+
+		go func() {
+			defer stop()
+
+			// Docker multiplexes stdout/stderr with an 8-byte header per frame:
+			// [stream_type(1)][0][0][0][size(4 big-endian)]
+			hdr := make([]byte, 8)
+			for {
+				if _, err := io.ReadFull(reader, hdr); err != nil {
+					return
+				}
+
+				streamType := "stdout"
+				if hdr[0] == 2 {
+					streamType = "stderr"
+				}
+
+				size := binary.BigEndian.Uint32(hdr[4:8])
+				if size == 0 {
+					continue
+				}
+
+				buf := make([]byte, size)
+				if _, err := io.ReadFull(reader, buf); err != nil {
+					return
+				}
+
+				line := string(buf)
+				switch streamType {
+				case "stdout":
+					if _, err := stdoutW.Write([]byte(line)); err != nil {
+						return
+					}
+				case "stderr":
+					if _, err := stderrW.Write([]byte(line)); err != nil {
+						return
+					}
+				}
+
+				// Normalize to "[ts] [stdout|stderr] F message\n" format for easier parsing by log processors.
+				ts := time.Now().Format(time.RFC3339Nano)
+				msg := line
+				if before, after, ok := strings.Cut(line, " "); ok {
+					ts = before
+					msg = after
+				}
+
+				if _, err := time.Parse(time.RFC3339Nano, ts); err != nil {
+					ts = time.Now().Format(time.RFC3339Nano)
+				}
+
+				if !strings.HasSuffix(msg, "\n") {
+					msg += "\n"
+				}
+
+				if _, err := fmt.Fprintf(crioutW, "%s %s F %s", ts, streamType, msg); err != nil {
+					return
+				}
+			}
+		}()
+	}
+
+	destroy := func() {
+		if destroyed.Load() {
+			return
+		}
+		stop()
+		destroyed.Store(true)
+		crioutW.Close()
+		stdoutW.Close()
+		stderrW.Close()
+		d.logStreams.Delete(containerID)
+	}
+
+	stream := &nanokube.LogStream{
+		Criout:  crioutR,
+		Stdout:  stdoutR,
+		Stderr:  stderrR,
+		Stop:    stop,
+		Start:   start,
+		Destroy: destroy,
+	}
+
+	d.logStreams.Store(containerID, stream)
+	return stream
 }

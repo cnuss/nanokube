@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -44,10 +46,12 @@ type Driver interface {
 
 	Context() context.Context
 	Options() nanokube.Options
+
+	// Miscellaneous
 	Name() string
 	CgroupRoot() string
-
 	ExecHost(image string, cmd []string, mounts []nanokube.Path) (string, error)
+	LogStream(containerID string) *nanokube.LogStream
 }
 
 type Manager interface {
@@ -417,7 +421,10 @@ type managerImpl struct {
 	ctx       context.Context
 	backend   Backend
 	startOnce sync.Once
-	ready     chan struct{}
+
+	logPipes sync.Map // containerID -> *os.File (write end of pipe to log stream)
+
+	ready chan struct{}
 }
 
 var _ Manager = &managerImpl{}
@@ -690,11 +697,34 @@ func (c *managerImpl) PreCreateContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1
 	return nil // TODO(partial): device plugin pre-create hooks
 }
 
-func (c *managerImpl) PreStartContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, _ string) error {
-	return nil // TODO(partial): device plugin pre-start hooks
+func (c *managerImpl) PreStartContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, containerID string) error {
+	logStream := c.backend.Driver().LogStream(containerID)
+	if logStream == nil {
+		return nil
+	}
+
+	status, err := c.backend.Driver().ContainerStatus(c.ctx, containerID, false)
+	if err != nil || status.Status == nil || status.Status.LogPath == "" {
+		return nil
+	}
+
+	logPath := status.Status.LogPath
+	os.MkdirAll(filepath.Dir(logPath), 0o755)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		io.Copy(f, logStream.Criout)
+		f.Close()
+	}()
+
+	// TODO(partial): device plugin pre-start hooks
+	return nil
 }
 
-func (c *managerImpl) PostStopContainer(_ klog.Logger, _ string) error {
+func (c *managerImpl) PostStopContainer(_ klog.Logger, containerID string) error {
 	return nil // TODO(partial): device plugin post-stop hooks
 }
 

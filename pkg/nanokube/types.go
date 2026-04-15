@@ -1,6 +1,8 @@
 package nanokube
 
-import "path/filepath"
+import (
+	"path/filepath"
+)
 
 type (
 	DataDir     string
@@ -33,4 +35,6 @@ type Options interface {
 
 	DataDirAt(name DataDir) string
 	FilePathAt(dir DataDir, path FileName) string
+
+	InDataDir(path string) bool
 }

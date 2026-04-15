@@ -2,6 +2,7 @@ package nanokube
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,15 @@ import (
 	"github.com/lmittmann/tint"
 	"k8s.io/klog/v2"
 )
+
+type LogStream struct {
+	Criout  io.ReadCloser
+	Stderr  io.ReadCloser
+	Stdout  io.ReadCloser
+	Start   func()
+	Stop    func()
+	Destroy func()
+}
 
 // Log is nanokube's own logger — always visible regardless of -v.
 var Log = slog.New(tint.NewHandler(os.Stderr, &tint.Options{
