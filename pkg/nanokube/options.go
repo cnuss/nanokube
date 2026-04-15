@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -66,4 +67,10 @@ func (o *OptionsImpl) DataDirAt(name DataDir) string {
 
 func (o *OptionsImpl) FilePathAt(dir DataDir, path FileName) string {
 	return filepath.Join(o.DataDirAt(dir), string(path))
+}
+
+func (o *OptionsImpl) InDataDir(path string) bool {
+	clean := filepath.Clean(path) + string(filepath.Separator)
+	dir := filepath.Clean(o.dataDir) + string(filepath.Separator)
+	return strings.HasPrefix(clean, dir)
 }

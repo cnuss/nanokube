@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -126,15 +128,267 @@ func (d *driver) Close() error {
 }
 
 func (d *driver) ContainerStats(ctx context.Context, containerID string) (*v1.ContainerStats, error) {
-	return nil, nanokube.Unimplemented()
+	cs, err := d.ContainerStatus(ctx, containerID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := d.client.ContainerStatsOneShot(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var stats container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return nil, fmt.Errorf("decode docker stats: %w", err)
+	}
+
+	ts := time.Now().UnixNano()
+
+	return &v1.ContainerStats{
+		Attributes: &v1.ContainerAttributes{
+			Id:          containerID,
+			Metadata:    cs.Status.Metadata,
+			Labels:      cs.Status.Labels,
+			Annotations: cs.Status.Annotations,
+		},
+		Cpu: &v1.CpuUsage{
+			Timestamp:            ts,
+			UsageCoreNanoSeconds: &v1.UInt64Value{Value: stats.CPUStats.CPUUsage.TotalUsage},
+		},
+		Memory: &v1.MemoryUsage{
+			Timestamp:       ts,
+			WorkingSetBytes: &v1.UInt64Value{Value: stats.MemoryStats.Usage},
+		},
+		WritableLayer: &v1.FilesystemUsage{
+			Timestamp: ts,
+		},
+	}, nil
 }
 
 func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbose bool) (*v1.ContainerStatusResponse, error) {
-	return nil, nanokube.Unimplemented()
+	inspect, err := d.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
+
+	var state v1.ContainerState
+	switch inspect.State.Status {
+	case "created":
+		state = v1.ContainerState_CONTAINER_CREATED
+	case "running":
+		state = v1.ContainerState_CONTAINER_RUNNING
+	default:
+		state = v1.ContainerState_CONTAINER_EXITED
+	}
+
+	status := &v1.ContainerStatus{
+		Id: inspect.ID,
+		Metadata: &v1.ContainerMetadata{
+			Name:    nanokube.TagName(d.Name(), inspect.Config.Labels),
+			Attempt: nanokube.TagAttempt(d.Name(), inspect.Config.Labels),
+		},
+		State:       state,
+		CreatedAt:   createdAt.UnixNano(),
+		Image:       &v1.ImageSpec{Image: inspect.Config.Image},
+		ImageRef:    inspect.Image,
+		Labels:      nanokube.TagExtractLabels(d.Name(), inspect.Config.Labels),
+		Annotations: nanokube.TagExtractAnnotations(d.Name(), inspect.Config.Labels),
+	}
+
+	if logPath := nanokube.TagLogPath(d.Name(), inspect.Config.Labels); logPath != "" {
+		status.LogPath = logPath
+	} else {
+		status.LogPath = inspect.LogPath
+	}
+
+	if inspect.State.StartedAt != "" && inspect.State.StartedAt != "0001-01-01T00:00:00Z" {
+		t, _ := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+		status.StartedAt = t.UnixNano()
+	}
+	if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+		t, _ := time.Parse(time.RFC3339Nano, inspect.State.FinishedAt)
+		status.FinishedAt = t.UnixNano()
+	}
+	if state == v1.ContainerState_CONTAINER_EXITED {
+		status.ExitCode = int32(inspect.State.ExitCode)
+		if inspect.State.OOMKilled || (inspect.State.ExitCode == 137 && inspect.HostConfig.Memory > 0) {
+			status.Reason = "OOMKilled"
+		} else if inspect.State.ExitCode == 0 {
+			status.Reason = "Completed"
+		} else if inspect.State.Error != "" {
+			status.Reason = inspect.State.Error
+		} else {
+			status.Reason = "Error"
+		}
+	}
+
+	for _, m := range inspect.Mounts {
+		status.Mounts = append(status.Mounts, &v1.Mount{
+			ContainerPath: m.Destination,
+			HostPath:      m.Source,
+			Readonly:      !m.RW,
+		})
+	}
+
+	resp := &v1.ContainerStatusResponse{Status: status}
+	if verbose {
+		resp.Info = map[string]string{
+			"pid": fmt.Sprintf("%d", inspect.State.Pid),
+		}
+	}
+	return resp, nil
 }
 
 func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, config *v1.ContainerConfig, sandboxConfig *v1.PodSandboxConfig) (string, error) {
-	return "", nanokube.Unimplemented()
+	meta := config.GetMetadata()
+
+	sandbox, err := d.client.ContainerInspect(ctx, podSandboxID)
+	if err != nil {
+		return "", err
+	}
+
+	tb := nanokube.NewTagBuilder(d.Name(), sandbox.Config.Labels).
+		WithType(nanokube.ResourceContainer).
+		WithName(meta.GetName()).
+		WithParentUID(podSandboxID).
+		WithAttempt(meta.GetAttempt()).
+		WithLabels(config.GetLabels()).
+		WithAnnotations(config.GetAnnotations()).
+		WithLogDirectory(nanokube.TagLogDirectory(d.Name(), sandbox.Config.Labels)).
+		WithLogPath(config.GetLogPath())
+
+	name, labels, err := tb.Build()
+	if err != nil {
+		return "", err
+	}
+
+	// Deep copy sandbox configs so mutations don't affect the inspect result
+	dockerConfig := new(container.Config)
+	if b, err := json.Marshal(sandbox.Config); err == nil {
+		json.Unmarshal(b, dockerConfig)
+	}
+	hostConfig := new(container.HostConfig)
+	if b, err := json.Marshal(sandbox.HostConfig); err == nil {
+		json.Unmarshal(b, hostConfig)
+	}
+
+	dockerConfig.Image = config.GetImage().GetImage()
+	dockerConfig.Entrypoint = config.GetCommand()
+	dockerConfig.Cmd = config.GetArgs()
+	dockerConfig.WorkingDir = config.GetWorkingDir()
+	dockerConfig.Labels = labels
+	dockerConfig.StdinOnce = config.GetStdinOnce()
+	dockerConfig.OpenStdin = config.GetStdin()
+	dockerConfig.Tty = config.GetTty()
+	dockerConfig.Hostname = ""
+	dockerConfig.ExposedPorts = nil
+
+	// Environment variables
+	dockerConfig.Env = make([]string, 0, len(config.GetEnvs()))
+	for _, kv := range config.GetEnvs() {
+		dockerConfig.Env = append(dockerConfig.Env, kv.GetKey()+"="+kv.GetValue())
+	}
+
+	// User: CRI security context, falling back to pod-level annotation
+	sc := config.GetLinux().GetSecurityContext()
+	if sc.GetRunAsGroup() != nil && sc.GetRunAsUser() == nil {
+		return "", fmt.Errorf("RunAsGroup requires RunAsUser")
+	}
+	var user string
+	if uid := sc.GetRunAsUser(); uid != nil {
+		user = strconv.FormatInt(uid.GetValue(), 10)
+	}
+	if gid := sc.GetRunAsGroup(); gid != nil {
+		user += ":" + strconv.FormatInt(gid.GetValue(), 10)
+	}
+	if username := sc.GetRunAsUsername(); username != "" {
+		user = username
+	}
+	if user == "" {
+		user = nanokube.TagSecurityContext(d.Name(), nanokube.TagExtractAnnotations(d.Name(), sandbox.Config.Labels))
+	}
+	dockerConfig.User = user
+
+	// Namespaces: share network/ipc with sandbox, pid per container by default
+	hostConfig.NetworkMode = container.NetworkMode("container:" + podSandboxID)
+	hostConfig.IpcMode = container.IpcMode("container:" + podSandboxID)
+	if sc.GetNamespaceOptions().GetPid() == v1.NamespaceMode_CONTAINER {
+		hostConfig.PidMode = ""
+	} else {
+		hostConfig.PidMode = container.PidMode("container:" + podSandboxID)
+	}
+
+	// Clear sandbox-specific settings
+	hostConfig.Binds = nil
+	hostConfig.PortBindings = nil
+	hostConfig.ExtraHosts = nil
+	hostConfig.DNS = nil
+	hostConfig.DNSSearch = nil
+	hostConfig.DNSOptions = nil
+	hostConfig.LogConfig = container.LogConfig{}
+
+	// Resources
+	hostConfig.Resources = container.Resources{
+		CPUShares:  config.GetLinux().GetResources().GetCpuShares(),
+		Memory:     config.GetLinux().GetResources().GetMemoryLimitInBytes(),
+		MemorySwap: config.GetLinux().GetResources().GetMemorySwapLimitInBytes(),
+		CPUQuota:   config.GetLinux().GetResources().GetCpuQuota(),
+		CPUPeriod:  config.GetLinux().GetResources().GetCpuPeriod(),
+	}
+
+	// Security
+	hostConfig.Privileged = sc.GetPrivileged()
+	hostConfig.ReadonlyRootfs = sc.GetReadonlyRootfs()
+	hostConfig.ReadonlyPaths = sc.GetReadonlyPaths()
+	hostConfig.MaskedPaths = sc.GetMaskedPaths()
+	hostConfig.GroupAdd = nil
+	for _, gid := range sc.GetSupplementalGroups() {
+		hostConfig.GroupAdd = append(hostConfig.GroupAdd, strconv.FormatInt(gid, 10))
+	}
+	hostConfig.CapAdd = append([]string{}, sc.GetCapabilities().GetAddCapabilities()...)
+	hostConfig.CapDrop = append([]string{}, sc.GetCapabilities().GetDropCapabilities()...)
+	// TODO(partial): port securityOpts (seccomp profile handling)
+	if sc.GetNoNewPrivs() {
+		hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, "no-new-privileges")
+	}
+
+	// Mounts: resolve symlinks so Docker doesn't fail trying to mkdir over them
+	for _, m := range config.GetMounts() {
+		hostPath := m.GetHostPath()
+		if resolved, err := filepath.EvalSymlinks(hostPath); err == nil {
+			hostPath = resolved
+		}
+		bind := hostPath + ":" + m.GetContainerPath()
+		if m.GetReadonly() {
+			bind += ":ro"
+		}
+		hostConfig.Binds = append(hostConfig.Binds, bind)
+	}
+
+	// Log config
+	if config.GetLogPath() != "" {
+		hostConfig.LogConfig = container.LogConfig{
+			Type:   "json-file",
+			Config: map[string]string{"max-size": "10m", "max-file": "3"},
+		}
+	}
+
+	resp, err := d.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
+	for err != nil && errdefs.IsConflict(err) {
+		tb = tb.Clone().IncrementAttempt()
+		name, labels, err = tb.Build()
+		dockerConfig.Labels = labels
+		resp, err = d.client.ContainerCreate(ctx, dockerConfig, hostConfig, nil, nil, name)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return resp.ID, nil
 }
 
 func (d *driver) Exec(ctx context.Context, request *v1.ExecRequest) (*v1.ExecResponse, error) {
@@ -173,7 +427,50 @@ func (d *driver) ImageFsInfo(ctx context.Context) (*v1.ImageFsInfoResponse, erro
 }
 
 func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose bool) (*v1.ImageStatusResponse, error) {
-	return nil, nanokube.Unimplemented()
+	ref := image.GetImage()
+	if ref == "" {
+		return &v1.ImageStatusResponse{}, nil
+	}
+
+	inspect, err := d.client.ImageInspect(ctx, ref)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return &v1.ImageStatusResponse{}, nil
+		}
+		return nil, err
+	}
+
+	var repoTags []string
+	for _, t := range inspect.RepoTags {
+		if t != "<none>:<none>" && !strings.Contains(t, "@") {
+			repoTags = append(repoTags, t)
+		}
+	}
+
+	img := &v1.Image{
+		Id:          inspect.ID,
+		RepoTags:    repoTags,
+		RepoDigests: inspect.RepoDigests,
+		Size:        uint64(inspect.Size),
+	}
+
+	if inspect.Config != nil && inspect.Config.User != "" {
+		userPart, _, _ := strings.Cut(inspect.Config.User, ":")
+		if uid, err := strconv.ParseInt(userPart, 10, 64); err == nil {
+			img.Uid = &v1.Int64Value{Value: uid}
+		} else {
+			img.Username = userPart
+		}
+	}
+
+	resp := &v1.ImageStatusResponse{Image: img}
+	if verbose {
+		resp.Info = map[string]string{
+			"architecture": inspect.Architecture,
+			"os":           inspect.Os,
+		}
+	}
+	return resp, nil
 }
 
 func (d *driver) ListContainerStats(ctx context.Context, filter *v1.ContainerStatsFilter) ([]*v1.ContainerStats, error) {
@@ -376,15 +673,133 @@ func (d *driver) PodSandboxStats(ctx context.Context, podSandboxID string) (*v1.
 }
 
 func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*v1.PodSandboxStatusResponse, error) {
-	return nil, nanokube.Unimplemented()
+	inspect, err := d.client.ContainerInspect(ctx, podSandboxID)
+	if err != nil {
+		return nil, err
+	}
+
+	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
+
+	nsOpts := &v1.NamespaceOption{
+		Network: v1.NamespaceMode_POD,
+		Pid:     v1.NamespaceMode_CONTAINER,
+		Ipc:     v1.NamespaceMode_POD,
+	}
+	if inspect.HostConfig != nil {
+		if inspect.HostConfig.NetworkMode == "host" {
+			nsOpts.Network = v1.NamespaceMode_NODE
+		}
+		if inspect.HostConfig.PidMode == "host" {
+			nsOpts.Pid = v1.NamespaceMode_NODE
+		}
+		if inspect.HostConfig.IpcMode == "host" {
+			nsOpts.Ipc = v1.NamespaceMode_NODE
+		}
+	}
+
+	podState := v1.PodSandboxState_SANDBOX_NOTREADY
+	if inspect.State.Status == "running" {
+		podState = v1.PodSandboxState_SANDBOX_READY
+	}
+
+	// Determine primary IP
+	var ip string
+	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
+		ip = "127.0.0.1"
+	} else if inspect.NetworkSettings != nil {
+		if len(nanokube.TagExtractAnnotations(d.Name(), inspect.Config.Labels)) > 0 {
+			for name, n := range inspect.NetworkSettings.Networks {
+				if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
+					ip = n.IPAddress
+					break
+				}
+			}
+		}
+		if ip == "" {
+			for _, bindings := range inspect.NetworkSettings.Ports {
+				for _, b := range bindings {
+					if b.HostIP == "" || b.HostIP == "0.0.0.0" {
+						ip = "127.0.0.1"
+						break
+					}
+				}
+				if ip != "" {
+					break
+				}
+			}
+		}
+		if ip == "" {
+			for _, n := range inspect.NetworkSettings.Networks {
+				if n.IPAddress != "" {
+					ip = n.IPAddress
+					break
+				}
+			}
+		}
+	}
+
+	// Additional IPs
+	var additionalIPs []*v1.PodIP
+	if inspect.NetworkSettings != nil {
+		for name, n := range inspect.NetworkSettings.Networks {
+			if name == "host" || name == "none" || n.IPAddress == "" {
+				continue
+			}
+			additionalIPs = append(additionalIPs, &v1.PodIP{Ip: n.IPAddress})
+		}
+	}
+
+	status := &v1.PodSandboxStatus{
+		Id: inspect.ID,
+		Metadata: &v1.PodSandboxMetadata{
+			Name:      nanokube.TagName(d.Name(), inspect.Config.Labels),
+			Namespace: nanokube.TagNamespace(d.Name(), inspect.Config.Labels),
+			Uid:       nanokube.TagUID(d.Name(), inspect.Config.Labels),
+		},
+		State:     podState,
+		CreatedAt: createdAt.UnixNano(),
+		Network: &v1.PodSandboxNetworkStatus{
+			Ip:            ip,
+			AdditionalIps: additionalIPs,
+		},
+		Linux: &v1.LinuxPodSandboxStatus{
+			Namespaces: &v1.Namespace{
+				Options: nsOpts,
+			},
+		},
+		Labels:      nanokube.TagExtractLabels(d.Name(), inspect.Config.Labels),
+		Annotations: nanokube.TagExtractAnnotations(d.Name(), inspect.Config.Labels),
+	}
+
+	resp := &v1.PodSandboxStatusResponse{Status: status}
+	if verbose {
+		resp.Info = map[string]string{
+			"pid": fmt.Sprintf("%d", inspect.State.Pid),
+		}
+	}
+	return resp, nil
 }
 
 func (d *driver) PortForward(ctx context.Context, request *v1.PortForwardRequest) (*v1.PortForwardResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
 
-func (d *driver) PullImage(ctx context.Context, image *v1.ImageSpec, auth *v1.AuthConfig, podSandboxConfig *v1.PodSandboxConfig) (string, error) {
-	return "", nanokube.Unimplemented()
+func (d *driver) PullImage(ctx context.Context, img *v1.ImageSpec, auth *v1.AuthConfig, podSandboxConfig *v1.PodSandboxConfig) (string, error) {
+	reader, err := d.client.ImagePull(ctx, img.GetImage(), image.PullOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+	io.Copy(io.Discard, reader)
+
+	status, err := d.ImageStatus(ctx, img, false)
+	if err != nil {
+		return "", err
+	}
+	if status.Image == nil {
+		return "", fmt.Errorf("image %s not found after pull", img.GetImage())
+	}
+	return status.Image.Id, nil
 }
 
 func (d *driver) RemoveContainer(ctx context.Context, containerID string) error {
@@ -400,7 +815,7 @@ func (d *driver) RemovePodSandbox(ctx context.Context, podSandboxID string) erro
 }
 
 func (d *driver) ReopenContainerLog(ctx context.Context, ContainerID string) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(incomplete): restart log streaming for container
 }
 
 func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig, runtimeHandler string) (string, error) {
@@ -576,7 +991,11 @@ func (d *driver) RuntimeConfig(ctx context.Context) (*v1.RuntimeConfigResponse, 
 }
 
 func (d *driver) StartContainer(ctx context.Context, containerID string) error {
-	return nanokube.Unimplemented()
+	if err := d.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return err
+	}
+	// TODO(incomplete): StartLogs(containerID) — stream container logs to pod log directory
+	return nil
 }
 
 func (d *driver) Status(ctx context.Context, verbose bool) (*v1.StatusResponse, error) {
@@ -601,11 +1020,24 @@ func (d *driver) Status(ctx context.Context, verbose bool) (*v1.StatusResponse, 
 }
 
 func (d *driver) StopContainer(ctx context.Context, containerID string, timeout int64) error {
-	return nanokube.Unimplemented()
+	// TODO(incomplete): StopLogs(containerID) — stop streaming container logs
+	t := int(timeout)
+	err := d.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &t})
+	if err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 func (d *driver) StopPodSandbox(ctx context.Context, podSandboxID string) error {
-	return nanokube.Unimplemented()
+	containers, err := d.ListContainers(ctx, &v1.ContainerFilter{PodSandboxId: podSandboxID})
+	if err != nil {
+		return err
+	}
+	for _, c := range containers {
+		d.StopContainer(ctx, c.Id, 0)
+	}
+	return d.StopContainer(ctx, podSandboxID, 0)
 }
 
 func (d *driver) UpdateContainerResources(ctx context.Context, containerID string, resources *v1.ContainerResources) error {
@@ -764,6 +1196,9 @@ func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokub
 	}
 	resp, err := d.client.NetworkInspect(ctx, netName, network.InspectOptions{Verbose: true})
 	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, nil, nil, nil, nil
+		}
 		return nil, nil, nil, nil, err
 	}
 

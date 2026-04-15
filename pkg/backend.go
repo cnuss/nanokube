@@ -127,7 +127,10 @@ func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
 }
 
 func (b *BackendImpl) Chmod(path string, perm os.FileMode) error {
-	return nanokube.Unimplemented()
+	if !b.options.InDataDir(path) {
+		return fmt.Errorf("Chmod outside data dir: %s", path)
+	}
+	return os.Chmod(path, perm)
 }
 
 func (b *BackendImpl) Chtimes(path string, atime time.Time, mtime time.Time) error {
@@ -156,7 +159,10 @@ func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOpt
 }
 
 func (b *BackendImpl) Create(path string) (*os.File, error) {
-	return nil, nanokube.Unimplemented()
+	if !b.options.InDataDir(path) {
+		return nil, fmt.Errorf("Create outside data dir: %s", path)
+	}
+	return os.Create(path)
 }
 
 func (b *BackendImpl) DeviceOpened(pathname string) (bool, error) {
@@ -378,7 +384,10 @@ func (b *BackendImpl) Start() error {
 }
 
 func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
-	return nil, nanokube.Unimplemented()
+	if !b.options.InDataDir(path) {
+		return nil, fmt.Errorf("Stat outside data dir: %s", path)
+	}
+	return os.Stat(path)
 }
 
 func (b *BackendImpl) Symlink(oldname string, newname string) error {
@@ -669,8 +678,8 @@ func (c *managerImpl) GetQOSContainersInfo() cm.QOSContainersInfo {
 	return cm.QOSContainersInfo{}
 }
 
-func (c *managerImpl) GetResources(ctx context.Context, pod *corev1.Pod, container *corev1.Container) (*container.RunContainerOptions, error) {
-	return nil, nanokube.Unimplemented()
+func (c *managerImpl) GetResources(ctx context.Context, pod *corev1.Pod, ctr *corev1.Container) (*container.RunContainerOptions, error) {
+	return &container.RunContainerOptions{}, nil // TODO(partial): CDI devices, device plugins, CPU manager
 }
 
 func (c *managerImpl) InternalContainerLifecycle() cm.InternalContainerLifecycle {
@@ -678,15 +687,15 @@ func (c *managerImpl) InternalContainerLifecycle() cm.InternalContainerLifecycle
 }
 
 func (c *managerImpl) PreCreateContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, _ *criv1.ContainerConfig) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): device plugin pre-create hooks
 }
 
 func (c *managerImpl) PreStartContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, _ string) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): device plugin pre-start hooks
 }
 
 func (c *managerImpl) PostStopContainer(_ klog.Logger, _ string) error {
-	return nanokube.Unimplemented()
+	return nil // TODO(partial): device plugin post-stop hooks
 }
 
 func (c *managerImpl) NewPodContainerManager() cm.PodContainerManager {
