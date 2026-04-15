@@ -282,19 +282,26 @@ func (b *TagBuilder) WithContainerConfig(config *runtimev1.ContainerConfig) *Tag
 
 // Build generates the container/resource name and returns the final tag map.
 func (b *TagBuilder) Build() (string, map[string]string, error) {
-	name := normalize(b.get(keyName))
-	if attempt := b.get(keyAttempt); attempt != "" {
-		name += "-" + attempt
+	switch ResourceType(b.get(keyType)) {
+	case ResourceSandbox:
+		return fmt.Sprintf("sandbox-0.%s.%s", b.PodSandboxConfig().GetMetadata().GetName(), b.PodSandboxConfig().GetMetadata().GetNamespace()), b.tags, nil
+	case ResourceContainer:
+		return fmt.Sprintf("%s-%s.%s.%s", b.get(keyName), b.get(keyAttempt), b.PodSandboxConfig().GetMetadata().GetName(), b.PodSandboxConfig().GetMetadata().GetNamespace()), b.tags, nil
+	default:
+		name := normalize(b.get(keyName))
+		if attempt := b.get(keyAttempt); attempt != "" {
+			name += "-" + attempt
+		}
+		if t := b.get(keyType); t != string(ResourceContainer) && t != string(ResourceVolume) {
+			name += "-" + t
+		}
+		namespace := normalize(b.get(keyNamespace))
+		if namespace != "" {
+			name = name + "." + namespace
+		}
+		name = name + "." + normalize(b.prefix)
+		return name, b.tags, nil
 	}
-	if t := b.get(keyType); t != string(ResourceContainer) && t != string(ResourceVolume) {
-		name += "-" + t
-	}
-	namespace := normalize(b.get(keyNamespace))
-	if namespace != "" {
-		name = name + "." + namespace
-	}
-	name = name + "." + normalize(b.prefix)
-	return name, b.tags, nil
 }
 
 // Clone returns a copy of the builder for safe reuse (e.g. retry with IncrementAttempt).

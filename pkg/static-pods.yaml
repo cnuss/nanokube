@@ -3,7 +3,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: nanokube
-  namespace: default
+  # namespace: default
 spec:
   containers:
     - name: cnuss-dev

@@ -876,6 +876,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 			Image:      "busybox", // TODO(partial): create nanokube/pause with minimal tooling
 			Entrypoint: []string{"tail", "-f", "/dev/null"},
 			Hostname:   config.GetHostname(),
+			Domainname: meta.GetNamespace() + ".svc.cluster.local",
 			Labels:     labels,
 		}
 
