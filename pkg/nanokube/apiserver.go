@@ -111,7 +111,7 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 		go func() {
 			for {
 				if version, err := h.client.Discovery().ServerVersion(); err == nil {
-					Log.Info("API server is ready", "host", loopback.Host, "version", version.GitVersion)
+					Log.Info("apiserver is ready", "host", loopback.Host, "version", version.GitVersion)
 					close(h.ready)
 					break
 				}

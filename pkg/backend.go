@@ -382,6 +382,7 @@ func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
 		// TODO(partial): add any initialization logic as needed
 		// DEVNOTE: old cadvisor Start() was a no-op; real init happened in MachineInfo
+		nanokube.Log.Info("backend is ready", "driver", b.Driver().Name())
 		close(b.ready)
 	})
 	return nil
@@ -781,6 +782,7 @@ func (c *managerImpl) Start(context.Context, *corev1.Node, cm.ActivePodsFunc, cm
 		// DEVNOTE: old impl initialized DRA manager, CPU manager, memory manager,
 		// cached node info, populated ephemeral storage capacity, validated node
 		// allocatable, started device manager and periodic cgroup ensure tasks
+		nanokube.Log.Info("manager is ready", "driver", c.backend.Driver().Name())
 		close(c.ready)
 	})
 	return nil

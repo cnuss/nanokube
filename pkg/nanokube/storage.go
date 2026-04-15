@@ -114,7 +114,7 @@ func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
 
 		select {
 		case <-server.Server.ReadyNotify():
-			Log.Info("etcd is ready", "port", port)
+			Log.Info("storage is ready", "port", port)
 			close(s.ready)
 		case <-time.After(30 * time.Second):
 			server.Close()
