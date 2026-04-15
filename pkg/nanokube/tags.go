@@ -97,12 +97,12 @@ type TagBuilder struct {
 	tags   map[string]string
 }
 
-func NewTagBuilder(driverName string) *TagBuilder {
+func NewTagBuilder(driver Driver) *TagBuilder {
 	b := &TagBuilder{
-		prefix: driverName,
+		prefix: driver.Options().Name(),
 		tags:   make(map[string]string),
 	}
-	b.set(keyManagedBy, driverName)
+	b.set(keyManagedBy, driver.Name())
 	b.set(keyType, string(ResourceUnknown))
 	return b
 }
@@ -355,7 +355,7 @@ func TagNameKey(prefix string) string {
 // ---------------------------------------------------------------------------
 
 func TagIsManaged(prefix string, tags map[string]string) bool {
-	return tags[tagKey(prefix, keyManagedBy)] == prefix
+	return tags[tagKey(prefix, keyManagedBy)] != ""
 }
 
 func TagManagedByFilter(prefix string) string {

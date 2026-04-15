@@ -1,7 +1,10 @@
 package nanokube
 
 import (
+	"context"
 	"path/filepath"
+
+	cri "k8s.io/cri-api/pkg/apis"
 )
 
 type (
@@ -25,6 +28,20 @@ var (
 	NetworkBridge     NetworkType = "bridge"
 	NetworkSubnetSize             = 28
 )
+
+type Driver interface {
+	cri.ImageManagerService
+	cri.RuntimeService
+	NetworkService
+
+	Context() context.Context
+	Options() Options
+	Name() string
+
+	CgroupRoot() string
+	ExecHost(image string, cmd []string, mounts []Path) (string, error)
+	LogStream(containerID string) *LogStream
+}
 
 type Options interface {
 	Name() string

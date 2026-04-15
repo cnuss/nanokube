@@ -42,7 +42,7 @@ type driver struct {
 	config pkg.Config
 }
 
-var _ pkg.Driver = &driver{}
+var _ nanokube.Driver = &driver{}
 
 func (d *driver) Name() string {
 	return "podman"

@@ -40,21 +40,6 @@ import (
 	"k8s.io/mount-utils"
 )
 
-type Driver interface {
-	cri.ImageManagerService
-	cri.RuntimeService
-	nanokube.NetworkService
-
-	Context() context.Context
-	Options() nanokube.Options
-	Name() string
-
-	// Miscellaneous
-	CgroupRoot() string
-	ExecHost(image string, cmd []string, mounts []nanokube.Path) (string, error)
-	LogStream(containerID string) *nanokube.LogStream
-}
-
 type Manager interface {
 	cm.ContainerManager
 	lifecycle.PodAdmitHandler
@@ -72,7 +57,7 @@ type Backend interface {
 
 	Context() context.Context
 
-	Driver() Driver
+	Driver() nanokube.Driver
 	Network() nanokube.Network
 	Manager() Manager
 
@@ -85,7 +70,7 @@ type fsCacheEntry struct {
 }
 
 type BackendImpl struct {
-	driver  Driver
+	driver  nanokube.Driver
 	options nanokube.Options
 
 	manager     Manager
@@ -103,7 +88,7 @@ type BackendImpl struct {
 
 var _ Backend = &BackendImpl{}
 
-func NewBackend(driver Driver) Backend {
+func NewBackend(driver nanokube.Driver) Backend {
 	return &BackendImpl{
 		driver:  driver,
 		options: driver.Options(),
@@ -116,7 +101,7 @@ func (b *BackendImpl) Context() context.Context {
 	return b.driver.Context()
 }
 
-func (b *BackendImpl) Driver() Driver {
+func (b *BackendImpl) Driver() nanokube.Driver {
 	return b.driver
 }
 
@@ -478,7 +463,7 @@ const SandboxExecSentinel = "__sandbox__"
 
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attributes.Pod
-	prefix := c.backend.Driver().Name()
+	prefix := c.backend.Driver().Options().Name()
 
 	// DEVNOTE: old impl injected host aliases from Hosts() here:
 	//   if h := p.backend.Hosts(); h != nil {
@@ -778,7 +763,7 @@ func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
 }
 
 func (c *managerImpl) PrepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
-	prefix := c.backend.Driver().Name()
+	prefix := c.backend.Driver().Options().Name()
 	network := c.backend.Network()
 
 	allocated, err := network.Allocate(&criv1.PodSandboxConfig{
@@ -832,7 +817,7 @@ func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
 }
 
 func (c *managerImpl) UnprepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
-	prefix := c.backend.Driver().Name()
+	prefix := c.backend.Driver().Options().Name()
 	networksStr, ok := pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyNetworks)]
 	if !ok {
 		return nil
@@ -874,7 +859,7 @@ func (c *managerImpl) EnsureExists(logger klog.Logger, pod *corev1.Pod) error {
 }
 
 func (c *managerImpl) Exists(pod *corev1.Pod) bool {
-	prefix := c.backend.Driver().Name()
+	prefix := c.backend.Driver().Options().Name()
 	sandboxes, err := c.backend.Driver().ListPodSandbox(c.ctx, &criv1.PodSandboxFilter{
 		LabelSelector: map[string]string{
 			nanokube.TagUIDKey(prefix): string(pod.UID),
@@ -901,7 +886,7 @@ func (c *managerImpl) GetPodCgroupMemoryUsage(pod *corev1.Pod) (uint64, error) {
 }
 
 func (c *managerImpl) GetPodContainerName(pod *corev1.Pod) (cm.CgroupName, string) {
-	prefix := c.backend.Driver().Name()
+	prefix := c.backend.Driver().Options().Name()
 	sandboxes, err := c.backend.Driver().ListPodSandbox(c.ctx, &criv1.PodSandboxFilter{
 		LabelSelector: map[string]string{
 			nanokube.TagUIDKey(prefix): string(pod.UID),
