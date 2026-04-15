@@ -65,10 +65,6 @@ func normalize(s string) string {
 	return s
 }
 
-func tagKey(prefix, key string) string {
-	return prefix + "." + key
-}
-
 func encodeBlob(m map[string]string) string {
 	b, _ := json.Marshal(m)
 	return base64.RawURLEncoding.EncodeToString(b)
@@ -107,12 +103,124 @@ func NewTagBuilder(driver Driver) *TagBuilder {
 	return b
 }
 
+func (b *TagBuilder) WithTags(tags map[string]string) *TagBuilder {
+	maps.Copy(b.tags, tags)
+	return b
+}
+
 func (b *TagBuilder) get(key string) string {
-	return b.tags[tagKey(b.prefix, key)]
+	return b.tags[b.Key(key)]
 }
 
 func (b *TagBuilder) set(key, value string) {
-	b.tags[tagKey(b.prefix, key)] = value
+	b.tags[b.Key(key)] = value
+}
+
+// Getters — read values back from a hydrated builder
+
+func (b *TagBuilder) Prefix() string {
+	return b.prefix
+}
+
+func (b *TagBuilder) Name() string {
+	return b.get(keyName)
+}
+
+func (b *TagBuilder) Namespace() string {
+	return b.get(keyNamespace)
+}
+
+func (b *TagBuilder) UID() string {
+	return b.get(keyUID)
+}
+
+func (b *TagBuilder) SandboxUID() string {
+	return b.get(keySandboxUID)
+}
+
+func (b *TagBuilder) Attempt() uint32 {
+	v, _ := strconv.ParseUint(b.get(keyAttempt), 10, 32)
+	return uint32(v)
+}
+
+func (b *TagBuilder) LogDirectory() string {
+	return b.get(keyLogDirectory)
+}
+
+func (b *TagBuilder) LogPath() string {
+	dir := b.get(keyLogDirectory)
+	path := b.get(keyLogPath)
+	if dir == "" || path == "" {
+		return ""
+	}
+	return filepath.Join(dir, path)
+}
+
+func (b *TagBuilder) ExtractLabels() map[string]string {
+	if blob := b.get(keyLabels); blob != "" {
+		if m := decodeBlob(blob); m != nil {
+			return m
+		}
+	}
+	return make(map[string]string)
+}
+
+func (b *TagBuilder) ExtractAnnotations() map[string]string {
+	if blob := b.get(keyAnnotations); blob != "" {
+		if m := decodeBlob(blob); m != nil {
+			return m
+		}
+	}
+	return make(map[string]string)
+}
+
+func (b *TagBuilder) DNSAliases() []string {
+	if v := b.get(KeyDNSAliases); v != "" {
+		return strings.Split(v, ",")
+	}
+	return nil
+}
+
+func (b *TagBuilder) ExtraHosts() []string {
+	v := b.get(KeyHostAliases)
+	if v == "" {
+		return nil
+	}
+	var entries []corev1.HostAlias
+	if json.Unmarshal([]byte(v), &entries) != nil {
+		return nil
+	}
+	var extraHosts []string
+	for _, e := range entries {
+		for _, h := range e.Hostnames {
+			extraHosts = append(extraHosts, h+":"+e.IP)
+		}
+	}
+	return extraHosts
+}
+
+func (b *TagBuilder) SecurityContext() string {
+	return b.get(KeySecurityContext)
+}
+
+func (b *TagBuilder) IsManaged() bool {
+	return b.get(keyManagedBy) != ""
+}
+
+func (b *TagBuilder) Key(key string) string {
+	return b.prefix + "." + key
+}
+
+func (b *TagBuilder) UIDKey() string {
+	return b.Key(keyUID)
+}
+
+func (b *TagBuilder) SandboxUIDFilter(uid string) string {
+	return b.Key(keySandboxUID) + "=" + uid
+}
+
+func (b *TagBuilder) TypeFilter(t ResourceType) string {
+	return b.Key(keyType) + "=" + string(t)
 }
 
 func (b *TagBuilder) WithType(t ResourceType) *TagBuilder {
@@ -149,7 +257,7 @@ func (b *TagBuilder) WithLabels(labels map[string]string) *TagBuilder {
 	if len(labels) == 0 {
 		return b
 	}
-	blobKey := tagKey(b.prefix, keyLabels)
+	blobKey := b.Key(keyLabels)
 	packed := decodeBlob(b.tags[blobKey])
 	if packed == nil {
 		packed = make(map[string]string, len(labels))
@@ -163,7 +271,7 @@ func (b *TagBuilder) WithAnnotations(annotations map[string]string) *TagBuilder 
 	if len(annotations) == 0 {
 		return b
 	}
-	blobKey := tagKey(b.prefix, keyAnnotations)
+	blobKey := b.Key(keyAnnotations)
 	packed := decodeBlob(b.tags[blobKey])
 	if packed == nil {
 		packed = make(map[string]string, len(annotations))
@@ -179,7 +287,7 @@ func (b *TagBuilder) WithHostAliases(aliases []corev1.HostAlias) *TagBuilder {
 	}
 	raw, _ := json.Marshal(aliases)
 	return b.WithAnnotations(map[string]string{
-		tagKey(b.prefix, KeyHostAliases): string(raw),
+		b.Key(KeyHostAliases): string(raw),
 	})
 }
 
@@ -226,154 +334,20 @@ func (b *TagBuilder) Clone() *TagBuilder {
 
 // IncrementAttempt bumps the attempt counter by one.
 func (b *TagBuilder) IncrementAttempt() *TagBuilder {
-	current, _ := strconv.ParseUint(b.tags[tagKey(b.prefix, keyAttempt)], 10, 32)
+	current, _ := strconv.ParseUint(b.get(keyAttempt), 10, 32)
 	b.set(keyAttempt, fmt.Sprintf("%d", current+1))
 	return b
 }
 
 // InternalTags returns only the nanokube-managed tags (non-empty, prefixed keys).
 func (b *TagBuilder) InternalTags() map[string]string {
+	p := b.prefix + "."
 	out := make(map[string]string)
 	for k, v := range b.tags {
-		if v == "" {
+		if v == "" || !strings.HasPrefix(k, p) || !internalKeys[k[len(p):]] {
 			continue
 		}
-		if TagIsInternal(b.prefix, k) {
-			out[k] = v
-		}
+		out[k] = v
 	}
 	return out
-}
-
-// ---------------------------------------------------------------------------
-// Static accessors — read values back from a container's tag map
-// ---------------------------------------------------------------------------
-
-func TagName(prefix string, tags map[string]string) string {
-	return tags[tagKey(prefix, keyName)]
-}
-
-func TagNamespace(prefix string, tags map[string]string) string {
-	return tags[tagKey(prefix, keyNamespace)]
-}
-
-func TagUID(prefix string, tags map[string]string) string {
-	return tags[tagKey(prefix, keyUID)]
-}
-
-func TagSandboxUID(prefix string, tags map[string]string) string {
-	return tags[tagKey(prefix, keySandboxUID)]
-}
-
-func TagAttempt(prefix string, tags map[string]string) uint32 {
-	v, _ := strconv.ParseUint(tags[tagKey(prefix, keyAttempt)], 10, 32)
-	return uint32(v)
-}
-
-func TagLogDirectory(prefix string, tags map[string]string) string {
-	return tags[tagKey(prefix, keyLogDirectory)]
-}
-
-func TagLogPath(prefix string, tags map[string]string) string {
-	dir := tags[tagKey(prefix, keyLogDirectory)]
-	path := tags[tagKey(prefix, keyLogPath)]
-	if dir == "" || path == "" {
-		return ""
-	}
-	return filepath.Join(dir, path)
-}
-
-func TagExtractLabels(prefix string, tags map[string]string) map[string]string {
-	if blob, ok := tags[tagKey(prefix, keyLabels)]; ok {
-		if m := decodeBlob(blob); m != nil {
-			return m
-		}
-	}
-	return make(map[string]string)
-}
-
-func TagExtractAnnotations(prefix string, tags map[string]string) map[string]string {
-	if blob, ok := tags[tagKey(prefix, keyAnnotations)]; ok {
-		if m := decodeBlob(blob); m != nil {
-			return m
-		}
-	}
-	return make(map[string]string)
-}
-
-func TagDNSAliases(prefix string, annotations map[string]string) []string {
-	if v, ok := annotations[tagKey(prefix, KeyDNSAliases)]; ok && v != "" {
-		return strings.Split(v, ",")
-	}
-	return nil
-}
-
-func TagExtraHosts(prefix string, annotations map[string]string) []string {
-	v, ok := annotations[tagKey(prefix, KeyHostAliases)]
-	if !ok || v == "" {
-		return nil
-	}
-	var entries []corev1.HostAlias
-	if json.Unmarshal([]byte(v), &entries) != nil {
-		return nil
-	}
-	var extraHosts []string
-	for _, e := range entries {
-		for _, h := range e.Hostnames {
-			extraHosts = append(extraHosts, h+":"+e.IP)
-		}
-	}
-	return extraHosts
-}
-
-func TagSecurityContext(prefix string, annotations map[string]string) string {
-	return annotations[tagKey(prefix, KeySecurityContext)]
-}
-
-// ---------------------------------------------------------------------------
-// Key accessors — return the full prefixed key for direct map lookups
-// ---------------------------------------------------------------------------
-
-func TagKey(prefix, key string) string {
-	return tagKey(prefix, key)
-}
-
-func TagManagedByKey(prefix string) string {
-	return tagKey(prefix, keyManagedBy)
-}
-
-func TagUIDKey(prefix string) string {
-	return tagKey(prefix, keyUID)
-}
-
-func TagNameKey(prefix string) string {
-	return tagKey(prefix, keyName)
-}
-
-// ---------------------------------------------------------------------------
-// Filter helpers — produce "key=value" strings for Docker API label filters
-// ---------------------------------------------------------------------------
-
-func TagIsManaged(prefix string, tags map[string]string) bool {
-	return tags[tagKey(prefix, keyManagedBy)] != ""
-}
-
-func TagManagedByFilter(prefix string) string {
-	return tagKey(prefix, keyManagedBy) + "=" + prefix
-}
-
-func TagTypeFilter(prefix string, t ResourceType) string {
-	return tagKey(prefix, keyType) + "=" + string(t)
-}
-
-func TagSandboxUIDFilter(prefix string, uid string) string {
-	return tagKey(prefix, keySandboxUID) + "=" + uid
-}
-
-func TagIsInternal(prefix string, key string) bool {
-	p := prefix + "."
-	if !strings.HasPrefix(key, p) {
-		return false
-	}
-	return internalKeys[key[len(p):]]
 }

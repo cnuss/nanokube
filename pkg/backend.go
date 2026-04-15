@@ -463,7 +463,7 @@ const SandboxExecSentinel = "__sandbox__"
 
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attributes.Pod
-	prefix := c.backend.Driver().Options().Name()
+	tb := nanokube.NewTagBuilder(c.backend.Driver())
 
 	// DEVNOTE: old impl injected host aliases from Hosts() here:
 	//   if h := p.backend.Hosts(); h != nil {
@@ -488,7 +488,7 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 			user += ":" + strconv.FormatInt(*sc.RunAsGroup, 10)
 		}
 		if user != "" {
-			pod.Annotations[nanokube.TagKey(prefix, nanokube.KeySecurityContext)] = user
+			pod.Annotations[tb.Key(nanokube.KeySecurityContext)] = user
 		}
 	}
 
@@ -498,7 +498,7 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 			pod.Annotations = make(map[string]string)
 		}
 		b, _ := json.Marshal(pod.Spec.HostAliases)
-		pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyHostAliases)] = string(b)
+		pod.Annotations[tb.Key(nanokube.KeyHostAliases)] = string(b)
 	}
 
 	// Rewrite HTTP/TCP/GRPC probes to exec probes so the upstream kubelet prober
@@ -520,7 +520,7 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 		if pod.Annotations == nil {
 			pod.Annotations = make(map[string]string)
 		}
-		pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyDNSAliases)] = strings.Join(names, ",")
+		pod.Annotations[tb.Key(nanokube.KeyDNSAliases)] = strings.Join(names, ",")
 	}
 
 	// BONUS FEATURE: hostPath.path expansion for "~", ".", ".." and env vars
@@ -763,7 +763,7 @@ func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
 }
 
 func (c *managerImpl) PrepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
-	prefix := c.backend.Driver().Options().Name()
+	tb := nanokube.NewTagBuilder(c.backend.Driver())
 	network := c.backend.Network()
 
 	allocated, err := network.Allocate(&criv1.PodSandboxConfig{
@@ -778,7 +778,7 @@ func (c *managerImpl) PrepareDynamicResources(ctx context.Context, pod *corev1.P
 		pod.Annotations = make(map[string]string)
 	}
 	networks := allocated.Name() + "," + network.Default().Name()
-	pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyNetworks)] = networks
+	pod.Annotations[tb.Key(nanokube.KeyNetworks)] = networks
 	return nil
 }
 
@@ -817,8 +817,8 @@ func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
 }
 
 func (c *managerImpl) UnprepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
-	prefix := c.backend.Driver().Options().Name()
-	networksStr, ok := pod.Annotations[nanokube.TagKey(prefix, nanokube.KeyNetworks)]
+	tb := nanokube.NewTagBuilder(c.backend.Driver())
+	networksStr, ok := pod.Annotations[tb.Key(nanokube.KeyNetworks)]
 	if !ok {
 		return nil
 	}
@@ -859,10 +859,9 @@ func (c *managerImpl) EnsureExists(logger klog.Logger, pod *corev1.Pod) error {
 }
 
 func (c *managerImpl) Exists(pod *corev1.Pod) bool {
-	prefix := c.backend.Driver().Options().Name()
 	sandboxes, err := c.backend.Driver().ListPodSandbox(c.ctx, &criv1.PodSandboxFilter{
 		LabelSelector: map[string]string{
-			nanokube.TagUIDKey(prefix): string(pod.UID),
+			nanokube.NewTagBuilder(c.backend.Driver()).UIDKey(): string(pod.UID),
 		},
 	})
 	if err != nil {
@@ -886,10 +885,9 @@ func (c *managerImpl) GetPodCgroupMemoryUsage(pod *corev1.Pod) (uint64, error) {
 }
 
 func (c *managerImpl) GetPodContainerName(pod *corev1.Pod) (cm.CgroupName, string) {
-	prefix := c.backend.Driver().Options().Name()
 	sandboxes, err := c.backend.Driver().ListPodSandbox(c.ctx, &criv1.PodSandboxFilter{
 		LabelSelector: map[string]string{
-			nanokube.TagUIDKey(prefix): string(pod.UID),
+			nanokube.NewTagBuilder(c.backend.Driver()).UIDKey(): string(pod.UID),
 		},
 	})
 	if err != nil || len(sandboxes) == 0 {

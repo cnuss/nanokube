@@ -199,21 +199,23 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 		state = v1.ContainerState_CONTAINER_EXITED
 	}
 
+	tb := nanokube.NewTagBuilder(d).WithTags(inspect.Config.Labels)
+
 	status := &v1.ContainerStatus{
 		Id: inspect.ID,
 		Metadata: &v1.ContainerMetadata{
-			Name:    nanokube.TagName(d.Options().Name(), inspect.Config.Labels),
-			Attempt: nanokube.TagAttempt(d.Options().Name(), inspect.Config.Labels),
+			Name:    tb.Name(),
+			Attempt: tb.Attempt(),
 		},
 		State:       state,
 		CreatedAt:   createdAt.UnixNano(),
 		Image:       &v1.ImageSpec{Image: inspect.Config.Image},
 		ImageRef:    inspect.Image,
-		Labels:      nanokube.TagExtractLabels(d.Options().Name(), inspect.Config.Labels),
-		Annotations: nanokube.TagExtractAnnotations(d.Options().Name(), inspect.Config.Labels),
+		Labels:      tb.ExtractLabels(),
+		Annotations: tb.ExtractAnnotations(),
 	}
 
-	if logPath := nanokube.TagLogPath(d.Options().Name(), inspect.Config.Labels); logPath != "" {
+	if logPath := tb.LogPath(); logPath != "" {
 		status.LogPath = logPath
 	} else {
 		status.LogPath = inspect.LogPath
@@ -272,7 +274,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 		WithAttempt(meta.GetAttempt()).
 		WithLabels(config.GetLabels()).
 		WithAnnotations(config.GetAnnotations()).
-		WithLogDirectory(nanokube.TagLogDirectory(d.Options().Name(), sandbox.Config.Labels)).
+		WithLogDirectory(nanokube.NewTagBuilder(d).WithTags(sandbox.Config.Labels).LogDirectory()).
 		WithLogPath(config.GetLogPath())
 
 	name, labels, err := tb.Build()
@@ -323,7 +325,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 		user = username
 	}
 	if user == "" {
-		user = nanokube.TagSecurityContext(d.Options().Name(), nanokube.TagExtractAnnotations(d.Options().Name(), sandbox.Config.Labels))
+		user = nanokube.NewTagBuilder(d).WithTags(sandbox.Config.Labels).SecurityContext()
 	}
 	dockerConfig.User = user
 
@@ -522,7 +524,7 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 			f.Add("id", filter.Id)
 		}
 		if filter.PodSandboxId != "" {
-			f.Add("label", nanokube.TagSandboxUIDFilter(d.Options().Name(), filter.PodSandboxId))
+			f.Add("label", nanokube.NewTagBuilder(d).SandboxUIDFilter(filter.PodSandboxId))
 		}
 		if filter.State != nil {
 			switch filter.State.State {
@@ -551,7 +553,7 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 		if !d.matchLabels(c.Labels, selector) {
 			continue
 		}
-		prefix := d.Options().Name()
+		tb := nanokube.NewTagBuilder(d).WithTags(c.Labels)
 		var containerState v1.ContainerState
 		switch c.State {
 		case "created":
@@ -563,17 +565,17 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 		}
 		result = append(result, &v1.Container{
 			Id:           c.ID,
-			PodSandboxId: nanokube.TagSandboxUID(prefix, c.Labels),
+			PodSandboxId: tb.SandboxUID(),
 			Metadata: &v1.ContainerMetadata{
-				Name:    nanokube.TagName(prefix, c.Labels),
-				Attempt: nanokube.TagAttempt(prefix, c.Labels),
+				Name:    tb.Name(),
+				Attempt: tb.Attempt(),
 			},
 			Image:       &v1.ImageSpec{Image: c.Image},
 			ImageRef:    c.ImageID,
 			State:       containerState,
 			CreatedAt:   c.Created * int64(time.Second),
-			Labels:      nanokube.TagExtractLabels(prefix, c.Labels),
-			Annotations: nanokube.TagExtractAnnotations(prefix, c.Labels),
+			Labels:      tb.ExtractLabels(),
+			Annotations: tb.ExtractAnnotations(),
 		})
 	}
 
@@ -584,7 +586,7 @@ func (d *driver) matchLabels(dockerLabels map[string]string, selector map[string
 	if len(selector) == 0 {
 		return true
 	}
-	unpacked := nanokube.TagExtractLabels(d.Options().Name(), dockerLabels)
+	unpacked := nanokube.NewTagBuilder(d).WithTags(dockerLabels).ExtractLabels()
 	for k, v := range selector {
 		if unpacked[k] == v || dockerLabels[k] == v {
 			continue
@@ -653,7 +655,7 @@ func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter
 		if !d.matchLabels(c.Labels, selector) {
 			continue
 		}
-		prefix := d.Options().Name()
+		tb := nanokube.NewTagBuilder(d).WithTags(c.Labels)
 		podState := v1.PodSandboxState_SANDBOX_NOTREADY
 		if c.State == "running" {
 			podState = v1.PodSandboxState_SANDBOX_READY
@@ -661,14 +663,14 @@ func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter
 		result = append(result, &v1.PodSandbox{
 			Id: c.ID,
 			Metadata: &v1.PodSandboxMetadata{
-				Name:      nanokube.TagName(prefix, c.Labels),
-				Namespace: nanokube.TagNamespace(prefix, c.Labels),
-				Uid:       nanokube.TagUID(prefix, c.Labels),
+				Name:      tb.Name(),
+				Namespace: tb.Namespace(),
+				Uid:       tb.UID(),
 			},
 			State:       podState,
 			CreatedAt:   c.Created * int64(time.Second),
-			Labels:      nanokube.TagExtractLabels(prefix, c.Labels),
-			Annotations: nanokube.TagExtractAnnotations(prefix, c.Labels),
+			Labels:      tb.ExtractLabels(),
+			Annotations: tb.ExtractAnnotations(),
 		})
 	}
 	return result, nil
@@ -717,11 +719,13 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 	}
 
 	// Determine primary IP
+	tb := nanokube.NewTagBuilder(d).WithTags(inspect.Config.Labels)
+
 	var ip string
 	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
 		ip = "127.0.0.1"
 	} else if inspect.NetworkSettings != nil {
-		if len(nanokube.TagExtractAnnotations(d.Options().Name(), inspect.Config.Labels)) > 0 {
+		if len(tb.ExtractAnnotations()) > 0 {
 			for name, n := range inspect.NetworkSettings.Networks {
 				if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
 					ip = n.IPAddress
@@ -766,9 +770,9 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 	status := &v1.PodSandboxStatus{
 		Id: inspect.ID,
 		Metadata: &v1.PodSandboxMetadata{
-			Name:      nanokube.TagName(d.Options().Name(), inspect.Config.Labels),
-			Namespace: nanokube.TagNamespace(d.Options().Name(), inspect.Config.Labels),
-			Uid:       nanokube.TagUID(d.Options().Name(), inspect.Config.Labels),
+			Name:      tb.Name(),
+			Namespace: tb.Namespace(),
+			Uid:       tb.UID(),
 		},
 		State:     podState,
 		CreatedAt: createdAt.UnixNano(),
@@ -781,8 +785,8 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 				Options: nsOpts,
 			},
 		},
-		Labels:      nanokube.TagExtractLabels(d.Options().Name(), inspect.Config.Labels),
-		Annotations: nanokube.TagExtractAnnotations(d.Options().Name(), inspect.Config.Labels),
+		Labels:      tb.ExtractLabels(),
+		Annotations: tb.ExtractAnnotations(),
 	}
 
 	resp := &v1.PodSandboxStatusResponse{Status: status}
@@ -853,7 +857,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 	var status *v1.PodSandboxStatus
 
 	existing, _ := d.ListPodSandbox(ctx, &v1.PodSandboxFilter{
-		LabelSelector: map[string]string{nanokube.TagUIDKey(d.Options().Name()): meta.GetUid()},
+		LabelSelector: map[string]string{nanokube.NewTagBuilder(d).UIDKey(): meta.GetUid()},
 	})
 
 	for _, sb := range existing {
@@ -924,13 +928,14 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 		//   }
 		//   slices.Sort(extraHosts)
 		//   hostConfig.ExtraHosts = slices.Compact(extraHosts)
-		extraHosts := nanokube.TagExtraHosts(d.Options().Name(), config.GetAnnotations())
+		configTb := nanokube.NewTagBuilder(d).WithTags(config.GetAnnotations())
+		extraHosts := configTb.ExtraHosts()
 		slices.Sort(extraHosts)
 		hostConfig.ExtraHosts = slices.Compact(extraHosts)
 
 		if networkMode != container.NetworkMode("host") {
 			networks := []string{"bridge"}
-			if networksStr, ok := config.GetAnnotations()[nanokube.TagKey(d.Options().Name(), nanokube.KeyNetworks)]; ok {
+			if networksStr, ok := config.GetAnnotations()[configTb.Key(nanokube.KeyNetworks)]; ok {
 				networks = strings.Split(networksStr, ",")
 			}
 
@@ -1238,7 +1243,7 @@ func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokub
 	}
 
 	isDefault := resp.Options["com.docker.network.bridge.default_bridge"] == "true"
-	if !isDefault && !nanokube.TagIsManaged(d.Options().Name(), resp.Labels) {
+	if !isDefault && !nanokube.NewTagBuilder(d).WithTags(resp.Labels).IsManaged() {
 		return nil, nil, nil, nil, fmt.Errorf("network %s is not managed by nanokube", name)
 	}
 
