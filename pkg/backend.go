@@ -46,9 +46,9 @@ type Driver interface {
 
 	Context() context.Context
 	Options() nanokube.Options
+	Name() string
 
 	// Miscellaneous
-	Name() string
 	CgroupRoot() string
 	ExecHost(image string, cmd []string, mounts []nanokube.Path) (string, error)
 	LogStream(containerID string) *nanokube.LogStream
@@ -276,7 +276,10 @@ func (b *BackendImpl) ImagesFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
 }
 
 func (b *BackendImpl) IsLikelyNotMountPoint(file string) (bool, error) {
-	return false, nanokube.Unimplemented()
+	if !b.options.InDataDir(file) {
+		return true, os.ErrPermission
+	}
+	return true, nil
 }
 
 func (b *BackendImpl) IsMountPoint(file string) (bool, error) {
@@ -396,9 +399,10 @@ func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
 }
 
 func (b *BackendImpl) Symlink(oldname string, newname string) error {
-	if !b.options.InDataDir(newname) {
+	if !b.options.InDataDir(oldname) && !b.options.InDataDir(newname) {
 		return os.ErrPermission
 	}
+	os.MkdirAll(filepath.Dir(newname), 0o755)
 	return os.Symlink(oldname, newname)
 }
 

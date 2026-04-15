@@ -82,6 +82,9 @@ type driver struct {
 	config pkg.Config
 	client *client.Client
 
+	name     string
+	nameOnce sync.Once
+
 	cgroupRoot     string
 	cgroupRootOnce sync.Once
 
@@ -91,7 +94,14 @@ type driver struct {
 var _ pkg.Driver = &driver{}
 
 func (d *driver) Name() string {
-	return "docker"
+	d.nameOnce.Do(func() {
+		d.name = "docker"
+		info, err := d.client.Info(d.Context())
+		if err == nil {
+			d.name = fmt.Sprintf("%s.%s", info.Name, d.name)
+		}
+	})
+	return d.name
 }
 
 func (d *driver) Context() context.Context {
@@ -831,7 +841,6 @@ func (d *driver) ReopenContainerLog(ctx context.Context, containerID string) err
 func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig, runtimeHandler string) (string, error) {
 	meta := config.GetMetadata()
 
-	nanokube.Log.Info("!!! log directory", "dir", config.GetLogDirectory())
 	name, labels, err := nanokube.NewTagBuilder(d.Name(), config.GetLabels()).
 		WithType(nanokube.ResourceSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUID(meta.GetUid()).
 		WithAnnotations(config.GetAnnotations()).
