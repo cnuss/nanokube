@@ -399,8 +399,9 @@ func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
 }
 
 func (b *BackendImpl) Symlink(oldname string, newname string) error {
-	if !b.options.InDataDir(oldname) && !b.options.InDataDir(newname) {
-		return os.ErrPermission
+	if !b.options.InDataDir(oldname) || !b.options.InDataDir(newname) {
+		klog.Warningf("skipping symlink from %q to %q outside of data dir", oldname, newname)
+		return nil
 	}
 	os.MkdirAll(filepath.Dir(newname), 0o755)
 	return os.Symlink(oldname, newname)
