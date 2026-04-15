@@ -268,7 +268,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 	tb := nanokube.NewTagBuilder(d.Name(), sandbox.Config.Labels).
 		WithType(nanokube.ResourceContainer).
 		WithName(meta.GetName()).
-		WithParentUID(podSandboxID).
+		WithSandboxUID(podSandboxID).
 		WithAttempt(meta.GetAttempt()).
 		WithLabels(config.GetLabels()).
 		WithAnnotations(config.GetAnnotations()).
@@ -522,7 +522,7 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 			f.Add("id", filter.Id)
 		}
 		if filter.PodSandboxId != "" {
-			f.Add("label", nanokube.TagParentUIDFilter(d.Name(), filter.PodSandboxId))
+			f.Add("label", nanokube.TagSandboxUIDFilter(d.Name(), filter.PodSandboxId))
 		}
 		if filter.State != nil {
 			switch filter.State.State {
@@ -563,7 +563,7 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 		}
 		result = append(result, &v1.Container{
 			Id:           c.ID,
-			PodSandboxId: nanokube.TagParentUID(prefix, c.Labels),
+			PodSandboxId: nanokube.TagSandboxUID(prefix, c.Labels),
 			Metadata: &v1.ContainerMetadata{
 				Name:    nanokube.TagName(prefix, c.Labels),
 				Attempt: nanokube.TagAttempt(prefix, c.Labels),

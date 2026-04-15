@@ -31,7 +31,7 @@ const (
 	keyName            = "name"
 	keyNamespace       = "namespace"
 	keyUID             = "uid"
-	keyParentUID       = "parent-uid"
+	keySandboxUID      = "sandbox-uid"
 	keyAttempt         = "attempt"
 	keyLogDirectory    = "log-directory"
 	keyLogPath         = "log-path"
@@ -49,7 +49,7 @@ var (
 
 	internalKeys = map[string]bool{
 		keyManagedBy: true, keyType: true, keyName: true, keyNamespace: true,
-		keyUID: true, keyParentUID: true, keyAttempt: true,
+		keyUID: true, keySandboxUID: true, keyAttempt: true,
 		keyLogDirectory: true, keyLogPath: true, keyLabels: true, keyAnnotations: true,
 	}
 )
@@ -136,8 +136,8 @@ func (b *TagBuilder) WithUID(uid string) *TagBuilder {
 	return b
 }
 
-func (b *TagBuilder) WithParentUID(parentUID string) *TagBuilder {
-	b.set(keyParentUID, parentUID)
+func (b *TagBuilder) WithSandboxUID(sandboxUID string) *TagBuilder {
+	b.set(keySandboxUID, sandboxUID)
 	return b
 }
 
@@ -262,8 +262,8 @@ func TagUID(prefix string, tags map[string]string) string {
 	return tags[tagKey(prefix, keyUID)]
 }
 
-func TagParentUID(prefix string, tags map[string]string) string {
-	return tags[tagKey(prefix, keyParentUID)]
+func TagSandboxUID(prefix string, tags map[string]string) string {
+	return tags[tagKey(prefix, keySandboxUID)]
 }
 
 func TagAttempt(prefix string, tags map[string]string) uint32 {
@@ -367,8 +367,8 @@ func TagTypeFilter(prefix string, t ResourceType) string {
 	return tagKey(prefix, keyType) + "=" + string(t)
 }
 
-func TagParentUIDFilter(prefix string, uid string) string {
-	return tagKey(prefix, keyParentUID) + "=" + uid
+func TagSandboxUIDFilter(prefix string, uid string) string {
+	return tagKey(prefix, keySandboxUID) + "=" + uid
 }
 
 func TagIsInternal(prefix string, key string) bool {
