@@ -265,7 +265,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 		return "", err
 	}
 
-	tb := nanokube.NewTagBuilder(d.Name(), sandbox.Config.Labels).
+	tb := nanokube.NewTagBuilder(d.Name()).
 		WithType(nanokube.ResourceContainer).
 		WithName(meta.GetName()).
 		WithSandboxUID(podSandboxID).
@@ -509,7 +509,7 @@ func (d *driver) ListContainerStats(ctx context.Context, filter *v1.ContainerSta
 }
 
 func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter) ([]*v1.Container, error) {
-	tb := nanokube.NewTagBuilder(d.Name(), nil).WithType(nanokube.ResourceContainer)
+	tb := nanokube.NewTagBuilder(d.Name()).WithType(nanokube.ResourceContainer)
 	f := filters.NewArgs()
 	for k, v := range tb.InternalTags() {
 		if v != "" {
@@ -616,7 +616,7 @@ func (d *driver) ListMetricDescriptors(ctx context.Context) ([]*v1.MetricDescrip
 }
 
 func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter) ([]*v1.PodSandbox, error) {
-	tb := nanokube.NewTagBuilder(d.Name(), nil).WithType(nanokube.ResourceSandbox)
+	tb := nanokube.NewTagBuilder(d.Name()).WithType(nanokube.ResourceSandbox)
 	f := filters.NewArgs()
 	for k, v := range tb.InternalTags() {
 		if v != "" {
@@ -841,9 +841,9 @@ func (d *driver) ReopenContainerLog(ctx context.Context, containerID string) err
 func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig, runtimeHandler string) (string, error) {
 	meta := config.GetMetadata()
 
-	name, labels, err := nanokube.NewTagBuilder(d.Name(), config.GetLabels()).
+	name, labels, err := nanokube.NewTagBuilder(d.Name()).
 		WithType(nanokube.ResourceSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUID(meta.GetUid()).
-		WithAnnotations(config.GetAnnotations()).
+		WithLabels(config.GetLabels()).WithAnnotations(config.GetAnnotations()).
 		WithLogDirectory(config.GetLogDirectory()).
 		Build()
 	if err != nil {
@@ -1157,7 +1157,7 @@ func (d *driver) CreateNetwork(ctx context.Context, name string, networkType nan
 		return nil
 	}
 
-	netName, netLabels, err := nanokube.NewTagBuilder(d.Name(), nil).WithType(nanokube.ResourceNetwork).WithName(name).Build()
+	netName, netLabels, err := nanokube.NewTagBuilder(d.Name()).WithType(nanokube.ResourceNetwork).WithName(name).Build()
 	if err != nil {
 		return err
 	}
@@ -1215,7 +1215,7 @@ func (d *driver) DefaultNetwork(ctx context.Context) string {
 }
 
 func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokube.NetworkType, *net.IP, *net.IPNet, error) {
-	netName, _, err := nanokube.NewTagBuilder(d.Name(), nil).WithType(nanokube.ResourceNetwork).WithName(name).Build()
+	netName, _, err := nanokube.NewTagBuilder(d.Name()).WithType(nanokube.ResourceNetwork).WithName(name).Build()
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1266,7 +1266,7 @@ func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokub
 }
 
 func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
-	netName, _, err := nanokube.NewTagBuilder(d.Name(), nil).WithType(nanokube.ResourceNetwork).WithName(name).Build()
+	netName, _, err := nanokube.NewTagBuilder(d.Name()).WithType(nanokube.ResourceNetwork).WithName(name).Build()
 	if err != nil {
 		return err
 	}

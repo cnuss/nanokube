@@ -97,20 +97,10 @@ type TagBuilder struct {
 	tags   map[string]string
 }
 
-func NewTagBuilder(driverName string, baseTags map[string]string) *TagBuilder {
+func NewTagBuilder(driverName string) *TagBuilder {
 	b := &TagBuilder{
 		prefix: driverName,
-		tags:   make(map[string]string, len(baseTags)),
-	}
-	// Copy internal tags directly (e.g. colima.docker.name, colima.docker.uid)
-	// but skip labels and annotations blobs — those are sandbox-specific
-	labelsKey := tagKey(driverName, keyLabels)
-	annotationsKey := tagKey(driverName, keyAnnotations)
-	for k, v := range baseTags {
-		if k == labelsKey || k == annotationsKey {
-			continue
-		}
-		b.tags[k] = v
+		tags:   make(map[string]string),
 	}
 	b.set(keyManagedBy, driverName)
 	b.set(keyType, string(ResourceUnknown))
