@@ -211,8 +211,8 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 		CreatedAt:   createdAt.UnixNano(),
 		Image:       &v1.ImageSpec{Image: inspect.Config.Image},
 		ImageRef:    inspect.Image,
-		Labels:      tb.ExtractLabels(),
-		Annotations: tb.ExtractAnnotations(),
+		Labels:      tb.Labels(),
+		Annotations: tb.Annotations(),
 	}
 
 	if logPath := tb.LogPath(); logPath != "" {
@@ -272,10 +272,8 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 		WithName(meta.GetName()).
 		WithSandboxUID(podSandboxID).
 		WithAttempt(meta.GetAttempt()).
-		WithLabels(config.GetLabels()).
-		WithAnnotations(config.GetAnnotations()).
-		WithLogDirectory(nanokube.NewTagBuilder(d).WithTags(sandbox.Config.Labels).LogDirectory()).
-		WithLogPath(config.GetLogPath())
+		WithContainerConfig(config).
+		WithPodSandboxConfig(sandboxConfig)
 
 	name, labels, err := tb.Build()
 	if err != nil {
@@ -574,8 +572,8 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 			ImageRef:    c.ImageID,
 			State:       containerState,
 			CreatedAt:   c.Created * int64(time.Second),
-			Labels:      tb.ExtractLabels(),
-			Annotations: tb.ExtractAnnotations(),
+			Labels:      tb.Labels(),
+			Annotations: tb.Annotations(),
 		})
 	}
 
@@ -586,7 +584,7 @@ func (d *driver) matchLabels(dockerLabels map[string]string, selector map[string
 	if len(selector) == 0 {
 		return true
 	}
-	unpacked := nanokube.NewTagBuilder(d).WithTags(dockerLabels).ExtractLabels()
+	unpacked := nanokube.NewTagBuilder(d).WithTags(dockerLabels).Labels()
 	for k, v := range selector {
 		if unpacked[k] == v || dockerLabels[k] == v {
 			continue
@@ -669,8 +667,8 @@ func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter
 			},
 			State:       podState,
 			CreatedAt:   c.Created * int64(time.Second),
-			Labels:      tb.ExtractLabels(),
-			Annotations: tb.ExtractAnnotations(),
+			Labels:      tb.Labels(),
+			Annotations: tb.Annotations(),
 		})
 	}
 	return result, nil
@@ -725,7 +723,7 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode == "host" {
 		ip = "127.0.0.1"
 	} else if inspect.NetworkSettings != nil {
-		if len(tb.ExtractAnnotations()) > 0 {
+		if len(tb.Annotations()) > 0 {
 			for name, n := range inspect.NetworkSettings.Networks {
 				if name != "bridge" && name != "host" && name != "none" && n.IPAddress != "" {
 					ip = n.IPAddress
@@ -785,8 +783,8 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 				Options: nsOpts,
 			},
 		},
-		Labels:      tb.ExtractLabels(),
-		Annotations: tb.ExtractAnnotations(),
+		Labels:      tb.Labels(),
+		Annotations: tb.Annotations(),
 	}
 
 	resp := &v1.PodSandboxStatusResponse{Status: status}
@@ -846,9 +844,11 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 	meta := config.GetMetadata()
 
 	name, labels, err := nanokube.NewTagBuilder(d).
-		WithType(nanokube.ResourceSandbox).WithName(meta.GetName()).WithNamespace(meta.GetNamespace()).WithUID(meta.GetUid()).
-		WithLabels(config.GetLabels()).WithAnnotations(config.GetAnnotations()).
-		WithLogDirectory(config.GetLogDirectory()).
+		WithType(nanokube.ResourceSandbox).
+		WithName(meta.GetName()).
+		WithNamespace(meta.GetNamespace()).
+		WithUID(meta.GetUid()).
+		WithPodSandboxConfig(config).
 		Build()
 	if err != nil {
 		return "", err

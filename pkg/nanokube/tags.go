@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	runtimev1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 // ResourceType identifies what kind of runtime resource a tag set describes.
@@ -33,10 +34,8 @@ const (
 	keyUID             = "uid"
 	keySandboxUID      = "sandbox-uid"
 	keyAttempt         = "attempt"
-	keyLogDirectory    = "log-directory"
-	keyLogPath         = "log-path"
-	keyLabels          = "labels"
-	keyAnnotations     = "annotations"
+	keySandboxConfig   = "sandbox-config"
+	keyContainerConfig = "container-config"
 	KeyDNSAliases      = "dns-aliases"
 	KeyHostAliases     = "host-aliases"
 	KeySecurityContext = "security-context"
@@ -50,7 +49,6 @@ var (
 	internalKeys = map[string]bool{
 		keyManagedBy: true, keyType: true, keyName: true, keyNamespace: true,
 		keyUID: true, keySandboxUID: true, keyAttempt: true,
-		keyLogDirectory: true, keyLogPath: true, keyLabels: true, keyAnnotations: true,
 	}
 )
 
@@ -63,23 +61,6 @@ func normalize(s string) string {
 	s = reMultiDash.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	return s
-}
-
-func encodeBlob(m map[string]string) string {
-	b, _ := json.Marshal(m)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func decodeBlob(s string) map[string]string {
-	raw, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return nil
-	}
-	var m map[string]string
-	if json.Unmarshal(raw, &m) != nil {
-		return nil
-	}
-	return m
 }
 
 // ---------------------------------------------------------------------------
@@ -144,31 +125,41 @@ func (b *TagBuilder) Attempt() uint32 {
 }
 
 func (b *TagBuilder) LogDirectory() string {
-	return b.get(keyLogDirectory)
+	return b.PodSandboxConfig().GetLogDirectory()
 }
 
 func (b *TagBuilder) LogPath() string {
-	dir := b.get(keyLogDirectory)
-	path := b.get(keyLogPath)
+	dir := b.PodSandboxConfig().GetLogDirectory()
+	path := b.ContainerConfig().GetLogPath()
 	if dir == "" || path == "" {
 		return ""
 	}
 	return filepath.Join(dir, path)
 }
 
-func (b *TagBuilder) ExtractLabels() map[string]string {
-	if blob := b.get(keyLabels); blob != "" {
-		if m := decodeBlob(blob); m != nil {
-			return m
+func (b *TagBuilder) Labels() map[string]string {
+	switch ResourceType(b.get(keyType)) {
+	case ResourceContainer:
+		if l := b.ContainerConfig().GetLabels(); l != nil {
+			return l
+		}
+	case ResourceSandbox:
+		if l := b.PodSandboxConfig().GetLabels(); l != nil {
+			return l
 		}
 	}
 	return make(map[string]string)
 }
 
-func (b *TagBuilder) ExtractAnnotations() map[string]string {
-	if blob := b.get(keyAnnotations); blob != "" {
-		if m := decodeBlob(blob); m != nil {
-			return m
+func (b *TagBuilder) Annotations() map[string]string {
+	switch ResourceType(b.get(keyType)) {
+	case ResourceContainer:
+		if a := b.ContainerConfig().GetAnnotations(); a != nil {
+			return a
+		}
+	case ResourceSandbox:
+		if a := b.PodSandboxConfig().GetAnnotations(); a != nil {
+			return a
 		}
 	}
 	return make(map[string]string)
@@ -201,6 +192,26 @@ func (b *TagBuilder) ExtraHosts() []string {
 
 func (b *TagBuilder) SecurityContext() string {
 	return b.get(KeySecurityContext)
+}
+
+func (b *TagBuilder) PodSandboxConfig() *runtimev1.PodSandboxConfig {
+	cfg := &runtimev1.PodSandboxConfig{}
+	if blob := b.get(keySandboxConfig); blob != "" {
+		if raw, err := base64.RawURLEncoding.DecodeString(blob); err == nil {
+			json.Unmarshal(raw, cfg)
+		}
+	}
+	return cfg
+}
+
+func (b *TagBuilder) ContainerConfig() *runtimev1.ContainerConfig {
+	cfg := &runtimev1.ContainerConfig{}
+	if blob := b.get(keyContainerConfig); blob != "" {
+		if raw, err := base64.RawURLEncoding.DecodeString(blob); err == nil {
+			json.Unmarshal(raw, cfg)
+		}
+	}
+	return cfg
 }
 
 func (b *TagBuilder) IsManaged() bool {
@@ -253,54 +264,18 @@ func (b *TagBuilder) WithAttempt(attempt uint32) *TagBuilder {
 	return b
 }
 
-func (b *TagBuilder) WithLabels(labels map[string]string) *TagBuilder {
-	if len(labels) == 0 {
-		return b
-	}
-	blobKey := b.Key(keyLabels)
-	packed := decodeBlob(b.tags[blobKey])
-	if packed == nil {
-		packed = make(map[string]string, len(labels))
-	}
-	maps.Copy(packed, labels)
-	b.tags[blobKey] = encodeBlob(packed)
-	return b
-}
-
-func (b *TagBuilder) WithAnnotations(annotations map[string]string) *TagBuilder {
-	if len(annotations) == 0 {
-		return b
-	}
-	blobKey := b.Key(keyAnnotations)
-	packed := decodeBlob(b.tags[blobKey])
-	if packed == nil {
-		packed = make(map[string]string, len(annotations))
-	}
-	maps.Copy(packed, annotations)
-	b.tags[blobKey] = encodeBlob(packed)
-	return b
-}
-
-func (b *TagBuilder) WithHostAliases(aliases []corev1.HostAlias) *TagBuilder {
-	if len(aliases) == 0 {
-		return b
-	}
-	raw, _ := json.Marshal(aliases)
-	return b.WithAnnotations(map[string]string{
-		b.Key(KeyHostAliases): string(raw),
-	})
-}
-
-func (b *TagBuilder) WithLogDirectory(logDir string) *TagBuilder {
-	if logDir != "" {
-		b.set(keyLogDirectory, logDir)
+func (b *TagBuilder) WithPodSandboxConfig(config *runtimev1.PodSandboxConfig) *TagBuilder {
+	if config != nil {
+		raw, _ := json.Marshal(config)
+		b.set(keySandboxConfig, base64.RawURLEncoding.EncodeToString(raw))
 	}
 	return b
 }
 
-func (b *TagBuilder) WithLogPath(logPath string) *TagBuilder {
-	if logPath != "" {
-		b.set(keyLogPath, logPath)
+func (b *TagBuilder) WithContainerConfig(config *runtimev1.ContainerConfig) *TagBuilder {
+	if config != nil {
+		raw, _ := json.Marshal(config)
+		b.set(keyContainerConfig, base64.RawURLEncoding.EncodeToString(raw))
 	}
 	return b
 }
