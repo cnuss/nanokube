@@ -2,6 +2,8 @@ package nanokube
 
 import (
 	"context"
+	"net"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -26,6 +28,7 @@ type ApiServer interface {
 }
 
 type ApiServerImpl struct {
+	options Options
 	config  *app.Config
 	storage StorageFactory
 
@@ -37,7 +40,7 @@ type ApiServerImpl struct {
 
 var _ ApiServer = &ApiServerImpl{}
 
-func NewApiServer(opts *options.CompletedOptions, storage StorageFactory) ApiServer {
+func NewApiServer(options Options, opts *options.CompletedOptions, storage StorageFactory) ApiServer {
 	c := &app.Config{
 		Options: *opts,
 	}
@@ -72,6 +75,7 @@ func NewApiServer(opts *options.CompletedOptions, storage StorageFactory) ApiSer
 	c.Aggregator = aggregator
 
 	return &ApiServerImpl{
+		options: options,
 		config:  c,
 		storage: storage,
 		ready:   make(chan struct{}),
@@ -112,6 +116,17 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 			for {
 				if version, err := h.client.Discovery().ServerVersion(); err == nil {
 					Log.Info("apiserver is ready", "host", loopback.Host, "version", version.GitVersion)
+					if dial, err := net.Dial("udp", "1.1.1.1:53"); err == nil {
+						if addr, ok := dial.LocalAddr().(*net.UDPAddr); ok {
+							Log.Info("detected host IP", "ip", addr.IP.String())
+							// TODO(incomplete): restore tunnel support for hostname addressing
+							h.client.
+								WithHost(addr.IP.String()).
+								WithInsecure(true).
+								WriteKubeconfig(filepath.Join(string(h.options.DataDir()), string(KubeconfigFile)))
+						}
+						dial.Close()
+					}
 					close(h.ready)
 					break
 				}

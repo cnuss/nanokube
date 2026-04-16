@@ -181,6 +181,7 @@ func main() {
 			WithStorageFactory(
 				nanokube.NewStorageFactory(ctx, config.Options())).
 			WithApiServer(nanokube.NewApiServer(
+				config.Options(),
 				config.Kube().ApiServerOptions(),
 				config.Kube().StorageFactory())).
 			WithKubelet(kubemark.NewHollowKubelet(

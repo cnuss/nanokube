@@ -20,9 +20,10 @@ var (
 	DataDirCerts      DataDir  = "certs"
 	DataDirLogs       DataDir  = "logs"
 	DataDirEtcd       DataDir  = "etcd"
+	DataDirKube       DataDir  = ".kube"
 	DataDirStaticPods DataDir  = DataDir(filepath.Join(string(DataDirKubelet), "static-pods"))
-	CertFile          FileName = "apiserver.crt"
-	KeyFile           FileName = "apiserver.key"
+	KeyFile           FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.key"))
+	KubeconfigFile    FileName = FileName(filepath.Join(string(DataDirKube), "config"))
 
 	NetworkHost       NetworkType = "host"
 	NetworkBridge     NetworkType = "bridge"
@@ -47,11 +48,9 @@ type Options interface {
 	Name() string
 	Verbosity() int
 	Clean() bool
-	DataDir() string
+	DataDir() DataDir
 	Standalone() bool
 
 	DataDirAt(name DataDir) string
-	FilePathAt(dir DataDir, path FileName) string
-
 	InDataDir(path string) bool
 }

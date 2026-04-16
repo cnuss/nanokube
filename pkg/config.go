@@ -64,7 +64,7 @@ func NewConfig(ctx context.Context) (Config, context.CancelCauseFunc, error) {
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if options.Clean() {
-			os.RemoveAll(options.DataDir())
+			os.RemoveAll(string(options.DataDir()))
 		}
 
 		config = &ConfigImpl{

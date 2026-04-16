@@ -22,8 +22,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
-//go:embed static-pods.yaml
-var staticPodsManifest string
+//go:embed kube-system.yaml
+var kubeSystemManifest string
 
 //go:linkname nodeReadyGracePeriod k8s.io/kubernetes/pkg/kubelet.nodeReadyGracePeriod
 var nodeReadyGracePeriod time.Duration
@@ -110,7 +110,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	k.apiServerOptionsOnce.Do(func() {
 		opts := apiserveroptions.NewServerRunOptions()
 		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s:%d", k.ApiServerTunnel().Hostname(), k.ApiServerTunnel().Port())}
-		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.config.Options().FilePathAt(nanokube.DataDirCerts, nanokube.KeyFile)}
+		opts.Authentication.ServiceAccounts.KeyFiles = []string{filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile))}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
@@ -120,7 +120,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
 		opts.SecureServing.DisableHTTP2Serving = true
 		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
-		opts.ServiceAccountSigningKeyFile = k.config.Options().FilePathAt(nanokube.DataDirCerts, nanokube.KeyFile)
+		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile))
 		opts.ServiceClusterIPRanges = "10.0.0.0/16" // TODO
 
 		complete, err := opts.Complete(k.config.Context())
@@ -238,7 +238,7 @@ func (k *KubeImpl) StorageFactory() nanokube.StorageFactory {
 
 func (k *KubeImpl) writeStaticPods() error {
 	path := k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
-	if err := os.WriteFile(filepath.Join(path, "static-pods.yaml"), []byte(staticPodsManifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "static-pods.yaml"), []byte(kubeSystemManifest), 0o644); err != nil {
 		return fmt.Errorf("write static pod manifest: %w", err)
 	}
 	return nil

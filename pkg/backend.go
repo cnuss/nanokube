@@ -461,6 +461,24 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 // (which has busybox with wget/nc) instead of the app container.
 const SandboxExecSentinel = "__sandbox__"
 
+func expand(path string) string {
+	orig := fmt.Sprintf("%s", path)
+	path = os.ExpandEnv(path)
+	path, err := homedir.Expand(path)
+	if err != nil {
+		return orig
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return orig
+	}
+	if orig == path {
+		return orig
+	}
+	klog.V(2).Info("expanding path", "original", orig, "expanded", path)
+	return path
+}
+
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attributes.Pod
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
@@ -523,7 +541,7 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 		pod.Annotations[tb.Key(nanokube.KeyDNSAliases)] = strings.Join(names, ",")
 	}
 
-	// BONUS FEATURE: hostPath.path expansion for "~", ".", ".." and env vars
+	// BONUS FEATURE: hostPath.path/volumeMount.mountPath expansion for "~", ".", ".." and env vars
 	for i := range pod.Spec.Volumes {
 		v := &pod.Spec.Volumes[i]
 		if v.HostPath == nil {
@@ -533,19 +551,19 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 		if path == "" {
 			continue
 		}
-		path = os.ExpandEnv(path)
-		path, err := homedir.Expand(path)
-		if err != nil {
-			continue
+		v.HostPath.Path = expand(path)
+	}
+
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		for j := range c.VolumeMounts {
+			m := &c.VolumeMounts[j]
+			path := m.MountPath
+			if path == "" {
+				continue
+			}
+			m.MountPath = expand(path)
 		}
-		path, err = filepath.Abs(path)
-		if err != nil {
-			continue
-		}
-		if path != v.HostPath.Path {
-			nanokube.Log.Info("expanding hostPath", "volume", v.Name, "original", v.HostPath.Path, "expanded", path)
-		}
-		v.HostPath.Path = path
 	}
 
 	return lifecycle.PodAdmitResult{Admit: true}
@@ -758,7 +776,6 @@ func (c *managerImpl) PodHasExclusiveCPUs(pod *corev1.Pod) bool {
 }
 
 func (c *managerImpl) PodMightNeedToUnprepareResources(UID types.UID) bool {
-	nanokube.Unimplemented()
 	return false
 }
 

@@ -33,7 +33,7 @@ func NewOptions(cmd *cobra.Command) Options {
 	}(), "data directory")
 	cmd.Flags().BoolVar(&options.standalone, "standalone", false, "run in standalone mode")
 
-	os.Setenv("NANOKUBE_DATA_DIR", options.dataDir)
+	os.Setenv("NANOKUBE_HOME", options.dataDir)
 	return options
 }
 
@@ -49,8 +49,8 @@ func (o *OptionsImpl) Clean() bool {
 	return o.clean
 }
 
-func (o *OptionsImpl) DataDir() string {
-	return o.dataDir
+func (o *OptionsImpl) DataDir() DataDir {
+	return DataDir(o.dataDir)
 }
 
 func (o *OptionsImpl) Standalone() bool {
@@ -65,10 +65,6 @@ func (o *OptionsImpl) DataDirAt(name DataDir) string {
 	os.MkdirAll(dir, 0o755)
 	o.dirs.Store(name, dir)
 	return dir
-}
-
-func (o *OptionsImpl) FilePathAt(dir DataDir, path FileName) string {
-	return filepath.Join(o.DataDirAt(dir), string(path))
 }
 
 func (o *OptionsImpl) InDataDir(path string) bool {

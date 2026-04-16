@@ -1,11 +1,14 @@
 package nanokube
 
 import (
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -16,8 +19,10 @@ type Client interface {
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
 	WithInsecure(insecure bool) Client
+	WithHost(host string) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
+	WriteKubeconfig(path string) error
 }
 
 type ClientImpl struct {
@@ -85,6 +90,21 @@ func (c *ClientImpl) WithInsecure(insecure bool) Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
+func (c *ClientImpl) WithHost(host string) Client {
+	cfg := rest.CopyConfig(c.config)
+	u, err := url.Parse(cfg.Host)
+	if err != nil {
+		panic(err)
+	}
+	u.Host = net.JoinHostPort(host, u.Port())
+	cfg.Host = u.String()
+	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
+	if err != nil {
+		panic(err)
+	}
+	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
+}
+
 func (c *ClientImpl) Kubeconfig(name string) *clientcmdapi.Config {
 	cfg := clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
@@ -115,4 +135,9 @@ func (c *ClientImpl) Kubeconfig(name string) *clientcmdapi.Config {
 		CurrentContext: name,
 	}
 	return &cfg
+}
+
+func (c *ClientImpl) WriteKubeconfig(path string) error {
+	cfg := c.Kubeconfig("nanokube")
+	return clientcmd.WriteToFile(*cfg, path)
 }
