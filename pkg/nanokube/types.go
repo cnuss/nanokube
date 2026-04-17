@@ -58,6 +58,9 @@ type Options interface {
 type Tunnel interface {
 	Context() context.Context
 	Port() int
+	FQDN() string
 	Hostname() string
+	Domain() string
+	IP() string
 	Ready() <-chan struct{}
 }

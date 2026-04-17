@@ -48,12 +48,12 @@ type Kube interface {
 
 	ApiServerOptions() *apiserveroptions.CompletedOptions
 	ApiServerTunnel() nanokube.Tunnel
-	ApiServerHostname() string
+	ApiServerFQDN() string
 
 	KubeletFlags() *kubeletoptions.KubeletFlags
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
 	KubeletTunnel() nanokube.Tunnel
-	KubeletHostname() string
+	KubeletFQDN() string
 
 	Client() nanokube.Client
 
@@ -132,19 +132,18 @@ func newKube(config Config) Kube {
 func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	k.apiServerOptionsOnce.Do(func() {
 		opts := apiserveroptions.NewServerRunOptions()
-		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s:%d", k.ApiServerTunnel().Hostname(), k.ApiServerTunnel().Port())}
+		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", k.ApiServerTunnel().FQDN())}
 		opts.Authentication.ServiceAccounts.KeyFiles = []string{filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile))}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
-		opts.GenericServerRunOptions.ExternalHost = k.ApiServerHostname()
+		opts.GenericServerRunOptions.ExternalHost = k.ApiServerFQDN()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
 		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
 		opts.SecureServing.DisableHTTP2Serving = !HTTP2
 		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile))
-		opts.ServiceClusterIPRanges = "10.0.0.0/16" // TODO
 
 		complete, err := opts.Complete(k.config.Context())
 		if err != nil {
@@ -156,7 +155,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 			klog.Fatalf("Failed to validate apiserver options: %v", errs)
 		}
 
-		nanokube.Log.Info("apiserver configured", "hostname", opts.GenericServerRunOptions.ExternalHost)
+		nanokube.Log.Info("apiserver configured", "fqdn", opts.GenericServerRunOptions.ExternalHost)
 		k.apiServerOptions = &complete
 	})
 	return k.apiServerOptions
@@ -169,8 +168,8 @@ func (k *KubeImpl) ApiServerTunnel() nanokube.Tunnel {
 	return k.apiServerTunnel
 }
 
-func (k *KubeImpl) ApiServerHostname() string {
-	return k.ApiServerTunnel().Hostname()
+func (k *KubeImpl) ApiServerFQDN() string {
+	return k.ApiServerTunnel().FQDN()
 }
 
 func (k *KubeImpl) KubeletTunnel() nanokube.Tunnel {
@@ -180,8 +179,8 @@ func (k *KubeImpl) KubeletTunnel() nanokube.Tunnel {
 	return k.kubeletTunnel
 }
 
-func (k *KubeImpl) KubeletHostname() string {
-	return k.KubeletTunnel().Hostname()
+func (k *KubeImpl) KubeletFQDN() string {
+	return k.KubeletTunnel().FQDN()
 }
 
 func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
@@ -189,9 +188,9 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
 		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
-		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
-		k.kubeletFlags.NodeIP = "127.0.0.1"
+		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
 		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
+		k.kubeletFlags.NodeIP = k.KubeletTunnel().IP()
 	})
 	return k.kubeletFlags
 }
@@ -205,14 +204,17 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		if err := k.writeStaticPods(); err != nil {
 			klog.Fatalf("Failed to write static pods: %v", err)
 		}
+		config.ClusterDomain = k.KubeletTunnel().Domain()
+		// TODO(incomplete): probe a container to get resolv.conf
+		config.ClusterDNS = []string{"1.1.1.1"}
 		config.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
-		config.StaticPodPath = k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
 		config.ReadOnlyPort = 0
+		config.StaticPodPath = k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
 
-		k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: k.config.Options().Name(), Host: k.KubeletHostname()})
+		k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: k.config.Options().Name(), Host: k.KubeletFQDN()})
 		close(k.recorderProvided)
 
-		nanokube.Log.Info("kubelet configured", "hostname", k.KubeletHostname())
+		nanokube.Log.Info("kubelet configured", "fqdn", k.KubeletFQDN())
 		k.kubeletConfig = config
 	})
 	return k.kubeletConfig
@@ -300,7 +302,7 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		object.GetObjectKind().GroupVersionKind().Kind == "Node" {
 		if eventtype == v1.EventTypeNormal && reason == "NodeReady" {
 			k.nodeReadyOnce.Do(func() {
-				nanokube.Log.Info("node is ready", "hostname", k.KubeletHostname())
+				nanokube.Log.Info("node is ready", "fqdn", k.KubeletFQDN())
 				close(k.nodeReady)
 			})
 		}
@@ -315,7 +317,11 @@ func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, 
 	case v1.EventTypeWarning:
 		logFunc = nanokube.Log.Warn
 	}
-	logFunc(fmt.Sprintf(messageFmt, args...), "gvk", object.GetObjectKind().GroupVersionKind().String(), "reason", reason)
+	kv := []interface{}{"gvk", object.GetObjectKind().GroupVersionKind().String(), "reason", reason}
+	if ref, ok := object.(*v1.ObjectReference); ok {
+		kv = append(kv, "namespace", ref.Namespace, "name", ref.Name)
+	}
+	logFunc(fmt.Sprintf(messageFmt, args...), kv...)
 }
 
 func (k *KubeImpl) NodeReady() chan struct{} {

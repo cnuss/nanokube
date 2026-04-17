@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -54,9 +53,9 @@ type TunnelImpl struct {
 	port     int
 	portOnce sync.Once
 
-	hostname      string
-	hostnameReady chan struct{}
-	hostnameOnce  sync.Once
+	fqdn      string
+	fqdnReady chan struct{}
+	fqdnOnce  sync.Once
 
 	// TODO(future): abstract tunnel provider behind an interface
 	tunnel      *QuickTunnel
@@ -67,10 +66,10 @@ var _ nanokube.Tunnel = &TunnelImpl{}
 
 func NewTunnel(config Config) nanokube.Tunnel {
 	return &TunnelImpl{
-		ctx:           config.Context(),
-		config:        config,
-		hostnameReady: make(chan struct{}),
-		tunnelReady:   make(chan struct{}),
+		ctx:         config.Context(),
+		config:      config,
+		fqdnReady:   make(chan struct{}),
+		tunnelReady: make(chan struct{}),
 	}
 }
 
@@ -91,24 +90,17 @@ func (t *TunnelImpl) Port() int {
 	return t.port
 }
 
-func (t *TunnelImpl) Hostname() string {
-	t.hostnameOnce.Do(func() {
+func (t *TunnelImpl) FQDN() string {
+	t.fqdnOnce.Do(func() {
 		// Close both signal channels on any early exit so Ready() consumers
 		// never hang when tunnel init fails.
 		success := false
 		defer func() {
 			if !success {
-				close(t.hostnameReady)
+				close(t.fqdnReady)
 				close(t.tunnelReady)
 			}
 		}()
-
-		hostname, err := os.Hostname()
-		if err != nil {
-			t.config.Cancel(NewFatalError(fmt.Errorf("failed to get hostname for tunnel: %w", err)))
-			return
-		}
-		t.hostname = hostname
 
 		tunnel, err := newQuickTunnel(t)
 		if err != nil {
@@ -117,8 +109,8 @@ func (t *TunnelImpl) Hostname() string {
 		}
 
 		t.tunnel = tunnel
-		t.hostname = tunnel.Hostname
-		close(t.hostnameReady)
+		t.fqdn = tunnel.Hostname
+		close(t.fqdnReady)
 		success = true
 
 		go func() {
@@ -134,11 +126,30 @@ func (t *TunnelImpl) Hostname() string {
 			t.config.Cancel(NewFatalError(fmt.Errorf("tunnel cancelled")))
 		}()
 	})
-	return t.hostname
+	return t.fqdn
+}
+
+func (t *TunnelImpl) Hostname() string {
+	host, _, _ := strings.Cut(t.FQDN(), ".")
+	return host
+}
+
+func (t *TunnelImpl) Domain() string {
+	_, domain, _ := strings.Cut(t.FQDN(), ".")
+	return domain
+}
+
+func (t *TunnelImpl) IP() string {
+	<-t.Ready()
+	ips, err := net.LookupIP(t.FQDN())
+	if err != nil || len(ips) == 0 {
+		return ""
+	}
+	return ips[0].String()
 }
 
 func (t *TunnelImpl) Ready() <-chan struct{} {
-	<-t.hostnameReady
+	<-t.fqdnReady
 	return t.tunnelReady
 }
 

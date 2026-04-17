@@ -81,7 +81,7 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) Client {
 func (c *ClientImpl) WithTunnel(tunnel Tunnel) Client {
 	<-tunnel.Ready()
 	cfg := rest.CopyConfig(c.config)
-	cfg.Host = fmt.Sprintf("https://%s", tunnel.Hostname())
+	cfg.Host = fmt.Sprintf("https://%s", tunnel.FQDN())
 	cfg.CAData = nil
 	cfg.Insecure = false
 	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
