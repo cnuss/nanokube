@@ -2,9 +2,7 @@ package nanokube
 
 import (
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"time"
 
 	client "k8s.io/client-go/kubernetes"
@@ -19,8 +17,6 @@ type Client interface {
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
-	WithInsecure(insecure bool) Client
-	WithHost(host string) Client
 	WithTunnel(tunnel Tunnel) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
@@ -82,32 +78,8 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func (c *ClientImpl) WithInsecure(insecure bool) Client {
-	cfg := rest.CopyConfig(c.config)
-	cfg.Insecure = insecure
-	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
-	if err != nil {
-		panic(err)
-	}
-	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
-}
-
-func (c *ClientImpl) WithHost(host string) Client {
-	cfg := rest.CopyConfig(c.config)
-	u, err := url.Parse(cfg.Host)
-	if err != nil {
-		panic(err)
-	}
-	u.Host = net.JoinHostPort(host, u.Port())
-	cfg.Host = u.String()
-	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
-	if err != nil {
-		panic(err)
-	}
-	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
-}
-
 func (c *ClientImpl) WithTunnel(tunnel Tunnel) Client {
+	<-tunnel.Ready()
 	cfg := rest.CopyConfig(c.config)
 	cfg.Host = fmt.Sprintf("https://%s", tunnel.Hostname())
 	cfg.CAData = nil

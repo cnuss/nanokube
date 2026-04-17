@@ -93,7 +93,16 @@ func (t *TunnelImpl) Port() int {
 
 func (t *TunnelImpl) Hostname() string {
 	t.hostnameOnce.Do(func() {
-		// TODO Set up a tunnel provider
+		// Close both signal channels on any early exit so Ready() consumers
+		// never hang when tunnel init fails.
+		success := false
+		defer func() {
+			if !success {
+				close(t.hostnameReady)
+				close(t.tunnelReady)
+			}
+		}()
+
 		hostname, err := os.Hostname()
 		if err != nil {
 			t.config.Cancel(NewFatalError(fmt.Errorf("failed to get hostname for tunnel: %w", err)))
@@ -110,14 +119,18 @@ func (t *TunnelImpl) Hostname() string {
 		t.tunnel = tunnel
 		t.hostname = tunnel.Hostname
 		close(t.hostnameReady)
+		success = true
 
 		go func() {
-			<-t.tunnel.Ready()
-			close(t.tunnelReady)
-		}()
-
-		go func() {
-			<-t.tunnel.Stopped()
+			// Unblock Ready() consumers on either successful connect OR stop,
+			// so a QuickTunnel that stops before ever connecting doesn't hang callers.
+			select {
+			case <-t.tunnel.Ready():
+				close(t.tunnelReady)
+				<-t.tunnel.Stopped()
+			case <-t.tunnel.Stopped():
+				close(t.tunnelReady)
+			}
 			t.config.Cancel(NewFatalError(fmt.Errorf("tunnel cancelled")))
 		}()
 	})
@@ -252,16 +265,16 @@ func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
 		for {
 			select {
 			case <-connectedWait:
-				q.log.Info().Msg("tunnel connected")
+				nanokube.Log.Info("tunnel connected")
 				close(q.ready)
 				connectedWait = nil // disable this case; Signal fires once but its channel stays readable
-			case sig := <-q.reconnected:
-				q.log.Info().Interface("signal", sig).Msg("tunnel reconnecting")
+			case <-q.reconnected:
+				nanokube.Log.Info("tunnel reconnecting")
 			case err := <-done:
 				if err != nil {
-					q.log.Error().Err(err).Msg("tunnel daemon exited with error")
+					nanokube.Log.Error("tunnel exited with error")
 				} else {
-					q.log.Info().Msg("tunnel daemon exited")
+					nanokube.Log.Debug("tunnel exited")
 				}
 				return
 			}

@@ -12,7 +12,10 @@ import (
 	_ "unsafe"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	storage "k8s.io/apiserver/pkg/server/storage"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
@@ -41,6 +44,8 @@ var FeatureGates = map[string]bool{
 var HTTP2 = true
 
 type Kube interface {
+	record.EventRecorder
+
 	ApiServerOptions() *apiserveroptions.CompletedOptions
 	ApiServerTunnel() nanokube.Tunnel
 	ApiServerHostname() string
@@ -51,7 +56,6 @@ type Kube interface {
 	KubeletHostname() string
 
 	Client() nanokube.Client
-	Recorder() record.EventRecorder
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Kube
 	Kubelet() *kubemark.HollowKubelet
@@ -59,6 +63,8 @@ type Kube interface {
 	ApiServer() nanokube.ApiServer
 	WithStorageFactory(storagefactory nanokube.StorageFactory) Kube
 	StorageFactory() nanokube.StorageFactory
+
+	NodeReady() chan struct{}
 
 	writeStaticPods() error
 }
@@ -85,9 +91,6 @@ type KubeImpl struct {
 	tlsOptions     *server.TLSOptions
 	tlsOptionsOnce sync.Once
 
-	recorder     record.EventRecorder
-	recorderOnce sync.Once
-
 	defaultStorageFactory     *storage.DefaultStorageFactory
 	defaultStorageFactoryOnce sync.Once
 
@@ -99,6 +102,14 @@ type KubeImpl struct {
 
 	storagefactory         nanokube.StorageFactory
 	storagefactoryProvided chan struct{}
+
+	broadcaster      record.EventBroadcaster
+	recorder         record.EventRecorder
+	recorderProvided chan struct{}
+	eventsOnce       sync.Once
+
+	nodeReady     chan struct{}
+	nodeReadyOnce sync.Once
 }
 
 var _ Kube = &KubeImpl{}
@@ -110,6 +121,9 @@ func newKube(config Config) Kube {
 		kubeletProvided:        make(chan struct{}),
 		apiserverProvided:      make(chan struct{}),
 		storagefactoryProvided: make(chan struct{}),
+		recorderProvided:       make(chan struct{}),
+		broadcaster:            record.NewBroadcaster(record.WithContext(config.Context())),
+		nodeReady:              make(chan struct{}),
 	}
 
 	return kube
@@ -176,6 +190,8 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
+		k.kubeletFlags.NodeIP = "127.0.0.1"
+		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
 	})
 	return k.kubeletFlags
 }
@@ -193,6 +209,9 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		config.StaticPodPath = k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
 		config.ReadOnlyPort = 0
 
+		k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: k.config.Options().Name(), Host: k.KubeletHostname()})
+		close(k.recorderProvided)
+
 		nanokube.Log.Info("kubelet configured", "hostname", k.KubeletHostname())
 		k.kubeletConfig = config
 	})
@@ -203,13 +222,6 @@ func (k *KubeImpl) Client() nanokube.Client {
 	return k.ApiServer().Client(k.ctx)
 }
 
-func (k *KubeImpl) Recorder() record.EventRecorder {
-	k.recorderOnce.Do(func() {
-		k.recorder = nil
-	})
-	return k.recorder
-}
-
 func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
 	if k.config.Options().Standalone() {
 		kubelet.KubeletConfiguration.RegisterNode = false
@@ -218,7 +230,7 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
 		kubelet.KubeletDeps.HeartbeatClient = nil
 	}
 	kubelet.KubeletDeps.ProbeManager = nil
-	kubelet.KubeletDeps.Recorder = k.Recorder()
+	kubelet.KubeletDeps.Recorder = k
 	kubelet.KubeletDeps.OSInterface = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
@@ -263,4 +275,49 @@ func (k *KubeImpl) writeStaticPods() error {
 		return fmt.Errorf("write static pod manifest: %w", err)
 	}
 	return nil
+}
+
+func (k *KubeImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {
+	<-k.recorderProvided
+	k.Logf(object, eventtype, reason, messageFmt, args...)
+	k.recorder.AnnotatedEventf(object, annotations, eventtype, reason, messageFmt, args...)
+}
+
+func (k *KubeImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
+	<-k.recorderProvided
+	k.Logf(object, eventtype, reason, "%s", message)
+	k.recorder.Event(object, eventtype, reason, message)
+}
+
+func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
+	<-k.recorderProvided
+	k.Logf(object, eventtype, reason, messageFmt, args...)
+	k.recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+
+	// 14:01:42 INF Eventf group="" version=v1 kind=Node type=Normal reason=NodeReady message="Node depends-location-assessments-silence.trycloudflare.com status is now: NodeReady"
+	if object.GetObjectKind().GroupVersionKind().Group == "" &&
+		object.GetObjectKind().GroupVersionKind().Version == "v1" &&
+		object.GetObjectKind().GroupVersionKind().Kind == "Node" {
+		if eventtype == v1.EventTypeNormal && reason == "NodeReady" {
+			k.nodeReadyOnce.Do(func() {
+				nanokube.Log.Info("node is ready", "hostname", k.KubeletHostname())
+				close(k.nodeReady)
+			})
+		}
+	}
+}
+
+func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
+	logFunc := nanokube.Log.Debug
+	switch eventtype {
+	case v1.EventTypeNormal:
+		logFunc = nanokube.Log.Info
+	case v1.EventTypeWarning:
+		logFunc = nanokube.Log.Warn
+	}
+	logFunc(fmt.Sprintf(messageFmt, args...), "gvk", object.GetObjectKind().GroupVersionKind().String(), "reason", reason)
+}
+
+func (k *KubeImpl) NodeReady() chan struct{} {
+	return k.nodeReady
 }
