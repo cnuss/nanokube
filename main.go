@@ -196,7 +196,7 @@ func main() {
 				config.Crid().DefaultBackend().Manager(),
 			))
 
-		go runKubelet(ctx, cancel, config)
+		go run(ctx, cancel, config)
 		go updateKubeconfig(config)
 
 		<-config.Context().Done()
@@ -208,7 +208,8 @@ func main() {
 	}
 }
 
-func runKubelet(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+func run(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+	// DEVNOTE: everything runs implicitly when we call their accessors
 	config.Kube().Kubelet().Run(ctx)
 	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
 }
@@ -220,6 +221,8 @@ func updateKubeconfig(config pkg.Config) {
 	}
 
 	client := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel())
+	client.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(nanokube.KubeconfigFile)))
+
 	current := client.Kubeconfig(config.Options().Name())
 	maps.Copy(kubeconfig.Clusters, current.Clusters)
 	maps.Copy(kubeconfig.AuthInfos, current.AuthInfos)
@@ -231,6 +234,4 @@ func updateKubeconfig(config pkg.Config) {
 	} else {
 		nanokube.Log.Info("updated kubeconfig", "path", clientcmd.RecommendedHomeFile, "context", current.CurrentContext)
 	}
-
-	client.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(nanokube.KubeconfigFile)))
 }
