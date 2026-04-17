@@ -28,7 +28,9 @@ import (
 	"github.com/cloudflare/cloudflared/supervisor"
 	"github.com/cloudflare/cloudflared/tlsconfig"
 	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 )
 
@@ -39,12 +41,9 @@ const (
 	cloudflaredVersion = "2026.3.0" // TODO(experimental): mock cloudflared release version reported to the edge; keep aligned with upstream
 )
 
-type Tunnel interface {
-	Context() context.Context
-	Port() int
-	Hostname() string
-	Ready() <-chan struct{}
-}
+// promMu serializes swaps of prometheus.DefaultRegisterer across all QuickTunnel instances
+// so cloudflared's per-supervisor metric registrations can be black-holed without racing.
+var promMu sync.Mutex
 
 type TunnelImpl struct {
 	ctx    context.Context
@@ -62,9 +61,9 @@ type TunnelImpl struct {
 	tunnelReady chan struct{}
 }
 
-var _ Tunnel = &TunnelImpl{}
+var _ nanokube.Tunnel = &TunnelImpl{}
 
-func NewTunnel(config Config) Tunnel {
+func NewTunnel(config Config) nanokube.Tunnel {
 	return &TunnelImpl{
 		ctx:           config.Context(),
 		config:        config,
@@ -137,7 +136,7 @@ type QuickTunnel struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
-	tunnel Tunnel
+	tunnel nanokube.Tunnel
 
 	log          *zerolog.Logger
 	transportLog *zerolog.Logger
@@ -151,8 +150,10 @@ type QuickTunnel struct {
 	originDialer     *ingress.OriginDialerService
 	originDialerOnce sync.Once
 
-	ready   chan struct{}
-	stopped chan struct{}
+	ready       chan struct{}
+	stopped     chan struct{}
+	connected   *signal.Signal
+	reconnected chan supervisor.ReconnectSignal
 }
 
 type quickTunnelError struct {
@@ -166,8 +167,8 @@ type quickTunnelResponse struct {
 	Errors  []quickTunnelError `json:"errors"`
 }
 
-func newQuickTunnel(tunnel Tunnel) (*QuickTunnel, error) {
-	log := zerolog.New(io.Discard)
+func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
+	log := zerolog.New(io.Discard).With().Str("component", "quicktunnel").Logger()
 	client := http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout:   httpTimeout,
@@ -211,40 +212,41 @@ func newQuickTunnel(tunnel Tunnel) (*QuickTunnel, error) {
 	q.log = &log
 	q.transportLog = &log
 	q.ready = make(chan struct{})
+	q.stopped = make(chan struct{})
+	q.connected = signal.New(make(chan struct{}))
+	q.reconnected = make(chan supervisor.ReconnectSignal, 1)
 
-	internalRules := []ingress.Rule{}
-	orchestrator, err := orchestration.NewOrchestrator(q.ctx, q.OrchestrationConfig(), q.TunnelConfig().Tags, internalRules, q.log)
+	supervisor, err := q.Supervisor()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
+		return nil, fmt.Errorf("failed to create supervisor: %w", err)
 	}
 
-	reconnectCh := make(chan supervisor.ReconnectSignal, 1)
-	connectedCh := make(chan struct{})
-	shutdownCh := make(chan struct{})
-	errCh := make(chan error)
+	done := make(chan error, 1)
+	go func() {
+		done <- supervisor.Run(q.ctx, q.connected)
+	}()
 
 	go func() {
+		defer close(q.stopped)
 		defer cancel()
-		errCh <- supervisor.StartTunnelDaemon(q.ctx, q.TunnelConfig(), orchestrator, signal.New(connectedCh), reconnectCh, shutdownCh)
-
+		connectedWait := q.connected.Wait()
 		for {
 			select {
-			case <-connectedCh:
-				log.Info().Msg("tunnel connected")
+			case <-connectedWait:
+				q.log.Info().Msg("tunnel connected")
 				close(q.ready)
-				continue
-			case sig := <-reconnectCh:
-				log.Info().Interface("signal", sig).Msg("tunnel reconnecting")
-				continue
-			case err := <-errCh:
-				q.log.Error().Err(err).Msg("tunnel daemon exited with error")
-				break
-			case <-shutdownCh:
-				q.log.Debug().Msg("shutdown signal received")
-				break
+				connectedWait = nil // disable this case; Signal fires once but its channel stays readable
+			case sig := <-q.reconnected:
+				q.log.Info().Interface("signal", sig).Msg("tunnel reconnecting")
+			case err := <-done:
+				if err != nil {
+					q.log.Error().Err(err).Msg("tunnel daemon exited with error")
+				} else {
+					q.log.Info().Msg("tunnel daemon exited")
+				}
+				return
 			}
 		}
-		close(q.stopped)
 	}()
 
 	return q, nil
@@ -256,6 +258,28 @@ func (q *QuickTunnel) Ready() <-chan struct{} {
 
 func (q *QuickTunnel) Stopped() <-chan struct{} {
 	return q.stopped
+}
+
+func (q *QuickTunnel) Supervisor() (*supervisor.Supervisor, error) {
+	promMu.Lock()
+	defer promMu.Unlock()
+
+	registerer := prometheus.DefaultRegisterer
+	prometheus.DefaultRegisterer = noop()
+	defer func() { prometheus.DefaultRegisterer = registerer }()
+
+	internalRules := []ingress.Rule{}
+	orchestrator, err := orchestration.NewOrchestrator(q.ctx, q.OrchestrationConfig(), q.TunnelConfig().Tags, internalRules, q.log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
+	}
+
+	supervisor, err := supervisor.NewSupervisor(q.TunnelConfig(), orchestrator, q.reconnected, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create supervisor: %w", err)
+	}
+
+	return supervisor, nil
 }
 
 func (q *QuickTunnel) TunnelConfig() *supervisor.TunnelConfig {
@@ -351,6 +375,7 @@ func (q *QuickTunnel) OrchestrationConfig() *orchestration.Config {
 
 type noopImpl struct {
 	origins.Metrics
+	prometheus.Registerer
 }
 
 func noop() *noopImpl {
@@ -359,3 +384,7 @@ func noop() *noopImpl {
 
 func (n *noopImpl) IncrementDNSTCPRequests() {}
 func (n *noopImpl) IncrementDNSUDPRequests() {}
+
+func (n *noopImpl) Register(prometheus.Collector) error  { return nil }
+func (n *noopImpl) MustRegister(...prometheus.Collector) {}
+func (n *noopImpl) Unregister(prometheus.Collector) bool { return true }

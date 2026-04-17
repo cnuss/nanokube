@@ -1,6 +1,7 @@
 package nanokube
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ type Client interface {
 	WithTimeout(timeout time.Duration) Client
 	WithInsecure(insecure bool) Client
 	WithHost(host string) Client
+	WithTunnel(tunnel Tunnel) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
 	WriteKubeconfig(path string) error
@@ -98,6 +100,18 @@ func (c *ClientImpl) WithHost(host string) Client {
 	}
 	u.Host = net.JoinHostPort(host, u.Port())
 	cfg.Host = u.String()
+	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
+	if err != nil {
+		panic(err)
+	}
+	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
+}
+
+func (c *ClientImpl) WithTunnel(tunnel Tunnel) Client {
+	cfg := rest.CopyConfig(c.config)
+	cfg.Host = fmt.Sprintf("https://%s", tunnel.Hostname())
+	cfg.CAData = nil
+	cfg.Insecure = false
 	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
 	if err != nil {
 		panic(err)

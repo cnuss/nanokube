@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -217,7 +218,9 @@ func updateKubeconfig(config pkg.Config) {
 	if err != nil {
 		kubeconfig = clientcmdapi.NewConfig()
 	}
-	current := config.Kube().Client().WithInsecure(true).Kubeconfig(config.Options().Name())
+
+	client := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel())
+	current := client.Kubeconfig(config.Options().Name())
 	maps.Copy(kubeconfig.Clusters, current.Clusters)
 	maps.Copy(kubeconfig.AuthInfos, current.AuthInfos)
 	maps.Copy(kubeconfig.Contexts, current.Contexts)
@@ -228,4 +231,6 @@ func updateKubeconfig(config pkg.Config) {
 	} else {
 		nanokube.Log.Info("updated kubeconfig", "path", clientcmd.RecommendedHomeFile, "context", current.CurrentContext)
 	}
+
+	client.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(nanokube.KubeconfigFile)))
 }

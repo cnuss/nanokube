@@ -54,3 +54,10 @@ type Options interface {
 	DataDirAt(name DataDir) string
 	InDataDir(path string) bool
 }
+
+type Tunnel interface {
+	Context() context.Context
+	Port() int
+	Hostname() string
+	Ready() <-chan struct{}
+}

@@ -19,10 +19,10 @@ type Config interface {
 	Options() nanokube.Options
 	Version() string
 
-	Tunnel() Tunnel
-
 	Kube() Kube
 	Crid() Crid
+
+	NewTunnel() nanokube.Tunnel
 
 	WithKubelet(kubelet *kubemark.HollowKubelet) Config
 	WithApiServer(apiserver nanokube.ApiServer) Config
@@ -103,15 +103,15 @@ func (c *ConfigImpl) Version() string {
 	return c.cmd.Version
 }
 
-func (c *ConfigImpl) Tunnel() Tunnel {
-	return NewTunnel(c)
-}
-
 func (c *ConfigImpl) Crid() Crid {
 	c.cridOnce.Do(func() {
 		c.crid = newCrid(c)
 	})
 	return c.crid
+}
+
+func (c *ConfigImpl) NewTunnel() nanokube.Tunnel {
+	return NewTunnel(c)
 }
 
 func (c *ConfigImpl) Kube() Kube {

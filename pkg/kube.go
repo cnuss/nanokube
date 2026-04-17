@@ -42,8 +42,13 @@ var HTTP2 = true
 
 type Kube interface {
 	ApiServerOptions() *apiserveroptions.CompletedOptions
+	ApiServerTunnel() nanokube.Tunnel
+	ApiServerHostname() string
+
 	KubeletFlags() *kubeletoptions.KubeletFlags
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
+	KubeletTunnel() nanokube.Tunnel
+	KubeletHostname() string
 
 	Client() nanokube.Client
 	Recorder() record.EventRecorder
@@ -65,10 +70,10 @@ type KubeImpl struct {
 	apiServerOptions     *apiserveroptions.CompletedOptions
 	apiServerOptionsOnce sync.Once
 
-	apiServerTunnel     Tunnel
+	apiServerTunnel     nanokube.Tunnel
 	apiServerTunnelOnce sync.Once
 
-	kubeletTunnel     Tunnel
+	kubeletTunnel     nanokube.Tunnel
 	kubeletTunnelOnce sync.Once
 
 	kubeletFlags     *kubeletoptions.KubeletFlags
@@ -118,7 +123,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
-		opts.GenericServerRunOptions.ExternalHost = k.ApiServerTunnel().Hostname()
+		opts.GenericServerRunOptions.ExternalHost = k.ApiServerHostname()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
 		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
@@ -136,23 +141,33 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		if len(errs) > 0 {
 			klog.Fatalf("Failed to validate apiserver options: %v", errs)
 		}
+
+		nanokube.Log.Info("apiserver configured", "hostname", opts.GenericServerRunOptions.ExternalHost)
 		k.apiServerOptions = &complete
 	})
 	return k.apiServerOptions
 }
 
-func (k *KubeImpl) ApiServerTunnel() Tunnel {
+func (k *KubeImpl) ApiServerTunnel() nanokube.Tunnel {
 	k.apiServerTunnelOnce.Do(func() {
-		k.apiServerTunnel = k.config.Tunnel()
+		k.apiServerTunnel = k.config.NewTunnel()
 	})
 	return k.apiServerTunnel
 }
 
-func (k *KubeImpl) KubeletTunnel() Tunnel {
+func (k *KubeImpl) ApiServerHostname() string {
+	return k.ApiServerTunnel().Hostname()
+}
+
+func (k *KubeImpl) KubeletTunnel() nanokube.Tunnel {
 	k.kubeletTunnelOnce.Do(func() {
-		k.kubeletTunnel = k.config.Tunnel()
+		k.kubeletTunnel = k.config.NewTunnel()
 	})
 	return k.kubeletTunnel
+}
+
+func (k *KubeImpl) KubeletHostname() string {
+	return k.KubeletTunnel().Hostname()
 }
 
 func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
@@ -160,7 +175,7 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
 		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
-		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
+		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
 	})
 	return k.kubeletFlags
 }
@@ -177,6 +192,8 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		config.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
 		config.StaticPodPath = k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
 		config.ReadOnlyPort = 0
+
+		nanokube.Log.Info("kubelet configured", "hostname", k.KubeletHostname())
 		k.kubeletConfig = config
 	})
 	return k.kubeletConfig
