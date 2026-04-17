@@ -36,6 +36,10 @@ var FeatureGates = map[string]bool{
 	"KubeletInUserNamespace": true,
 }
 
+// HTTP2 toggles HTTP/2 end-to-end: apiserver secure serving AND cloudflared tunnel origin dialing.
+// Must stay 1-1 — enabling Http2Origin on the tunnel without HTTP/2 serving on apiserver (or vice versa) breaks exec/port-forward stream multiplexing.
+var HTTP2 = true
+
 type Kube interface {
 	ApiServerOptions() *apiserveroptions.CompletedOptions
 	KubeletFlags() *kubeletoptions.KubeletFlags
@@ -118,7 +122,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
 		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
-		opts.SecureServing.DisableHTTP2Serving = true
+		opts.SecureServing.DisableHTTP2Serving = !HTTP2
 		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile))
 		opts.ServiceClusterIPRanges = "10.0.0.0/16" // TODO
