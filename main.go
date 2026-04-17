@@ -174,8 +174,11 @@ func main() {
 	go func() {
 		defer close(done)
 		defer func() {
-			if recover() != nil && ctx.Err() == nil {
-				panic("unexpected panic during init")
+			if r := recover(); r != nil && ctx.Err() == nil {
+				buf := make([]byte, 1<<16)
+				buf = buf[:runtime.Stack(buf, true)]
+				fmt.Fprintf(os.Stderr, "panic during init: %v\n%s\n", r, buf)
+				panic(r)
 			}
 		}()
 		config = config.

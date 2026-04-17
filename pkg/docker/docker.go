@@ -48,13 +48,17 @@ func Detect(config pkg.Config) pkg.Backend {
 	}
 
 	for _, socket := range sockets {
-		if _, err := os.Stat(socket); err == nil {
-			backend, err := newBackend(config, socket)
-			if err != nil {
-				continue
-			}
-			return backend
+		if _, err := os.Stat(socket); err != nil {
+			nanokube.Log.Debug("docker socket not present", "socket", socket, "error", err)
+			continue
 		}
+		backend, err := newBackend(config, socket)
+		if err != nil {
+			nanokube.Log.Warn("docker socket present but unusable", "socket", socket, "error", err)
+			continue
+		}
+		nanokube.Log.Info("docker socket accepted", "socket", socket)
+		return backend
 	}
 
 	return nil

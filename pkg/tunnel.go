@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/cloudflare/cloudflared/tlsconfig"
 	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	"github.com/dustin/go-humanize"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
@@ -101,7 +103,7 @@ func (t *TunnelImpl) Hostname() string {
 
 		tunnel, err := newQuickTunnel(t)
 		if err != nil {
-			t.config.Cancel(NewFatalError(fmt.Errorf("failed to create quick tunnel: %w", err)))
+			t.config.Cancel(NewFatalError(fmt.Errorf("failed to create tunnel: %w", err)))
 			return
 		}
 
@@ -189,9 +191,26 @@ func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tunnel credentials response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := resp.Header.Get("Retry-After")
+		if secs, err := strconv.Atoi(retryAfter); err == nil {
+			now := time.Now()
+			return nil, fmt.Errorf("trycloudflare.com rate limit resets in %s", humanize.RelTime(now.Add(time.Duration(secs)*time.Second), now, "", ""))
+		}
+		if retryAfter != "" {
+			return nil, fmt.Errorf("trycloudflare.com rate limit hit (HTTP 429): Retry-After=%s", retryAfter)
+		}
+		return nil, fmt.Errorf("trycloudflare.com rate limit hit (HTTP 429): no rate-limit headers returned")
+	}
+
 	var data quickTunnelResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("failed to decode tunnel credentials response: %w", err)
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("tunnel credentials request failed (status=%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	if !data.Success {

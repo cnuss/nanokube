@@ -3,6 +3,8 @@ package pkg
 import (
 	"fmt"
 	"sync"
+
+	"github.com/cnuss/nanokube/pkg/nanokube"
 )
 
 type (
@@ -36,10 +38,17 @@ func newCrid(config Config) Crid {
 
 func (c *CridImpl) Backends() map[string]Backend {
 	c.backendsOnce.Do(func() {
+		detected := 0
 		for name, detect := range Runtimes {
-			if backend := detect(c.config); backend != nil {
+			backend := detect(c.config)
+			if backend != nil {
+				nanokube.Log.Info("runtime detected", "runtime", name)
 				c.backends.Store(string(name), backend)
+				detected++
 			}
+		}
+		if detected == 0 {
+			c.config.Cancel(NewFatalError(fmt.Errorf("no container runtime backend available")).WithCode(-1))
 		}
 	})
 
@@ -57,6 +66,6 @@ func (c *CridImpl) DefaultBackend() Backend {
 	for _, backend := range c.Backends() {
 		return backend
 	}
-	c.config.Cancel(NewFatalError(fmt.Errorf("no container runtime backend available")))
-	return nil
+	c.config.Cancel(NewFatalError(fmt.Errorf("no container runtime backend available")).WithCode(-1))
+	select {}
 }

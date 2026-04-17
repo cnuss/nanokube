@@ -2,7 +2,9 @@ package pkg
 
 import (
 	"context"
+	"errors"
 	"os"
+	"runtime"
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
@@ -93,6 +95,10 @@ func (c *ConfigImpl) Context() context.Context {
 
 func (c *ConfigImpl) Cancel(reason error) {
 	c.cancel(reason)
+	var fatal *FatalError
+	if errors.As(reason, &fatal) {
+		runtime.Goexit()
+	}
 }
 
 func (c *ConfigImpl) Options() nanokube.Options {
