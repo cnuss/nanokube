@@ -64,7 +64,7 @@ type Kube interface {
 	WithStorageFactory(storagefactory nanokube.StorageFactory) Kube
 	StorageFactory() nanokube.StorageFactory
 
-	NodeReady() chan struct{}
+	NodeReady() chan *v1.ObjectReference
 
 	writeStaticPods() error
 }
@@ -108,7 +108,7 @@ type KubeImpl struct {
 	recorderProvided chan struct{}
 	eventsOnce       sync.Once
 
-	nodeReady     chan struct{}
+	nodeReady     chan *v1.ObjectReference
 	nodeReadyOnce sync.Once
 }
 
@@ -123,7 +123,7 @@ func newKube(config Config) Kube {
 		storagefactoryProvided: make(chan struct{}),
 		recorderProvided:       make(chan struct{}),
 		broadcaster:            record.NewBroadcaster(record.WithContext(config.Context())),
-		nodeReady:              make(chan struct{}),
+		nodeReady:              make(chan *v1.ObjectReference, 1),
 	}
 
 	return kube
@@ -139,6 +139,9 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
 		opts.GenericServerRunOptions.ExternalHost = k.ApiServerFQDN()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
+		opts.KubeletConfig.PreferredAddressTypes = []string{
+			string(v1.NodeExternalDNS),
+		}
 		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
 		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
 		opts.SecureServing.DisableHTTP2Serving = !HTTP2
@@ -188,9 +191,10 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
 		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
+		k.kubeletFlags.CloudProvider = "external"
 		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
 		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
-		k.kubeletFlags.NodeIP = k.KubeletTunnel().IP()
+		// k.kubeletFlags.NodeIP = k.KubeletTunnel().IP()
 	})
 	return k.kubeletFlags
 }
@@ -299,12 +303,16 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 	// 14:01:42 INF Eventf group="" version=v1 kind=Node type=Normal reason=NodeReady message="Node depends-location-assessments-silence.trycloudflare.com status is now: NodeReady"
 	if object.GetObjectKind().GroupVersionKind().Group == "" &&
 		object.GetObjectKind().GroupVersionKind().Version == "v1" &&
-		object.GetObjectKind().GroupVersionKind().Kind == "Node" {
-		if eventtype == v1.EventTypeNormal && reason == "NodeReady" {
-			k.nodeReadyOnce.Do(func() {
-				nanokube.Log.Info("node is ready", "fqdn", k.KubeletFQDN())
-				close(k.nodeReady)
-			})
+		object.GetObjectKind().GroupVersionKind().Kind == "Node" &&
+		eventtype == v1.EventTypeNormal &&
+		reason == "NodeReady" {
+		if ref, ok := object.(*v1.ObjectReference); ok {
+			if ref.Name == k.KubeletTunnel().Hostname() {
+				k.nodeReadyOnce.Do(func() {
+					k.nodeReady <- ref
+					close(k.nodeReady)
+				})
+			}
 		}
 	}
 }
@@ -324,6 +332,6 @@ func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, 
 	logFunc(fmt.Sprintf(messageFmt, args...), kv...)
 }
 
-func (k *KubeImpl) NodeReady() chan struct{} {
+func (k *KubeImpl) NodeReady() chan *v1.ObjectReference {
 	return k.nodeReady
 }

@@ -17,6 +17,9 @@ import (
 	"github.com/cnuss/nanokube/pkg/docker"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/podman"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -201,6 +204,7 @@ func main() {
 
 		go run(ctx, cancel, config)
 		go updateKubeconfig(config)
+		go updateNode(config)
 
 		<-config.Context().Done()
 	}()
@@ -215,6 +219,50 @@ func run(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config)
 	// DEVNOTE: everything runs implicitly when we call their accessors
 	config.Kube().Kubelet().Run(ctx)
 	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
+}
+
+func updateNode(config pkg.Config) {
+	ref := <-config.Kube().NodeReady()
+	if ref == nil {
+		return
+	}
+
+	clientset := config.Kube().Client().Clientset()
+	tunnel := config.Kube().KubeletTunnel()
+	force := true
+
+	_, err := clientset.CoreV1().Nodes().Patch(
+		config.Context(),
+		ref.Name,
+		types.ApplyPatchType,
+		[]byte(fmt.Sprintf(
+			`{"apiVersion":"v1","kind":"Node","metadata":{"name":%q},"spec":{"taints":[]}}`,
+			ref.Name,
+		)),
+		metav1.PatchOptions{FieldManager: config.Options().Name(), Force: &force},
+	)
+	if err != nil {
+		nanokube.Log.Warn("failed to apply empty taints", "name", ref.Name, "error", err)
+	}
+
+	_, err = clientset.CoreV1().Nodes().Patch(
+		config.Context(),
+		ref.Name,
+		types.ApplyPatchType,
+		[]byte(fmt.Sprintf(
+			`{"apiVersion":"v1","kind":"Node","metadata":{"name":%q},"status":{"addresses":[{"type":%q,"address":%q}]}}`,
+			ref.Name,
+			v1.NodeExternalDNS,
+			tunnel.FQDN()+":443",
+		)),
+		metav1.PatchOptions{FieldManager: config.Options().Name(), Force: &force},
+		"status",
+	)
+	if err != nil {
+		nanokube.Log.Warn("failed to apply node status", "name", ref.Name, "error", err)
+	}
+
+	nanokube.Log.Info("patched node", "name", ref.Name, "fqdn", tunnel.FQDN(), "ip", tunnel.IP())
 }
 
 func updateKubeconfig(config pkg.Config) {

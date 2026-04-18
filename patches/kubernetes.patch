@@ -1,3 +1,34 @@
+diff --git a/pkg/kubelet/client/kubelet_client.go b/pkg/kubelet/client/kubelet_client.go
+index 00d08e6f800..db15b0c3951 100644
+--- a/pkg/kubelet/client/kubelet_client.go
++++ b/pkg/kubelet/client/kubelet_client.go
+@@ -19,6 +19,7 @@ package client
+ import (
+ 	"context"
+ 	"fmt"
++	"net"
+ 	"net/http"
+ 	"strconv"
+ 	"time"
+@@ -197,6 +198,18 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
+ 		return nil, err
+ 	}
+ 
++	// If the selected address already carries a port (e.g. "fqdn:443" from an
++	// external address), honor it and ignore DaemonEndpoints.
++	if h, p, splitErr := net.SplitHostPort(host); splitErr == nil {
++		return &ConnectionInfo{
++			Scheme:                         k.scheme,
++			Hostname:                       h,
++			Port:                           p,
++			Transport:                      k.transport,
++			InsecureSkipTLSVerifyTransport: k.insecureSkipTLSVerifyTransport,
++		}, nil
++	}
++
+ 	// Use the kubelet-reported port, if present
+ 	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
+ 	if port <= 0 {
 diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
 index b8b7cfd84e9..08f79a46376 100644
 --- a/pkg/kubelet/kubelet.go
