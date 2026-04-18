@@ -86,13 +86,11 @@ func (c *ClientImpl) WithTunnel(tunnel Tunnel, local bool) Client {
 	cfg := rest.CopyConfig(c.config)
 	if !local {
 		cfg.Host = fmt.Sprintf("https://%s", tunnel.FQDN())
-		cfg.CAData = nil
-		cfg.Insecure = false
 	} else {
 		cfg.Host = fmt.Sprintf("https://%s:%d", tunnel.LocalHost(), tunnel.LocalPort())
-		cfg.CAData = nil
-		cfg.Insecure = true
 	}
+	cfg.CAData = nil
+	cfg.Insecure = local
 	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
 	if err != nil {
 		panic(err)
