@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"context"
+	"crypto/tls"
 	_ "embed"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 	storage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
@@ -191,7 +193,6 @@ func (k *KubeImpl) KubeletFQDN() string {
 func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 	k.kubeletFlagsOnce.Do(func() {
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
-		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		k.kubeletFlags.CloudProvider = "external"
 		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
 		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
@@ -245,6 +246,21 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
 	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
+	kubelet.KubeletDeps.TLSOptions = &server.TLSOptions{
+		Config: &tls.Config{MinVersion: func() uint16 {
+			if v, err := cliflag.TLSVersion(kubelet.KubeletConfiguration.TLSMinVersion); err == nil {
+				return v
+			}
+			return cliflag.DefaultTLSVersion()
+		}(), CipherSuites: func() []uint16 {
+			if v, err := cliflag.TLSCipherSuites(kubelet.KubeletConfiguration.TLSCipherSuites); err == nil {
+				return v
+			}
+			return nil
+		}()},
+		CertFile: filepath.Join(string(k.config.Options().DataDir()), string(nanokube.CertFile)),
+		KeyFile:  filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile)),
+	}
 	k.kubelet = kubelet
 	close(k.kubeletProvided)
 	return k
