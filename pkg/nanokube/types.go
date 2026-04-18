@@ -2,6 +2,7 @@ package nanokube
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 
 	cri "k8s.io/cri-api/pkg/apis"
@@ -57,10 +58,10 @@ type Options interface {
 
 type Tunnel interface {
 	Context() context.Context
-	Port() int
+	LocalPort() int32
+	LocalHost() net.IP
 	FQDN() string
 	Hostname() string
 	Domain() string
-	IP() string
 	Ready() <-chan struct{}
 }

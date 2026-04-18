@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -140,10 +139,13 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.GenericServerRunOptions.ExternalHost = k.ApiServerFQDN()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.KubeletConfig.PreferredAddressTypes = []string{
-			string(v1.NodeExternalDNS),
+			// string(v1.NodeExternalDNS), // TODO(partial): temp disabled to get logs working
+			string(v1.NodeInternalIP),
+			string(v1.NodeInternalDNS),
+			string(v1.NodeHostName),
 		}
-		opts.SecureServing.BindAddress = net.ParseIP("0.0.0.0")
-		opts.SecureServing.BindPort = k.ApiServerTunnel().Port()
+		opts.SecureServing.BindAddress = k.ApiServerTunnel().LocalHost()
+		opts.SecureServing.BindPort = int(k.ApiServerTunnel().LocalPort())
 		opts.SecureServing.DisableHTTP2Serving = !HTTP2
 		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile))
@@ -189,12 +191,12 @@ func (k *KubeImpl) KubeletFQDN() string {
 func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 	k.kubeletFlagsOnce.Do(func() {
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
-		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 		k.kubeletFlags.CertDirectory = k.config.Options().DataDirAt(nanokube.DataDirCerts)
 		k.kubeletFlags.CloudProvider = "external"
 		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
 		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
-		// k.kubeletFlags.NodeIP = k.KubeletTunnel().IP()
+		k.kubeletFlags.NodeIP = k.KubeletTunnel().LocalHost().String()
+		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(nanokube.DataDirKubelet)
 	})
 	return k.kubeletFlags
 }
@@ -208,10 +210,12 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		if err := k.writeStaticPods(); err != nil {
 			klog.Fatalf("Failed to write static pods: %v", err)
 		}
+		config.Address = k.KubeletTunnel().LocalHost().String()
 		config.ClusterDomain = k.KubeletTunnel().Domain()
 		// TODO(incomplete): probe a container to get resolv.conf
 		config.ClusterDNS = []string{"1.1.1.1"}
 		config.PodLogsDir = k.config.Options().DataDirAt(nanokube.DataDirLogs)
+		config.Port = k.KubeletTunnel().LocalPort()
 		config.ReadOnlyPort = 0
 		config.StaticPodPath = k.config.Options().DataDirAt(nanokube.DataDirStaticPods)
 

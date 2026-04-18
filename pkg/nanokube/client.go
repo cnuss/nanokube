@@ -17,7 +17,7 @@ type Client interface {
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
-	WithTunnel(tunnel Tunnel) Client
+	WithTunnel(tunnel Tunnel, local bool) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
 	WriteKubeconfig(path string) error
@@ -78,12 +78,21 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func (c *ClientImpl) WithTunnel(tunnel Tunnel) Client {
-	<-tunnel.Ready()
+func (c *ClientImpl) WithTunnel(tunnel Tunnel, local bool) Client {
+	if !local {
+		<-tunnel.Ready()
+	}
+
 	cfg := rest.CopyConfig(c.config)
-	cfg.Host = fmt.Sprintf("https://%s", tunnel.FQDN())
-	cfg.CAData = nil
-	cfg.Insecure = false
+	if !local {
+		cfg.Host = fmt.Sprintf("https://%s", tunnel.FQDN())
+		cfg.CAData = nil
+		cfg.Insecure = false
+	} else {
+		cfg.Host = fmt.Sprintf("https://%s:%d", tunnel.LocalHost(), tunnel.LocalPort())
+		cfg.CAData = nil
+		cfg.Insecure = true
+	}
 	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
 	if err != nil {
 		panic(err)

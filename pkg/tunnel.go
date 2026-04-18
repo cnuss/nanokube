@@ -50,8 +50,11 @@ type TunnelImpl struct {
 	ctx    context.Context
 	config Config
 
-	port     int
-	portOnce sync.Once
+	localHost     net.IP
+	localHostOnce sync.Once
+
+	localPort     int32
+	localPortOnce sync.Once
 
 	fqdn      string
 	fqdnReady chan struct{}
@@ -77,17 +80,26 @@ func (t *TunnelImpl) Context() context.Context {
 	return t.ctx
 }
 
-func (t *TunnelImpl) Port() int {
-	t.portOnce.Do(func() {
+func (t *TunnelImpl) LocalHost() net.IP {
+	t.localHostOnce.Do(func() {
+		conn, _ := net.Dial("udp", "1.1.1.1:53")
+		defer conn.Close()
+		t.localHost = conn.LocalAddr().(*net.UDPAddr).IP
+	})
+	return t.localHost
+}
+
+func (t *TunnelImpl) LocalPort() int32 {
+	t.localPortOnce.Do(func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.config.Cancel(NewFatalError(fmt.Errorf("failed to acquire tunnel port: %w", err)))
 			return
 		}
 		defer listener.Close()
-		t.port = listener.Addr().(*net.TCPAddr).Port
+		t.localPort = int32(listener.Addr().(*net.TCPAddr).Port)
 	})
-	return t.port
+	return t.localPort
 }
 
 func (t *TunnelImpl) FQDN() string {
@@ -137,15 +149,6 @@ func (t *TunnelImpl) Hostname() string {
 func (t *TunnelImpl) Domain() string {
 	_, domain, _ := strings.Cut(t.FQDN(), ".")
 	return domain
-}
-
-func (t *TunnelImpl) IP() string {
-	<-t.Ready()
-	ips, err := net.LookupIP(t.FQDN())
-	if err != nil || len(ips) == 0 {
-		return ""
-	}
-	return ips[0].String()
 }
 
 func (t *TunnelImpl) Ready() <-chan struct{} {
@@ -402,7 +405,7 @@ func (q *QuickTunnel) OrchestrationConfig() *orchestration.Config {
 						Http2Origin: &http2Origin,
 					},
 					Ingress: []config.UnvalidatedIngressRule{
-						{Service: fmt.Sprintf("https://localhost:%d", q.tunnel.Port())},
+						{Service: fmt.Sprintf("https://%s:%d", q.tunnel.LocalHost(), q.tunnel.LocalPort())},
 					},
 				})
 				return &parsed

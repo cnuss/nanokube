@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,10 +21,12 @@ import (
 	"github.com/cnuss/nanokube/pkg/podman"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/util/retry"
+	cloudproviderapi "k8s.io/cloud-provider/api"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
@@ -227,42 +231,48 @@ func updateNode(config pkg.Config) {
 		return
 	}
 
-	clientset := config.Kube().Client().Clientset()
+	nodes := config.Kube().Client().CoreV1().Nodes()
 	tunnel := config.Kube().KubeletTunnel()
-	force := true
 
-	_, err := clientset.CoreV1().Nodes().Patch(
-		config.Context(),
-		ref.Name,
-		types.ApplyPatchType,
-		[]byte(fmt.Sprintf(
-			`{"apiVersion":"v1","kind":"Node","metadata":{"name":%q},"spec":{"taints":[]}}`,
-			ref.Name,
-		)),
-		metav1.PatchOptions{FieldManager: config.Options().Name(), Force: &force},
-	)
-	if err != nil {
-		nanokube.Log.Warn("failed to apply empty taints", "name", ref.Name, "error", err)
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := nodes.Get(config.Context(), ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		node.Spec.Taints = slices.DeleteFunc(node.Spec.Taints, func(t v1.Taint) bool {
+			return t.Key == cloudproviderapi.TaintExternalCloudProvider
+		})
+		_, err = nodes.Update(config.Context(), node, metav1.UpdateOptions{})
+		return err
+	}); err != nil {
+		nanokube.Log.Warn("failed to update node taints", "name", ref.Name, "error", err)
 	}
 
-	_, err = clientset.CoreV1().Nodes().Patch(
+	if _, err := nodes.ApplyStatus(
 		config.Context(),
-		ref.Name,
-		types.ApplyPatchType,
-		[]byte(fmt.Sprintf(
-			`{"apiVersion":"v1","kind":"Node","metadata":{"name":%q},"status":{"addresses":[{"type":%q,"address":%q}]}}`,
-			ref.Name,
-			v1.NodeExternalDNS,
-			tunnel.FQDN()+":443",
-		)),
-		metav1.PatchOptions{FieldManager: config.Options().Name(), Force: &force},
-		"status",
-	)
-	if err != nil {
+		corev1ac.Node(ref.Name).WithStatus(
+			corev1ac.NodeStatus().WithAddresses(
+				corev1ac.NodeAddress().WithType(v1.NodeHostName).WithAddress(func() string {
+					a, _ := os.Hostname()
+					a, _, _ = strings.Cut(a, ".")
+					return a
+				}()),
+				corev1ac.NodeAddress().WithType(v1.NodeInternalDNS).WithAddress(func() string {
+					a, _ := os.Hostname()
+					return a
+				}()),
+				corev1ac.NodeAddress().WithType(v1.NodeExternalDNS).WithAddress(func() string {
+					a := fmt.Sprintf("%s:%d", tunnel.FQDN(), 443)
+					return a
+				}()),
+			),
+		),
+		metav1.ApplyOptions{FieldManager: config.Options().Name(), Force: true},
+	); err != nil {
 		nanokube.Log.Warn("failed to apply node status", "name", ref.Name, "error", err)
 	}
 
-	nanokube.Log.Info("patched node", "name", ref.Name, "fqdn", tunnel.FQDN(), "ip", tunnel.IP())
+	nanokube.Log.Info("node is ready", "name", ref.Name, "fqdn", tunnel.FQDN())
 }
 
 func updateKubeconfig(config pkg.Config) {
@@ -271,10 +281,14 @@ func updateKubeconfig(config pkg.Config) {
 		kubeconfig = clientcmdapi.NewConfig()
 	}
 
-	client := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel())
-	client.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(nanokube.KubeconfigFile)))
+	internal := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel(), true)
+	external := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel(), false)
 
-	current := client.Kubeconfig(config.Options().Name())
+	if err := internal.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(nanokube.KubeconfigFile))); err != nil {
+		nanokube.Log.Error("failed to write internal kubeconfig", "path", string(config.Options().DataDir())+string(nanokube.KubeconfigFile), "error", err)
+	}
+
+	current := external.Kubeconfig(config.Options().Name())
 	maps.Copy(kubeconfig.Clusters, current.Clusters)
 	maps.Copy(kubeconfig.AuthInfos, current.AuthInfos)
 	maps.Copy(kubeconfig.Contexts, current.Contexts)
@@ -283,6 +297,6 @@ func updateKubeconfig(config pkg.Config) {
 	if err := clientcmd.WriteToFile(*kubeconfig, clientcmd.RecommendedHomeFile); err != nil {
 		nanokube.Log.Error("failed to update kubeconfig", "path", clientcmd.RecommendedHomeFile, "error", err)
 	} else {
-		nanokube.Log.Info("updated kubeconfig", "path", clientcmd.RecommendedHomeFile, "context", current.CurrentContext)
+		nanokube.Log.Info("kubeconfig updated", "path", clientcmd.RecommendedHomeFile)
 	}
 }
