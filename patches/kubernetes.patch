@@ -44,28 +44,24 @@ index b8b7cfd84e9..08f79a46376 100644
  	}
  
 diff --git a/pkg/registry/core/pod/rest/log.go b/pkg/registry/core/pod/rest/log.go
-index 188e2464769..b45d66b5cea 100644
+index 188e2464769..7d65f319b9c 100644
 --- a/pkg/registry/core/pod/rest/log.go
 +++ b/pkg/registry/core/pod/rest/log.go
-@@ -103,10 +103,17 @@ func (r *LogREST) Get(ctx context.Context, name string, opts runtime.Object) (ru
- 	if err != nil {
- 		return nil, err
- 	}
-+	// For follow=true, advertise text/event-stream so streaming-aware intermediaries
-+	// (cloudflared, nginx, envoy) flush per-write instead of buffering. Body isn't
-+	// actually SSE — kubectl/k9s read raw bytes — content-type only matters to proxies.
-+	contentType := "text/plain"
+@@ -89,6 +89,14 @@ func (r *LogREST) Get(ctx context.Context, name string, opts runtime.Object) (ru
+ 
+ 	countSkipTLSMetric(logOpts.InsecureSkipTLSVerifyBackend)
+ 
++	// nanokube patch: drop TailLines when Follow is set. Combining --follow
++	// with --tail=N makes the kubelet emit N history lines up-front, which
++	// Cloudflare quick-tunnel edge buffers until ~128KB accumulate. Stripping
++	// TailLines on follow forces pure tail-from-now streaming.
 +	if logOpts.Follow {
-+		contentType = "text/event-stream"
++		logOpts.TailLines = nil
 +	}
- 	return &genericrest.LocationStreamer{
- 		Location:                              location,
- 		Transport:                             transport,
--		ContentType:                           "text/plain",
-+		ContentType:                           contentType,
- 		Flush:                                 logOpts.Follow,
- 		ResponseChecker:                       genericrest.NewGenericHttpResponseChecker(api.Resource("pods/log"), name),
- 		RedirectChecker:                       genericrest.PreventRedirects,
++
+ 	if utilfeature.DefaultFeatureGate.Enabled(features.PodLogsQuerySplitStreams) {
+ 		// Even with defaulters, logOpts.Stream can be nil if no arguments are provided at all.
+ 		if logOpts.Stream == nil {
 diff --git a/pkg/volume/util/atomic_writer.go b/pkg/volume/util/atomic_writer.go
 index 0466dffacdf..9e26ad0a9b4 100644
 --- a/pkg/volume/util/atomic_writer.go

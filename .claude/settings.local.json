@@ -69,7 +69,11 @@
       "Bash(ls:*)",
       "Bash(go doc:*)",
       "Bash(find:*)",
-      "Bash(tee /tmp/logging-cleanup-build.log)"
+      "Bash(tee /tmp/logging-cleanup-build.log)",
+      "Bash(tee /tmp/nanokube-follow3.log)",
+      "Bash(timeout 5 kubectl logs -n kube-system nanokube-sandra-defend-intelligent-returned -c kube-controller-manager --follow --tail=1312)",
+      "Read(//tmp/**)",
+      "Bash(tee /tmp/kubectl-logs-output.txt)"
     ]
   }
 }

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -198,7 +197,7 @@ type quickTunnelResponse struct {
 }
 
 func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
-	log := zerolog.New(os.Stderr).With().Str("component", "quicktunnel").Logger()
+	log := zerolog.New(io.Discard).With().Str("component", "quicktunnel").Logger()
 	client := http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout:   httpTimeout,
@@ -395,15 +394,18 @@ func (q *QuickTunnel) OriginDialer() *ingress.OriginDialerService {
 }
 
 func (q *QuickTunnel) OrchestrationConfig() *orchestration.Config {
+	noTLSVerify := true // kube-apiserver presents a self-signed cert
+	disableChunkedEncoding := false
+	http2Origin := HTTP2
+
 	q.orchestrationConfigOnce.Do(func() {
 		orchestrationConfig := &orchestration.Config{
 			Ingress: func() *ingress.Ingress {
-				noTLSVerify := true  // kube-apiserver presents a self-signed cert
-				http2Origin := HTTP2 // TODO(experimental): kube-apiserver speaks HTTP/2; preserves exec/port-forward stream multiplexing. Must stay 1-1 with apiserver DisableHTTP2Serving.
 				parsed, _ := ingress.ParseIngress(&config.Configuration{
 					OriginRequest: config.OriginRequestConfig{
-						NoTLSVerify: &noTLSVerify,
-						Http2Origin: &http2Origin,
+						NoTLSVerify:            &noTLSVerify,
+						Http2Origin:            &http2Origin,
+						DisableChunkedEncoding: &disableChunkedEncoding,
 					},
 					WarpRouting: config.WarpRoutingConfig{},
 					Ingress: []config.UnvalidatedIngressRule{

@@ -247,17 +247,26 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Kube {
 	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
 	kubelet.KubeletDeps.TLSOptions = &server.TLSOptions{
-		Config: &tls.Config{MinVersion: func() uint16 {
-			if v, err := cliflag.TLSVersion(kubelet.KubeletConfiguration.TLSMinVersion); err == nil {
-				return v
-			}
-			return cliflag.DefaultTLSVersion()
-		}(), CipherSuites: func() []uint16 {
-			if v, err := cliflag.TLSCipherSuites(kubelet.KubeletConfiguration.TLSCipherSuites); err == nil {
-				return v
-			}
-			return nil
-		}()},
+		Config: &tls.Config{
+			NextProtos: func() []string {
+				if !HTTP2 {
+					return []string{"http/1.1"}
+				}
+				return nil
+			}(),
+			MinVersion: func() uint16 {
+				if v, err := cliflag.TLSVersion(kubelet.KubeletConfiguration.TLSMinVersion); err == nil {
+					return v
+				}
+				return cliflag.DefaultTLSVersion()
+			}(),
+			CipherSuites: func() []uint16 {
+				if v, err := cliflag.TLSCipherSuites(kubelet.KubeletConfiguration.TLSCipherSuites); err == nil {
+					return v
+				}
+				return nil
+			}(),
+		},
 		CertFile: filepath.Join(string(k.config.Options().DataDir()), string(nanokube.CertFile)),
 		KeyFile:  filepath.Join(string(k.config.Options().DataDir()), string(nanokube.KeyFile)),
 	}

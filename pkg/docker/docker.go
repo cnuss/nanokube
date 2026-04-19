@@ -1296,6 +1296,7 @@ func (d *driver) LogStream(containerID string, status *v1.ContainerStatus) nanok
 		reader, err := d.client.ContainerLogs(ctx, inspect.ID, container.LogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
+			Since:      "0",
 			Follow:     true,
 			Timestamps: true,
 		})
