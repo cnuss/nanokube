@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 
@@ -112,8 +113,8 @@ func (h *ApiServerImpl) Client(ctx context.Context) Client {
 
 		go func() {
 			for {
-				if version, err := h.client.Discovery().ServerVersion(); err == nil {
-					Log.Info("apiserver is ready", "host", loopback.Host, "version", version.GitVersion)
+				if _, err := h.client.CoreV1().Namespaces().Get(ctx, "kube-system", metav1.GetOptions{}); err == nil {
+					Log.Info("apiserver is ready")
 					close(h.ready)
 					break
 				}

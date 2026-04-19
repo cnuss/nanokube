@@ -6,6 +6,12 @@ metadata:
   namespace: kube-system
 spec:
   containers:
+    - name: debug
+      image: cnuss/dev:latest
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: home
+          mountPath: "$HOME"
     - name: kube-controller-manager
       image: registry.k8s.io/kube-controller-manager:v1.35.0 # TODO(incomplete): version
       command:
@@ -20,7 +26,6 @@ spec:
         - --tls-cert-file=/home/nanokube/certs/apiserver.crt
         - --tls-private-key-file=/home/nanokube/certs/apiserver.key
         - --service-account-private-key-file=/home/nanokube/certs/apiserver.key
-        - --v=8
       volumeMounts:
         - name: nanokube-home
           mountPath: /home/nanokube
@@ -35,11 +40,14 @@ spec:
         - --leader-elect=true
         - --tls-cert-file=/home/nanokube/certs/apiserver.crt
         - --tls-private-key-file=/home/nanokube/certs/apiserver.key
-        - --v=8
       volumeMounts:
         - name: nanokube-home
           mountPath: /home/nanokube
   volumes:
+    - name: home
+      hostPath:
+        path: "$HOME"
+        type: Directory
     - name: nanokube-home
       hostPath:
         path: "$NANOKUBE_HOME"
