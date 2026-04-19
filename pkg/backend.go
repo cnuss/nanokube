@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 	cadvisorv1 "github.com/google/cadvisor/info/v1"
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
 	homedir "github.com/mitchellh/go-homedir"
@@ -25,7 +26,6 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 	podresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
-	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/cm/resourceupdates"
 	"k8s.io/kubernetes/pkg/kubelet/config"
@@ -39,43 +39,19 @@ import (
 	"k8s.io/mount-utils"
 )
 
-type Manager interface {
-	cm.ContainerManager
-	lifecycle.PodAdmitHandler
-	cm.InternalContainerLifecycle
-	cm.PodContainerManager
-	Ready() <-chan struct{}
-}
-
-type Backend interface {
-	cadvisor.Interface
-	container.OSInterface
-	mount.Interface
-	subpath.Interface
-	hostutil.HostUtils
-
-	Context() context.Context
-
-	Driver() nanokube.Driver
-	Network() nanokube.Network
-	Manager() Manager
-
-	Ready() <-chan struct{}
-}
-
 type fsCacheEntry struct {
 	info   cadvisorv2.FsInfo
 	expiry time.Time
 }
 
 type BackendImpl struct {
-	driver  nanokube.Driver
-	options nanokube.Options
+	driver  v1.Driver
+	options v1.Options
 
-	manager     Manager
+	manager     v1.Manager
 	managerOnce sync.Once
 
-	network     nanokube.Network
+	network     v1.Network
 	networkOnce sync.Once
 
 	startOnce sync.Once
@@ -85,9 +61,9 @@ type BackendImpl struct {
 	fsCache   map[string]fsCacheEntry
 }
 
-var _ Backend = &BackendImpl{}
+var _ v1.Backend = &BackendImpl{}
 
-func NewBackend(driver nanokube.Driver) Backend {
+func NewBackend(driver v1.Driver) v1.Backend {
 	return &BackendImpl{
 		driver:  driver,
 		options: driver.Options(),
@@ -100,11 +76,11 @@ func (b *BackendImpl) Context() context.Context {
 	return b.driver.Context()
 }
 
-func (b *BackendImpl) Driver() nanokube.Driver {
+func (b *BackendImpl) Driver() v1.Driver {
 	return b.driver
 }
 
-func (b *BackendImpl) Network() nanokube.Network {
+func (b *BackendImpl) Network() v1.Network {
 	b.networkOnce.Do(func() {
 		b.network = nanokube.NewNetwork(b.driver)
 	})
@@ -170,7 +146,7 @@ func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
 	}
 	b.fsCacheMu.Unlock()
 
-	out, err := b.driver.ExecHost("busybox", []string{"stat", "-f", "-c", "%S %b %a %c %d", "/host" + path}, []nanokube.Path{nanokube.Path(path)})
+	out, err := b.driver.ExecHost("busybox", []string{"stat", "-f", "-c", "%S %b %a %c %d", "/host" + path}, []v1.Path{v1.Path(path)})
 	if err != nil {
 		return cadvisorv2.FsInfo{}, err
 	}
@@ -362,7 +338,7 @@ func (b *BackendImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) 
 	return nanokube.Unimplemented()
 }
 
-func (b *BackendImpl) Ready() <-chan struct{} {
+func (b *BackendImpl) Ready() chan struct{} {
 	return b.ready
 }
 
@@ -404,7 +380,7 @@ func (b *BackendImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {
 	}, nil
 }
 
-func (b *BackendImpl) Manager() Manager {
+func (b *BackendImpl) Manager() v1.Manager {
 	b.managerOnce.Do(func() {
 		b.manager = newManager(b)
 	})
@@ -413,7 +389,7 @@ func (b *BackendImpl) Manager() Manager {
 
 type managerImpl struct {
 	ctx       context.Context
-	backend   Backend
+	backend   v1.Backend
 	startOnce sync.Once
 
 	logStreams sync.Map // containerID -> *LogStream
@@ -421,9 +397,9 @@ type managerImpl struct {
 	ready chan struct{}
 }
 
-var _ Manager = &managerImpl{}
+var _ v1.Manager = &managerImpl{}
 
-func newManager(backend Backend) Manager {
+func newManager(backend v1.Backend) v1.Manager {
 	return &managerImpl{
 		ctx:     backend.Context(),
 		backend: backend,
@@ -753,7 +729,7 @@ func (c *managerImpl) PreStartContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.
 
 func (c *managerImpl) PostStopContainer(_ klog.Logger, containerID string) error {
 	if value, ok := c.logStreams.LoadAndDelete(containerID); ok {
-		value.(nanokube.LogStream).Destroy()
+		value.(v1.LogStream).Destroy()
 	}
 
 	return nil // TODO(partial): device plugin post-stop hooks
@@ -798,7 +774,7 @@ func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
 	return false
 }
 
-func (c *managerImpl) Ready() <-chan struct{} {
+func (c *managerImpl) Ready() chan struct{} {
 	return c.ready
 }
 

@@ -7,12 +7,12 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 	dockerclient "github.com/docker/docker/client"
 )
 
-func newClient(config pkg.Config, socket string) (*dockerclient.Client, error) {
+func newClient(config v1.Config, socket string) (*dockerclient.Client, error) {
 	opts := []dockerclient.Opt{
 		dockerclient.WithHost("unix://" + socket),
 		dockerclient.WithAPIVersionNegotiation(),
@@ -37,7 +37,7 @@ type readCloserFunc struct {
 
 func (r readCloserFunc) Close() error { return r.close() }
 
-func newTransport(config pkg.Config, socket string) http.RoundTripper {
+func newTransport(config v1.Config, socket string) http.RoundTripper {
 	inner := &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return net.Dial("unix", socket)

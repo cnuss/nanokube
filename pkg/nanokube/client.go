@@ -9,19 +9,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
-
-type Client interface {
-	client.Interface
-	Clientset() *client.Clientset
-	WithHeartbeat(interval time.Duration) Client
-	WithQps(qps float32) Client
-	WithTimeout(timeout time.Duration) Client
-	WithTunnel(tunnel Tunnel, local bool) Client
-
-	Kubeconfig(name string) *clientcmdapi.Config
-	WriteKubeconfig(path string) error
-}
 
 type ClientImpl struct {
 	client.Interface
@@ -30,9 +20,9 @@ type ClientImpl struct {
 	httpClient *http.Client
 }
 
-var _ Client = &ClientImpl{}
+var _ v1.Client = &ClientImpl{}
 
-func NewClient(config *rest.Config) Client {
+func NewClient(config *rest.Config) v1.Client {
 	httpClient, err := rest.HTTPClientFor(config)
 	if err != nil {
 		panic(err)
@@ -53,11 +43,11 @@ func (c *ClientImpl) Clientset() *client.Clientset {
 	return c.clientset
 }
 
-func (c *ClientImpl) WithHeartbeat(interval time.Duration) Client {
+func (c *ClientImpl) WithHeartbeat(interval time.Duration) v1.Client {
 	return c.WithQps(float32(-1)).WithTimeout(interval)
 }
 
-func (c *ClientImpl) WithQps(qps float32) Client {
+func (c *ClientImpl) WithQps(qps float32) v1.Client {
 	cfg := rest.CopyConfig(c.config)
 	cfg.QPS = qps
 	cfg.Burst = int(qps * 2)
@@ -68,7 +58,7 @@ func (c *ClientImpl) WithQps(qps float32) Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func (c *ClientImpl) WithTimeout(timeout time.Duration) Client {
+func (c *ClientImpl) WithTimeout(timeout time.Duration) v1.Client {
 	cfg := rest.CopyConfig(c.config)
 	cfg.Timeout = timeout
 	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
@@ -78,7 +68,7 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func (c *ClientImpl) WithTunnel(tunnel Tunnel, local bool) Client {
+func (c *ClientImpl) WithTunnel(tunnel v1.Tunnel, local bool) v1.Client {
 	if !local {
 		<-tunnel.Ready()
 	}

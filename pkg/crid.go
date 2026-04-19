@@ -5,30 +5,26 @@ import (
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
 type (
 	Runtime    string
-	DetectFunc func(config Config) Backend
+	DetectFunc func(config v1.Config) v1.Backend
 )
 
 var Runtimes = map[Runtime]DetectFunc{}
 
-type Crid interface {
-	Backends() map[string]Backend
-	DefaultBackend() Backend
-}
-
 type CridImpl struct {
-	config Config
+	config v1.Config
 
 	backends     sync.Map // map[string]Backend
 	backendsOnce sync.Once
 }
 
-var _ Crid = &CridImpl{}
+var _ v1.Crid = &CridImpl{}
 
-func newCrid(config Config) Crid {
+func newCrid(config v1.Config) v1.Crid {
 	crid := &CridImpl{
 		config:   config,
 		backends: sync.Map{},
@@ -36,7 +32,7 @@ func newCrid(config Config) Crid {
 	return crid
 }
 
-func (c *CridImpl) Backends() map[string]Backend {
+func (c *CridImpl) Backends() map[string]v1.Backend {
 	c.backendsOnce.Do(func() {
 		detected := 0
 		for name, detect := range Runtimes {
@@ -52,17 +48,17 @@ func (c *CridImpl) Backends() map[string]Backend {
 		}
 	})
 
-	backends := make(map[string]Backend)
+	backends := make(map[string]v1.Backend)
 	c.backends.Range(func(key, value any) bool {
 		name := key.(string)
-		backend := value.(Backend)
+		backend := value.(v1.Backend)
 		backends[name] = backend
 		return true
 	})
 	return backends
 }
 
-func (c *CridImpl) DefaultBackend() Backend {
+func (c *CridImpl) DefaultBackend() v1.Backend {
 	for _, backend := range c.Backends() {
 		return backend
 	}

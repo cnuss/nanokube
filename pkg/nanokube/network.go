@@ -5,36 +5,16 @@ import (
 	"net"
 	"sync"
 
-	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
-type AllocatedNetwork interface {
-	Name() string
-	Type() NetworkType
-	Gateway() net.IP
-	Network() net.IPNet
-
-	Deallocate(ctx context.Context) error
-}
-
-type NetworkService interface {
-	Context() context.Context
-	DefaultNetwork(ctx context.Context) string
-	GetNetwork(ctx context.Context, name string) (*string, *NetworkType, *net.IP, *net.IPNet, error)
-	CreateNetwork(ctx context.Context, name string, networkType NetworkType, net *net.IPNet, gateway *net.IP) error
-	RemoveNetwork(ctx context.Context, name string) error
-}
-
-type Network interface {
-	Allocate(config *v1.PodSandboxConfig) (AllocatedNetwork, error)
-	Default() AllocatedNetwork
-}
-
 type NetworkImpl struct {
-	service NetworkService
+	service v1.NetworkService
 
-	defaultNet     AllocatedNetwork
+	defaultNet     v1.AllocatedNetwork
 	defaultNetOnce sync.Once
 
 	networks sync.Map // map[string]AllocatedNetwork
@@ -42,13 +22,13 @@ type NetworkImpl struct {
 	nextIPMu sync.Mutex
 }
 
-var _ Network = &NetworkImpl{}
+var _ v1.Network = &NetworkImpl{}
 
-func NewNetwork(service NetworkService) Network {
+func NewNetwork(service v1.NetworkService) v1.Network {
 	return &NetworkImpl{service: service}
 }
 
-func (n *NetworkImpl) Default() AllocatedNetwork {
+func (n *NetworkImpl) Default() v1.AllocatedNetwork {
 	n.defaultNetOnce.Do(func() {
 		var err error
 
@@ -70,7 +50,7 @@ func (n *NetworkImpl) Default() AllocatedNetwork {
 
 		// Create static network with gateway pinned high so container gets first usable IP
 		ipNet := reservedNet
-		ipNet.Mask = net.CIDRMask(NetworkSubnetSize, 32)
+		ipNet.Mask = net.CIDRMask(v1.NetworkSubnetSize, 32)
 		gateway := make(net.IP, len(ipNet.IP))
 		copy(gateway, ipNet.IP)
 		for j := range gateway {
@@ -114,7 +94,7 @@ func (n *NetworkImpl) Default() AllocatedNetwork {
 	return n.defaultNet
 }
 
-func (n *NetworkImpl) Allocate(config *v1.PodSandboxConfig) (AllocatedNetwork, error) {
+func (n *NetworkImpl) Allocate(config *criv1.PodSandboxConfig) (v1.AllocatedNetwork, error) {
 	if config != nil && config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
 		return n.Default(), nil
 	}
@@ -126,7 +106,7 @@ func (n *NetworkImpl) Allocate(config *v1.PodSandboxConfig) (AllocatedNetwork, e
 	var reclaimKey string
 	n.networks.Range(func(key, value any) bool {
 		if value == nil {
-			nextNet = &net.IPNet{IP: net.ParseIP(key.(string)), Mask: net.CIDRMask(NetworkSubnetSize, 32)}
+			nextNet = &net.IPNet{IP: net.ParseIP(key.(string)), Mask: net.CIDRMask(v1.NetworkSubnetSize, 32)}
 			reclaimKey = key.(string)
 			return false
 		}
@@ -136,7 +116,7 @@ func (n *NetworkImpl) Allocate(config *v1.PodSandboxConfig) (AllocatedNetwork, e
 	if nextNet == nil {
 		nextNet = &net.IPNet{
 			IP:   make(net.IP, len(n.nextIP)),
-			Mask: net.CIDRMask(NetworkSubnetSize, 32),
+			Mask: net.CIDRMask(v1.NetworkSubnetSize, 32),
 		}
 		copy(nextNet.IP, n.nextIP)
 	}
@@ -156,7 +136,7 @@ func (n *NetworkImpl) Allocate(config *v1.PodSandboxConfig) (AllocatedNetwork, e
 	} else {
 		n.networks.Store(nextNet.IP.String(), network)
 		// Advance high water mark
-		carry := uint32(1) << uint(32-NetworkSubnetSize)
+		carry := uint32(1) << uint(32-v1.NetworkSubnetSize)
 		for j := len(n.nextIP) - 1; j >= 0 && carry > 0; j-- {
 			sum := uint32(n.nextIP[j]) + carry
 			n.nextIP[j] = byte(sum)
@@ -170,12 +150,12 @@ func (n *NetworkImpl) Allocate(config *v1.PodSandboxConfig) (AllocatedNetwork, e
 type allocatedNetworkImpl struct {
 	network     *NetworkImpl
 	name        string
-	networkType NetworkType
+	networkType v1.NetworkType
 	gateway     net.IP
 	net         net.IPNet
 }
 
-func newAllocatedNetwork(name string, network *NetworkImpl) (AllocatedNetwork, error) {
+func newAllocatedNetwork(name string, network *NetworkImpl) (v1.AllocatedNetwork, error) {
 	resolvedName, networkType, gateway, net, err := network.service.GetNetwork(network.service.Context(), name)
 	if err != nil {
 		return nil, err
@@ -191,7 +171,7 @@ func (a *allocatedNetworkImpl) Name() string {
 	return a.name
 }
 
-func (a *allocatedNetworkImpl) Type() NetworkType {
+func (a *allocatedNetworkImpl) Type() v1.NetworkType {
 	return a.networkType
 }
 

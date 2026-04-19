@@ -15,6 +15,8 @@ import (
 	"github.com/lmittmann/tint"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
 // maxLineBytes caps the per-stream line buffer. If a container writes more
@@ -66,7 +68,7 @@ func (t *tap) Close() {
 
 // NewLogStream constructs a LogStream backed by the given source. The status
 // provides LogPath for CRI log-file output; pass nil to skip file writing.
-func NewLogStream(ctx context.Context, source LogSource, status *runtime.ContainerStatus) LogStream {
+func NewLogStream(ctx context.Context, source LogSource, status *runtime.ContainerStatus) v1.LogStream {
 	return &LogStreamImpl{
 		ctx:    ctx,
 		source: source,
@@ -92,7 +94,7 @@ type LogStreamImpl struct {
 	started, stopped, destroyed atomic.Bool
 }
 
-var _ LogStream = &LogStreamImpl{}
+var _ v1.LogStream = &LogStreamImpl{}
 
 func (s *LogStreamImpl) Stdout() io.ReadCloser { return s.stdout.Reader() }
 func (s *LogStreamImpl) Stderr() io.ReadCloser { return s.stderr.Reader() }

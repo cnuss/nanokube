@@ -19,7 +19,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/docker"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/podman"
-	v1 "k8s.io/api/core/v1"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -219,13 +220,13 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, cancel context.CancelCauseFunc, config pkg.Config) {
+func run(ctx context.Context, cancel context.CancelCauseFunc, config v1.Config) {
 	// DEVNOTE: everything runs implicitly when we call their accessors
 	config.Kube().Kubelet().Run(ctx)
 	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
-func updateNode(config pkg.Config) {
+func updateNode(config v1.Config) {
 	ref := <-config.Kube().NodeReady()
 	if ref == nil {
 		return
@@ -239,7 +240,7 @@ func updateNode(config pkg.Config) {
 		if err != nil {
 			return err
 		}
-		node.Spec.Taints = slices.DeleteFunc(node.Spec.Taints, func(t v1.Taint) bool {
+		node.Spec.Taints = slices.DeleteFunc(node.Spec.Taints, func(t corev1.Taint) bool {
 			return t.Key == cloudproviderapi.TaintExternalCloudProvider
 		})
 		_, err = nodes.Update(config.Context(), node, metav1.UpdateOptions{})
@@ -252,16 +253,16 @@ func updateNode(config pkg.Config) {
 		config.Context(),
 		corev1ac.Node(ref.Name).WithStatus(
 			corev1ac.NodeStatus().WithAddresses(
-				corev1ac.NodeAddress().WithType(v1.NodeHostName).WithAddress(func() string {
+				corev1ac.NodeAddress().WithType(corev1.NodeHostName).WithAddress(func() string {
 					a, _ := os.Hostname()
 					a, _, _ = strings.Cut(a, ".")
 					return a
 				}()),
-				corev1ac.NodeAddress().WithType(v1.NodeInternalDNS).WithAddress(func() string {
+				corev1ac.NodeAddress().WithType(corev1.NodeInternalDNS).WithAddress(func() string {
 					a, _ := os.Hostname()
 					return a
 				}()),
-				corev1ac.NodeAddress().WithType(v1.NodeExternalDNS).WithAddress(func() string {
+				corev1ac.NodeAddress().WithType(corev1.NodeExternalDNS).WithAddress(func() string {
 					a := fmt.Sprintf("%s:%d", tunnel.FQDN(), 443)
 					return a
 				}()),
@@ -275,7 +276,7 @@ func updateNode(config pkg.Config) {
 	nanokube.Log.Info("node is ready", "name", ref.Name, "fqdn", tunnel.FQDN())
 }
 
-func updateKubeconfig(config pkg.Config) {
+func updateKubeconfig(config v1.Config) {
 	kubeconfig, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
 	if err != nil {
 		kubeconfig = clientcmdapi.NewConfig()
@@ -284,8 +285,8 @@ func updateKubeconfig(config pkg.Config) {
 	internal := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel(), true)
 	external := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel(), false)
 
-	if err := internal.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(nanokube.KubeconfigFile))); err != nil {
-		nanokube.Log.Error("failed to write internal kubeconfig", "path", string(config.Options().DataDir())+string(nanokube.KubeconfigFile), "error", err)
+	if err := internal.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(v1.KubeconfigFile))); err != nil {
+		nanokube.Log.Error("failed to write internal kubeconfig", "path", string(config.Options().DataDir())+string(v1.KubeconfigFile), "error", err)
 	}
 
 	current := external.Kubeconfig(config.Options().Name())

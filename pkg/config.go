@@ -8,48 +8,32 @@ import (
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/component-base/version"
 	"k8s.io/kubernetes/pkg/kubemark"
 )
 
-type Config interface {
-	Context() context.Context
-	Cancel(reason error)
-
-	Options() nanokube.Options
-	Version() string
-
-	Kube() Kube
-	Crid() Crid
-
-	NewTunnel() nanokube.Tunnel
-
-	WithKubelet(kubelet *kubemark.HollowKubelet) Config
-	WithApiServer(apiserver nanokube.ApiServer) Config
-	WithStorageFactory(storagefactory nanokube.StorageFactory) Config
-}
-
 type ConfigImpl struct {
 	ctx     context.Context
 	cancel  context.CancelCauseFunc
 	cmd     *cobra.Command
-	options nanokube.Options
+	options v1.Options
 
-	crid     Crid
+	crid     v1.Crid
 	cridOnce sync.Once
 
-	kube     Kube
+	kube     v1.Kube
 	kubeOnce sync.Once
 
 	dirs  sync.Map
 	files sync.Map
 }
 
-var _ Config = &ConfigImpl{}
+var _ v1.Config = &ConfigImpl{}
 
-func NewConfig(ctx context.Context) (Config, context.CancelCauseFunc, error) {
+func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	var config *ConfigImpl = nil
 
@@ -101,7 +85,7 @@ func (c *ConfigImpl) Cancel(reason error) {
 	}
 }
 
-func (c *ConfigImpl) Options() nanokube.Options {
+func (c *ConfigImpl) Options() v1.Options {
 	return c.options
 }
 
@@ -109,35 +93,35 @@ func (c *ConfigImpl) Version() string {
 	return c.cmd.Version
 }
 
-func (c *ConfigImpl) Crid() Crid {
+func (c *ConfigImpl) Crid() v1.Crid {
 	c.cridOnce.Do(func() {
 		c.crid = newCrid(c)
 	})
 	return c.crid
 }
 
-func (c *ConfigImpl) NewTunnel() nanokube.Tunnel {
+func (c *ConfigImpl) NewTunnel() v1.Tunnel {
 	return NewTunnel(c)
 }
 
-func (c *ConfigImpl) Kube() Kube {
+func (c *ConfigImpl) Kube() v1.Kube {
 	c.kubeOnce.Do(func() {
 		c.kube = newKube(c)
 	})
 	return c.kube
 }
 
-func (c *ConfigImpl) WithKubelet(kubelet *kubemark.HollowKubelet) Config {
+func (c *ConfigImpl) WithKubelet(kubelet *kubemark.HollowKubelet) v1.Config {
 	c.Kube().WithKubelet(kubelet)
 	return c
 }
 
-func (c *ConfigImpl) WithApiServer(apiserver nanokube.ApiServer) Config {
+func (c *ConfigImpl) WithApiServer(apiserver v1.ApiServer) v1.Config {
 	c.Kube().WithApiServer(apiserver)
 	return c
 }
 
-func (c *ConfigImpl) WithStorageFactory(storagefactory nanokube.StorageFactory) Config {
+func (c *ConfigImpl) WithStorageFactory(storagefactory v1.StorageFactory) v1.Config {
 	c.Kube().WithStorageFactory(storagefactory)
 	return c
 }

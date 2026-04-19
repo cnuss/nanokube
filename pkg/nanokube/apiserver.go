@@ -18,28 +18,24 @@ import (
 	"k8s.io/kubernetes/pkg/controlplane"
 	controlplaneapiserver "k8s.io/kubernetes/pkg/controlplane/apiserver"
 	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
-type ApiServer interface {
-	Client(ctx context.Context) Client
-	Config() *app.Config
-	Ready() chan struct{}
-}
-
 type ApiServerImpl struct {
-	options Options
+	options v1.Options
 	config  *app.Config
-	storage StorageFactory
+	storage v1.StorageFactory
 
-	client Client
+	client v1.Client
 
 	runOnce sync.Once
 	ready   chan struct{}
 }
 
-var _ ApiServer = &ApiServerImpl{}
+var _ v1.ApiServer = &ApiServerImpl{}
 
-func NewApiServer(options Options, opts *options.CompletedOptions, storage StorageFactory) ApiServer {
+func NewApiServer(options v1.Options, opts *options.CompletedOptions, storage v1.StorageFactory) v1.ApiServer {
 	c := &app.Config{
 		Options: *opts,
 	}
@@ -89,7 +85,7 @@ func (h *ApiServerImpl) Config() *app.Config {
 	return h.config
 }
 
-func (h *ApiServerImpl) Client(ctx context.Context) Client {
+func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 	<-h.storage.Ready()
 
 	h.runOnce.Do(func() {

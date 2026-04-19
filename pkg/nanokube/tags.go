@@ -12,6 +12,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	runtimev1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
 // ResourceType identifies what kind of runtime resource a tag set describes.
@@ -74,7 +76,7 @@ type TagBuilder struct {
 	tags   map[string]string
 }
 
-func NewTagBuilder(driver Driver) *TagBuilder {
+func NewTagBuilder(driver v1.Driver) *TagBuilder {
 	b := &TagBuilder{
 		prefix: driver.Options().Name(),
 		tags:   make(map[string]string),

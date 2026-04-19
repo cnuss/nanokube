@@ -18,22 +18,13 @@ import (
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/klog/v2"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
-
-type StorageFactory interface {
-	serverstorage.StorageFactory
-
-	ServerList() []string
-	Port() int
-	WithDefault(factory *serverstorage.DefaultStorageFactory) StorageFactory
-	Default() *serverstorage.DefaultStorageFactory
-
-	Ready() chan struct{}
-}
 
 type StorageFactoryImpl struct {
 	ctx     context.Context
-	options Options
+	options v1.Options
 
 	defaultStorageFactory         *serverstorage.DefaultStorageFactory
 	defaultStorageFactoryProvided chan struct{}
@@ -45,9 +36,9 @@ type StorageFactoryImpl struct {
 	ready   chan struct{}
 }
 
-var _ StorageFactory = &StorageFactoryImpl{}
+var _ v1.StorageFactory = &StorageFactoryImpl{}
 
-func NewStorageFactory(ctx context.Context, options Options) StorageFactory {
+func NewStorageFactory(ctx context.Context, options v1.Options) v1.StorageFactory {
 	return &StorageFactoryImpl{
 		ctx:                           ctx,
 		options:                       options,
@@ -60,7 +51,7 @@ func (s *StorageFactoryImpl) Ready() chan struct{} {
 	return s.ready
 }
 
-func (s *StorageFactoryImpl) WithDefault(factory *serverstorage.DefaultStorageFactory) StorageFactory {
+func (s *StorageFactoryImpl) WithDefault(factory *serverstorage.DefaultStorageFactory) v1.StorageFactory {
 	s.defaultStorageFactory = factory
 	close(s.defaultStorageFactoryProvided)
 	return s
@@ -70,7 +61,7 @@ func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
 	<-s.defaultStorageFactoryProvided
 
 	s.runOnce.Do(func() {
-		dataDir := s.options.DataDirAt(DataDirEtcd)
+		dataDir := s.options.DataDirAt(v1.DataDirEtcd)
 		port := s.Port()
 
 		clientURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))

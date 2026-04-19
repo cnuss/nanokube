@@ -27,10 +27,12 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	v1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
-func Detect(config pkg.Config) pkg.Backend {
+func Detect(config v1.Config) v1.Backend {
 	home, _ := os.UserHomeDir()
 
 	// TODO: Windows support
@@ -63,7 +65,7 @@ func Detect(config pkg.Config) pkg.Backend {
 	return nil
 }
 
-func newBackend(config pkg.Config, socket string) (pkg.Backend, error) {
+func newBackend(config v1.Config, socket string) (v1.Backend, error) {
 	client, err := newClient(config, socket)
 	if err != nil {
 		return nil, err
@@ -82,7 +84,7 @@ func newBackend(config pkg.Config, socket string) (pkg.Backend, error) {
 }
 
 type driver struct {
-	config pkg.Config
+	config v1.Config
 	client *client.Client
 
 	name     string
@@ -94,7 +96,7 @@ type driver struct {
 	logStreams sync.Map // containerID -> *LogStream
 }
 
-var _ nanokube.Driver = &driver{}
+var _ v1.Driver = &driver{}
 
 func (d *driver) Name() string {
 	d.nameOnce.Do(func() {
@@ -111,7 +113,7 @@ func (d *driver) Context() context.Context {
 	return d.config.Context()
 }
 
-func (d *driver) Options() nanokube.Options {
+func (d *driver) Options() v1.Options {
 	return d.config.Options()
 }
 
@@ -132,11 +134,11 @@ func (d *driver) CgroupRoot() string {
 	return d.cgroupRoot
 }
 
-func (d *driver) Attach(ctx context.Context, req *v1.AttachRequest) (*v1.AttachResponse, error) {
+func (d *driver) Attach(ctx context.Context, req *criv1.AttachRequest) (*criv1.AttachResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
 
-func (d *driver) CheckpointContainer(ctx context.Context, options *v1.CheckpointContainerRequest) error {
+func (d *driver) CheckpointContainer(ctx context.Context, options *criv1.CheckpointContainerRequest) error {
 	return nanokube.Unimplemented()
 }
 
@@ -144,7 +146,7 @@ func (d *driver) Close() error {
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) ContainerStats(ctx context.Context, containerID string) (*v1.ContainerStats, error) {
+func (d *driver) ContainerStats(ctx context.Context, containerID string) (*criv1.ContainerStats, error) {
 	cs, err := d.ContainerStatus(ctx, containerID, false)
 	if err != nil {
 		return nil, err
@@ -163,28 +165,28 @@ func (d *driver) ContainerStats(ctx context.Context, containerID string) (*v1.Co
 
 	ts := time.Now().UnixNano()
 
-	return &v1.ContainerStats{
-		Attributes: &v1.ContainerAttributes{
+	return &criv1.ContainerStats{
+		Attributes: &criv1.ContainerAttributes{
 			Id:          containerID,
 			Metadata:    cs.Status.Metadata,
 			Labels:      cs.Status.Labels,
 			Annotations: cs.Status.Annotations,
 		},
-		Cpu: &v1.CpuUsage{
+		Cpu: &criv1.CpuUsage{
 			Timestamp:            ts,
-			UsageCoreNanoSeconds: &v1.UInt64Value{Value: stats.CPUStats.CPUUsage.TotalUsage},
+			UsageCoreNanoSeconds: &criv1.UInt64Value{Value: stats.CPUStats.CPUUsage.TotalUsage},
 		},
-		Memory: &v1.MemoryUsage{
+		Memory: &criv1.MemoryUsage{
 			Timestamp:       ts,
-			WorkingSetBytes: &v1.UInt64Value{Value: stats.MemoryStats.Usage},
+			WorkingSetBytes: &criv1.UInt64Value{Value: stats.MemoryStats.Usage},
 		},
-		WritableLayer: &v1.FilesystemUsage{
+		WritableLayer: &criv1.FilesystemUsage{
 			Timestamp: ts,
 		},
 	}, nil
 }
 
-func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbose bool) (*v1.ContainerStatusResponse, error) {
+func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbose bool) (*criv1.ContainerStatusResponse, error) {
 	inspect, err := d.client.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return nil, err
@@ -192,27 +194,27 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 
 	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
 
-	var state v1.ContainerState
+	var state criv1.ContainerState
 	switch inspect.State.Status {
 	case "created":
-		state = v1.ContainerState_CONTAINER_CREATED
+		state = criv1.ContainerState_CONTAINER_CREATED
 	case "running":
-		state = v1.ContainerState_CONTAINER_RUNNING
+		state = criv1.ContainerState_CONTAINER_RUNNING
 	default:
-		state = v1.ContainerState_CONTAINER_EXITED
+		state = criv1.ContainerState_CONTAINER_EXITED
 	}
 
 	tb := nanokube.NewTagBuilder(d).WithTags(inspect.Config.Labels)
 
-	status := &v1.ContainerStatus{
+	status := &criv1.ContainerStatus{
 		Id: inspect.ID,
-		Metadata: &v1.ContainerMetadata{
+		Metadata: &criv1.ContainerMetadata{
 			Name:    tb.Name(),
 			Attempt: tb.Attempt(),
 		},
 		State:       state,
 		CreatedAt:   createdAt.UnixNano(),
-		Image:       &v1.ImageSpec{Image: inspect.Config.Image},
+		Image:       &criv1.ImageSpec{Image: inspect.Config.Image},
 		ImageRef:    inspect.Image,
 		Labels:      tb.Labels(),
 		Annotations: tb.Annotations(),
@@ -232,7 +234,7 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 		t, _ := time.Parse(time.RFC3339Nano, inspect.State.FinishedAt)
 		status.FinishedAt = t.UnixNano()
 	}
-	if state == v1.ContainerState_CONTAINER_EXITED {
+	if state == criv1.ContainerState_CONTAINER_EXITED {
 		status.ExitCode = int32(inspect.State.ExitCode)
 		if inspect.State.OOMKilled || (inspect.State.ExitCode == 137 && inspect.HostConfig.Memory > 0) {
 			status.Reason = "OOMKilled"
@@ -246,14 +248,14 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 	}
 
 	for _, m := range inspect.Mounts {
-		status.Mounts = append(status.Mounts, &v1.Mount{
+		status.Mounts = append(status.Mounts, &criv1.Mount{
 			ContainerPath: m.Destination,
 			HostPath:      m.Source,
 			Readonly:      !m.RW,
 		})
 	}
 
-	resp := &v1.ContainerStatusResponse{Status: status}
+	resp := &criv1.ContainerStatusResponse{Status: status}
 	if verbose {
 		resp.Info = map[string]string{
 			"pid": fmt.Sprintf("%d", inspect.State.Pid),
@@ -262,7 +264,7 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 	return resp, nil
 }
 
-func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, config *v1.ContainerConfig, sandboxConfig *v1.PodSandboxConfig) (string, error) {
+func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, config *criv1.ContainerConfig, sandboxConfig *criv1.PodSandboxConfig) (string, error) {
 	meta := config.GetMetadata()
 
 	sandbox, err := d.client.ContainerInspect(ctx, podSandboxID)
@@ -333,7 +335,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 	// Namespaces: share network/ipc with sandbox, pid per container by default
 	hostConfig.NetworkMode = container.NetworkMode("container:" + podSandboxID)
 	hostConfig.IpcMode = container.IpcMode("container:" + podSandboxID)
-	if sc.GetNamespaceOptions().GetPid() == v1.NamespaceMode_CONTAINER {
+	if sc.GetNamespaceOptions().GetPid() == criv1.NamespaceMode_CONTAINER {
 		hostConfig.PidMode = ""
 	} else {
 		hostConfig.PidMode = container.PidMode("container:" + podSandboxID)
@@ -408,7 +410,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 	return resp.ID, nil
 }
 
-func (d *driver) Exec(ctx context.Context, request *v1.ExecRequest) (*v1.ExecResponse, error) {
+func (d *driver) Exec(ctx context.Context, request *criv1.ExecRequest) (*criv1.ExecResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
 
@@ -416,11 +418,11 @@ func (d *driver) ExecSync(ctx context.Context, containerID string, cmd []string,
 	return nil, nil, nanokube.Unimplemented()
 }
 
-func (d *driver) GetContainerEvents(ctx context.Context, containerEventsCh chan *v1.ContainerEventResponse, connectionEstablishedCallback func(v1.RuntimeService_GetContainerEventsClient)) error {
+func (d *driver) GetContainerEvents(ctx context.Context, containerEventsCh chan *criv1.ContainerEventResponse, connectionEstablishedCallback func(criv1.RuntimeService_GetContainerEventsClient)) error {
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) ImageFsInfo(ctx context.Context) (*v1.ImageFsInfoResponse, error) {
+func (d *driver) ImageFsInfo(ctx context.Context) (*criv1.ImageFsInfoResponse, error) {
 	info, err := d.client.Info(ctx)
 	if err != nil {
 		return nil, err
@@ -433,26 +435,26 @@ func (d *driver) ImageFsInfo(ctx context.Context) (*v1.ImageFsInfoResponse, erro
 	for _, img := range images {
 		totalSize += img.Size
 	}
-	return &v1.ImageFsInfoResponse{
-		ImageFilesystems: []*v1.FilesystemUsage{
+	return &criv1.ImageFsInfoResponse{
+		ImageFilesystems: []*criv1.FilesystemUsage{
 			{
-				FsId:      &v1.FilesystemIdentifier{Mountpoint: info.DockerRootDir},
-				UsedBytes: &v1.UInt64Value{Value: totalSize},
+				FsId:      &criv1.FilesystemIdentifier{Mountpoint: info.DockerRootDir},
+				UsedBytes: &criv1.UInt64Value{Value: totalSize},
 			},
 		},
 	}, nil
 }
 
-func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose bool) (*v1.ImageStatusResponse, error) {
+func (d *driver) ImageStatus(ctx context.Context, image *criv1.ImageSpec, verbose bool) (*criv1.ImageStatusResponse, error) {
 	ref := image.GetImage()
 	if ref == "" {
-		return &v1.ImageStatusResponse{}, nil
+		return &criv1.ImageStatusResponse{}, nil
 	}
 
 	inspect, err := d.client.ImageInspect(ctx, ref)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
-			return &v1.ImageStatusResponse{}, nil
+			return &criv1.ImageStatusResponse{}, nil
 		}
 		return nil, err
 	}
@@ -464,7 +466,7 @@ func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose b
 		}
 	}
 
-	img := &v1.Image{
+	img := &criv1.Image{
 		Id:          inspect.ID,
 		RepoTags:    repoTags,
 		RepoDigests: inspect.RepoDigests,
@@ -474,13 +476,13 @@ func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose b
 	if inspect.Config != nil && inspect.Config.User != "" {
 		userPart, _, _ := strings.Cut(inspect.Config.User, ":")
 		if uid, err := strconv.ParseInt(userPart, 10, 64); err == nil {
-			img.Uid = &v1.Int64Value{Value: uid}
+			img.Uid = &criv1.Int64Value{Value: uid}
 		} else {
 			img.Username = userPart
 		}
 	}
 
-	resp := &v1.ImageStatusResponse{Image: img}
+	resp := &criv1.ImageStatusResponse{Image: img}
 	if verbose {
 		resp.Info = map[string]string{
 			"architecture": inspect.Architecture,
@@ -490,8 +492,8 @@ func (d *driver) ImageStatus(ctx context.Context, image *v1.ImageSpec, verbose b
 	return resp, nil
 }
 
-func (d *driver) ListContainerStats(ctx context.Context, filter *v1.ContainerStatsFilter) ([]*v1.ContainerStats, error) {
-	containers, err := d.ListContainers(ctx, &v1.ContainerFilter{
+func (d *driver) ListContainerStats(ctx context.Context, filter *criv1.ContainerStatsFilter) ([]*criv1.ContainerStats, error) {
+	containers, err := d.ListContainers(ctx, &criv1.ContainerFilter{
 		Id:            filter.GetId(),
 		PodSandboxId:  filter.GetPodSandboxId(),
 		LabelSelector: filter.GetLabelSelector(),
@@ -500,7 +502,7 @@ func (d *driver) ListContainerStats(ctx context.Context, filter *v1.ContainerSta
 		return nil, err
 	}
 
-	var stats []*v1.ContainerStats
+	var stats []*criv1.ContainerStats
 	for _, c := range containers {
 		s, err := d.ContainerStats(ctx, c.Id)
 		if err != nil {
@@ -511,7 +513,7 @@ func (d *driver) ListContainerStats(ctx context.Context, filter *v1.ContainerSta
 	return stats, nil
 }
 
-func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter) ([]*v1.Container, error) {
+func (d *driver) ListContainers(ctx context.Context, filter *criv1.ContainerFilter) ([]*criv1.Container, error) {
 	tb := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceContainer)
 	f := filters.NewArgs()
 	for k, v := range tb.InternalTags() {
@@ -529,11 +531,11 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 		}
 		if filter.State != nil {
 			switch filter.State.State {
-			case v1.ContainerState_CONTAINER_CREATED:
+			case criv1.ContainerState_CONTAINER_CREATED:
 				f.Add("status", container.StateCreated)
-			case v1.ContainerState_CONTAINER_RUNNING:
+			case criv1.ContainerState_CONTAINER_RUNNING:
 				f.Add("status", container.StateRunning)
-			case v1.ContainerState_CONTAINER_EXITED:
+			case criv1.ContainerState_CONTAINER_EXITED:
 				f.Add("status", container.StateRestarting)
 				f.Add("status", container.StatePaused)
 				f.Add("status", container.StateRemoving)
@@ -549,29 +551,29 @@ func (d *driver) ListContainers(ctx context.Context, filter *v1.ContainerFilter)
 	}
 
 	selector := filter.GetLabelSelector()
-	result := make([]*v1.Container, 0, len(containers))
+	result := make([]*criv1.Container, 0, len(containers))
 	for _, c := range containers {
 		if !d.matchLabels(c.Labels, selector) {
 			continue
 		}
 		tb := nanokube.NewTagBuilder(d).WithTags(c.Labels)
-		var containerState v1.ContainerState
+		var containerState criv1.ContainerState
 		switch c.State {
 		case "created":
-			containerState = v1.ContainerState_CONTAINER_CREATED
+			containerState = criv1.ContainerState_CONTAINER_CREATED
 		case "running":
-			containerState = v1.ContainerState_CONTAINER_RUNNING
+			containerState = criv1.ContainerState_CONTAINER_RUNNING
 		default:
-			containerState = v1.ContainerState_CONTAINER_EXITED
+			containerState = criv1.ContainerState_CONTAINER_EXITED
 		}
-		result = append(result, &v1.Container{
+		result = append(result, &criv1.Container{
 			Id:           c.ID,
 			PodSandboxId: tb.SandboxUID(),
-			Metadata: &v1.ContainerMetadata{
+			Metadata: &criv1.ContainerMetadata{
 				Name:    tb.Name(),
 				Attempt: tb.Attempt(),
 			},
-			Image:       &v1.ImageSpec{Image: c.Image},
+			Image:       &criv1.ImageSpec{Image: c.Image},
 			ImageRef:    c.ImageID,
 			State:       containerState,
 			CreatedAt:   c.Created * int64(time.Second),
@@ -597,14 +599,14 @@ func (d *driver) matchLabels(dockerLabels map[string]string, selector map[string
 	return true
 }
 
-func (d *driver) ListImages(ctx context.Context, filter *v1.ImageFilter) ([]*v1.Image, error) {
+func (d *driver) ListImages(ctx context.Context, filter *criv1.ImageFilter) ([]*criv1.Image, error) {
 	images, err := d.client.ImageList(ctx, image.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*v1.Image, len(images))
+	result := make([]*criv1.Image, len(images))
 	for i, img := range images {
-		result[i] = &v1.Image{
+		result[i] = &criv1.Image{
 			Id:          img.ID,
 			RepoTags:    img.RepoTags,
 			RepoDigests: img.RepoDigests,
@@ -614,11 +616,11 @@ func (d *driver) ListImages(ctx context.Context, filter *v1.ImageFilter) ([]*v1.
 	return result, nil
 }
 
-func (d *driver) ListMetricDescriptors(ctx context.Context) ([]*v1.MetricDescriptor, error) {
-	return []*v1.MetricDescriptor{}, nanokube.Unimplemented()
+func (d *driver) ListMetricDescriptors(ctx context.Context) ([]*criv1.MetricDescriptor, error) {
+	return []*criv1.MetricDescriptor{}, nanokube.Unimplemented()
 }
 
-func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter) ([]*v1.PodSandbox, error) {
+func (d *driver) ListPodSandbox(ctx context.Context, filter *criv1.PodSandboxFilter) ([]*criv1.PodSandbox, error) {
 	tb := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceSandbox)
 	f := filters.NewArgs()
 	for k, v := range tb.InternalTags() {
@@ -632,7 +634,7 @@ func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter
 			f.Add("id", filter.Id)
 		}
 		if filter.State != nil {
-			if filter.State.State == v1.PodSandboxState_SANDBOX_READY {
+			if filter.State.State == criv1.PodSandboxState_SANDBOX_READY {
 				f.Add("status", container.StateRunning)
 			} else {
 				f.Add("status", container.StateCreated)
@@ -651,19 +653,19 @@ func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter
 	}
 
 	selector := filter.GetLabelSelector()
-	var result []*v1.PodSandbox
+	var result []*criv1.PodSandbox
 	for _, c := range containers {
 		if !d.matchLabels(c.Labels, selector) {
 			continue
 		}
 		tb := nanokube.NewTagBuilder(d).WithTags(c.Labels)
-		podState := v1.PodSandboxState_SANDBOX_NOTREADY
+		podState := criv1.PodSandboxState_SANDBOX_NOTREADY
 		if c.State == "running" {
-			podState = v1.PodSandboxState_SANDBOX_READY
+			podState = criv1.PodSandboxState_SANDBOX_READY
 		}
-		result = append(result, &v1.PodSandbox{
+		result = append(result, &criv1.PodSandbox{
 			Id: c.ID,
-			Metadata: &v1.PodSandboxMetadata{
+			Metadata: &criv1.PodSandboxMetadata{
 				Name:      tb.Name(),
 				Namespace: tb.Namespace(),
 				Uid:       tb.UID(),
@@ -677,19 +679,19 @@ func (d *driver) ListPodSandbox(ctx context.Context, filter *v1.PodSandboxFilter
 	return result, nil
 }
 
-func (d *driver) ListPodSandboxMetrics(ctx context.Context) ([]*v1.PodSandboxMetrics, error) {
-	return []*v1.PodSandboxMetrics{}, nanokube.Unimplemented()
+func (d *driver) ListPodSandboxMetrics(ctx context.Context) ([]*criv1.PodSandboxMetrics, error) {
+	return []*criv1.PodSandboxMetrics{}, nanokube.Unimplemented()
 }
 
-func (d *driver) ListPodSandboxStats(ctx context.Context, filter *v1.PodSandboxStatsFilter) ([]*v1.PodSandboxStats, error) {
-	return []*v1.PodSandboxStats{}, nanokube.Unimplemented()
+func (d *driver) ListPodSandboxStats(ctx context.Context, filter *criv1.PodSandboxStatsFilter) ([]*criv1.PodSandboxStats, error) {
+	return []*criv1.PodSandboxStats{}, nanokube.Unimplemented()
 }
 
-func (d *driver) PodSandboxStats(ctx context.Context, podSandboxID string) (*v1.PodSandboxStats, error) {
+func (d *driver) PodSandboxStats(ctx context.Context, podSandboxID string) (*criv1.PodSandboxStats, error) {
 	return nil, nanokube.Unimplemented()
 }
 
-func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*v1.PodSandboxStatusResponse, error) {
+func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*criv1.PodSandboxStatusResponse, error) {
 	inspect, err := d.client.ContainerInspect(ctx, podSandboxID)
 	if err != nil {
 		return nil, err
@@ -697,26 +699,26 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 
 	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
 
-	nsOpts := &v1.NamespaceOption{
-		Network: v1.NamespaceMode_POD,
-		Pid:     v1.NamespaceMode_CONTAINER,
-		Ipc:     v1.NamespaceMode_POD,
+	nsOpts := &criv1.NamespaceOption{
+		Network: criv1.NamespaceMode_POD,
+		Pid:     criv1.NamespaceMode_CONTAINER,
+		Ipc:     criv1.NamespaceMode_POD,
 	}
 	if inspect.HostConfig != nil {
 		if inspect.HostConfig.NetworkMode == "host" {
-			nsOpts.Network = v1.NamespaceMode_NODE
+			nsOpts.Network = criv1.NamespaceMode_NODE
 		}
 		if inspect.HostConfig.PidMode == "host" {
-			nsOpts.Pid = v1.NamespaceMode_NODE
+			nsOpts.Pid = criv1.NamespaceMode_NODE
 		}
 		if inspect.HostConfig.IpcMode == "host" {
-			nsOpts.Ipc = v1.NamespaceMode_NODE
+			nsOpts.Ipc = criv1.NamespaceMode_NODE
 		}
 	}
 
-	podState := v1.PodSandboxState_SANDBOX_NOTREADY
+	podState := criv1.PodSandboxState_SANDBOX_NOTREADY
 	if inspect.State.Status == "running" {
-		podState = v1.PodSandboxState_SANDBOX_READY
+		podState = criv1.PodSandboxState_SANDBOX_READY
 	}
 
 	// Determine primary IP
@@ -758,31 +760,31 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 	}
 
 	// Additional IPs
-	var additionalIPs []*v1.PodIP
+	var additionalIPs []*criv1.PodIP
 	if inspect.NetworkSettings != nil {
 		for name, n := range inspect.NetworkSettings.Networks {
 			if name == "host" || name == "none" || n.IPAddress == "" {
 				continue
 			}
-			additionalIPs = append(additionalIPs, &v1.PodIP{Ip: n.IPAddress})
+			additionalIPs = append(additionalIPs, &criv1.PodIP{Ip: n.IPAddress})
 		}
 	}
 
-	status := &v1.PodSandboxStatus{
+	status := &criv1.PodSandboxStatus{
 		Id: inspect.ID,
-		Metadata: &v1.PodSandboxMetadata{
+		Metadata: &criv1.PodSandboxMetadata{
 			Name:      tb.Name(),
 			Namespace: tb.Namespace(),
 			Uid:       tb.UID(),
 		},
 		State:     podState,
 		CreatedAt: createdAt.UnixNano(),
-		Network: &v1.PodSandboxNetworkStatus{
+		Network: &criv1.PodSandboxNetworkStatus{
 			Ip:            ip,
 			AdditionalIps: additionalIPs,
 		},
-		Linux: &v1.LinuxPodSandboxStatus{
-			Namespaces: &v1.Namespace{
+		Linux: &criv1.LinuxPodSandboxStatus{
+			Namespaces: &criv1.Namespace{
 				Options: nsOpts,
 			},
 		},
@@ -790,7 +792,7 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 		Annotations: tb.Annotations(),
 	}
 
-	resp := &v1.PodSandboxStatusResponse{Status: status}
+	resp := &criv1.PodSandboxStatusResponse{Status: status}
 	if verbose {
 		resp.Info = map[string]string{
 			"pid": fmt.Sprintf("%d", inspect.State.Pid),
@@ -799,11 +801,11 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 	return resp, nil
 }
 
-func (d *driver) PortForward(ctx context.Context, request *v1.PortForwardRequest) (*v1.PortForwardResponse, error) {
+func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequest) (*criv1.PortForwardResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
 
-func (d *driver) PullImage(ctx context.Context, img *v1.ImageSpec, auth *v1.AuthConfig, podSandboxConfig *v1.PodSandboxConfig) (string, error) {
+func (d *driver) PullImage(ctx context.Context, img *criv1.ImageSpec, auth *criv1.AuthConfig, podSandboxConfig *criv1.PodSandboxConfig) (string, error) {
 	reader, err := d.client.ImagePull(ctx, img.GetImage(), image.PullOptions{})
 	if err != nil {
 		return "", err
@@ -825,7 +827,7 @@ func (d *driver) RemoveContainer(ctx context.Context, containerID string) error 
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) RemoveImage(ctx context.Context, image *v1.ImageSpec) error {
+func (d *driver) RemoveImage(ctx context.Context, image *criv1.ImageSpec) error {
 	return nanokube.Unimplemented()
 }
 
@@ -835,14 +837,14 @@ func (d *driver) RemovePodSandbox(ctx context.Context, podSandboxID string) erro
 
 func (d *driver) ReopenContainerLog(ctx context.Context, containerID string) error {
 	if logStream, ok := d.logStreams.Load(containerID); ok {
-		logStream.(nanokube.LogStream).Stop()
-		logStream.(nanokube.LogStream).Start()
+		logStream.(v1.LogStream).Stop()
+		logStream.(v1.LogStream).Start()
 		return nil
 	}
 	return fmt.Errorf("container log stream not found for container %s", containerID)
 }
 
-func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig, runtimeHandler string) (string, error) {
+func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConfig, runtimeHandler string) (string, error) {
 	meta := config.GetMetadata()
 
 	name, labels, err := nanokube.NewTagBuilder(d).
@@ -856,9 +858,9 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 		return "", err
 	}
 
-	var status *v1.PodSandboxStatus
+	var status *criv1.PodSandboxStatus
 
-	existing, _ := d.ListPodSandbox(ctx, &v1.PodSandboxFilter{
+	existing, _ := d.ListPodSandbox(ctx, &criv1.PodSandboxFilter{
 		LabelSelector: map[string]string{nanokube.NewTagBuilder(d).UIDKey(): meta.GetUid()},
 	})
 
@@ -884,7 +886,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 
 		networkMode := container.NetworkMode("bridge")
 		if linux := config.GetLinux(); linux != nil {
-			if ns := linux.GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == v1.NamespaceMode_NODE {
+			if ns := linux.GetSecurityContext().GetNamespaceOptions(); ns != nil && ns.GetNetwork() == criv1.NamespaceMode_NODE {
 				networkMode = container.NetworkMode("host")
 			}
 		}
@@ -900,13 +902,13 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 				hostConfig.Privileged = sc.GetPrivileged()
 				// TODO(partial): port securityOpts (seccomp profile handling)
 				if ns := sc.GetNamespaceOptions(); ns != nil {
-					if ns.GetNetwork() == v1.NamespaceMode_NODE {
+					if ns.GetNetwork() == criv1.NamespaceMode_NODE {
 						hostConfig.NetworkMode = "host"
 					}
-					if ns.GetPid() == v1.NamespaceMode_NODE {
+					if ns.GetPid() == criv1.NamespaceMode_NODE {
 						hostConfig.PidMode = "host"
 					}
-					if ns.GetIpc() == v1.NamespaceMode_NODE {
+					if ns.GetIpc() == criv1.NamespaceMode_NODE {
 						hostConfig.IpcMode = "host"
 					}
 				}
@@ -968,7 +970,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 		}
 
 		// Ensure pause image is available
-		imageSpec := &v1.ImageSpec{Image: dockerConfig.Image}
+		imageSpec := &criv1.ImageSpec{Image: dockerConfig.Image}
 		image, err := d.ImageStatus(ctx, imageSpec, false)
 		if err != nil || image.Image == nil {
 			if _, err := d.PullImage(ctx, imageSpec, nil, nil); err != nil {
@@ -999,7 +1001,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 		status = resp.GetStatus()
 	}
 
-	if status.State != v1.PodSandboxState_SANDBOX_READY {
+	if status.State != criv1.PodSandboxState_SANDBOX_READY {
 		if err := d.client.ContainerStart(ctx, status.Id, container.StartOptions{}); err != nil {
 			return "", err
 		}
@@ -1014,7 +1016,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *v1.PodSandboxConfig,
 	return status.Id, nil
 }
 
-func (d *driver) RuntimeConfig(ctx context.Context) (*v1.RuntimeConfigResponse, error) {
+func (d *driver) RuntimeConfig(ctx context.Context) (*criv1.RuntimeConfigResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
 
@@ -1023,18 +1025,18 @@ func (d *driver) StartContainer(ctx context.Context, containerID string) error {
 		return err
 	}
 	if logStream, ok := d.logStreams.Load(containerID); ok {
-		logStream.(nanokube.LogStream).Start()
+		logStream.(v1.LogStream).Start()
 	}
 	return nil
 }
 
-func (d *driver) Status(ctx context.Context, verbose bool) (*v1.StatusResponse, error) {
+func (d *driver) Status(ctx context.Context, verbose bool) (*criv1.StatusResponse, error) {
 	info, err := d.client.Info(ctx)
 	_, netErr := d.client.NetworkInspect(ctx, "bridge", network.InspectOptions{})
 
-	resp := &v1.StatusResponse{
-		Status: &v1.RuntimeStatus{
-			Conditions: []*v1.RuntimeCondition{
+	resp := &criv1.StatusResponse{
+		Status: &criv1.RuntimeStatus{
+			Conditions: []*criv1.RuntimeCondition{
 				{Type: "RuntimeReady", Status: err == nil, Reason: "DockerIsUp"},
 				{Type: "NetworkReady", Status: netErr == nil, Reason: "BridgeNetworkReady"},
 			},
@@ -1057,14 +1059,14 @@ func (d *driver) StopContainer(ctx context.Context, containerID string, timeout 
 	}
 
 	if logStream, ok := d.logStreams.Load(containerID); ok {
-		logStream.(nanokube.LogStream).Stop()
+		logStream.(v1.LogStream).Stop()
 	}
 
 	return nil
 }
 
 func (d *driver) StopPodSandbox(ctx context.Context, podSandboxID string) error {
-	containers, err := d.ListContainers(ctx, &v1.ContainerFilter{PodSandboxId: podSandboxID})
+	containers, err := d.ListContainers(ctx, &criv1.ContainerFilter{PodSandboxId: podSandboxID})
 	if err != nil {
 		return err
 	}
@@ -1074,24 +1076,24 @@ func (d *driver) StopPodSandbox(ctx context.Context, podSandboxID string) error 
 	return d.StopContainer(ctx, podSandboxID, 0)
 }
 
-func (d *driver) UpdateContainerResources(ctx context.Context, containerID string, resources *v1.ContainerResources) error {
+func (d *driver) UpdateContainerResources(ctx context.Context, containerID string, resources *criv1.ContainerResources) error {
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) UpdatePodSandboxResources(ctx context.Context, request *v1.UpdatePodSandboxResourcesRequest) (*v1.UpdatePodSandboxResourcesResponse, error) {
+func (d *driver) UpdatePodSandboxResources(ctx context.Context, request *criv1.UpdatePodSandboxResourcesRequest) (*criv1.UpdatePodSandboxResourcesResponse, error) {
 	return nil, nanokube.Unimplemented()
 }
 
-func (d *driver) UpdateRuntimeConfig(ctx context.Context, runtimeConfig *v1.RuntimeConfig) error {
+func (d *driver) UpdateRuntimeConfig(ctx context.Context, runtimeConfig *criv1.RuntimeConfig) error {
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) Version(ctx context.Context, version string) (*v1.VersionResponse, error) {
+func (d *driver) Version(ctx context.Context, version string) (*criv1.VersionResponse, error) {
 	v, err := d.client.ServerVersion(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &v1.VersionResponse{
+	return &criv1.VersionResponse{
 		Version:           version,
 		RuntimeName:       d.Name(),
 		RuntimeVersion:    v.APIVersion,
@@ -1099,7 +1101,7 @@ func (d *driver) Version(ctx context.Context, version string) (*v1.VersionRespon
 	}, nil
 }
 
-func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (string, error) {
+func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, error) {
 	reader, err := d.client.ImagePull(d.Context(), img, image.PullOptions{})
 	if err != nil {
 		return "", err
@@ -1160,7 +1162,7 @@ func (d *driver) ExecHost(img string, cmd []string, mounts []nanokube.Path) (str
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func (d *driver) CreateNetwork(ctx context.Context, name string, networkType nanokube.NetworkType, net *net.IPNet, gateway *net.IP) error {
+func (d *driver) CreateNetwork(ctx context.Context, name string, networkType v1.NetworkType, net *net.IPNet, gateway *net.IP) error {
 	existing, _, _, _, _ := d.GetNetwork(ctx, name)
 	if existing != nil {
 		return nil
@@ -1223,7 +1225,7 @@ func (d *driver) DefaultNetwork(ctx context.Context) string {
 	return ""
 }
 
-func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokube.NetworkType, *net.IP, *net.IPNet, error) {
+func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *v1.NetworkType, *net.IP, *net.IPNet, error) {
 	netName, _, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceNetwork).WithName(name).Build()
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -1236,12 +1238,12 @@ func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *nanokub
 		return nil, nil, nil, nil, err
 	}
 
-	var networkType nanokube.NetworkType
+	var networkType v1.NetworkType
 	switch resp.Driver {
 	case "bridge":
-		networkType = nanokube.NetworkBridge
+		networkType = v1.NetworkBridge
 	case "host":
-		networkType = nanokube.NetworkHost
+		networkType = v1.NetworkHost
 	default:
 		return nil, nil, nil, nil, fmt.Errorf("unsupported network driver: %s", resp.Driver)
 	}
@@ -1282,9 +1284,9 @@ func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
 	return d.client.NetworkRemove(ctx, netName)
 }
 
-func (d *driver) LogStream(containerID string, status *v1.ContainerStatus) nanokube.LogStream {
+func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1.LogStream {
 	if logStream, ok := d.logStreams.Load(containerID); ok {
-		return logStream.(nanokube.LogStream)
+		return logStream.(v1.LogStream)
 	}
 
 	inspect, err := d.client.ContainerInspect(d.Context(), containerID)

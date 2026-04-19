@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
 type OptionsImpl struct {
@@ -20,9 +22,9 @@ type OptionsImpl struct {
 	dirs sync.Map
 }
 
-var _ Options = &OptionsImpl{}
+var _ v1.Options = &OptionsImpl{}
 
-func NewOptions(cmd *cobra.Command) Options {
+func NewOptions(cmd *cobra.Command) v1.Options {
 	options := &OptionsImpl{}
 	cmd.Flags().StringVar(&options.name, "name", "nanokube", "cluster name")
 	cmd.Flags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
@@ -49,15 +51,15 @@ func (o *OptionsImpl) Clean() bool {
 	return o.clean
 }
 
-func (o *OptionsImpl) DataDir() DataDir {
-	return DataDir(o.dataDir)
+func (o *OptionsImpl) DataDir() v1.DataDir {
+	return v1.DataDir(o.dataDir)
 }
 
 func (o *OptionsImpl) Standalone() bool {
 	return o.standalone
 }
 
-func (o *OptionsImpl) DataDirAt(name DataDir) string {
+func (o *OptionsImpl) DataDirAt(name v1.DataDir) string {
 	if dir, ok := o.dirs.Load(name); ok {
 		return dir.(string)
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/cloudflare/cloudflared/tlsconfig"
 	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/dustin/go-humanize"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,7 +49,7 @@ var promMu sync.Mutex
 
 type TunnelImpl struct {
 	ctx    context.Context
-	config Config
+	config v1.Config
 
 	localHost     net.IP
 	localHostOnce sync.Once
@@ -65,9 +66,9 @@ type TunnelImpl struct {
 	tunnelReady chan struct{}
 }
 
-var _ nanokube.Tunnel = &TunnelImpl{}
+var _ v1.Tunnel = &TunnelImpl{}
 
-func NewTunnel(config Config) nanokube.Tunnel {
+func NewTunnel(config v1.Config) v1.Tunnel {
 	return &TunnelImpl{
 		ctx:         config.Context(),
 		config:      config,
@@ -151,7 +152,7 @@ func (t *TunnelImpl) Domain() string {
 	return domain
 }
 
-func (t *TunnelImpl) Ready() <-chan struct{} {
+func (t *TunnelImpl) Ready() chan struct{} {
 	<-t.fqdnReady
 	return t.tunnelReady
 }
@@ -165,7 +166,7 @@ type QuickTunnel struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
-	tunnel nanokube.Tunnel
+	tunnel v1.Tunnel
 
 	log          *zerolog.Logger
 	transportLog *zerolog.Logger
@@ -196,7 +197,7 @@ type quickTunnelResponse struct {
 	Errors  []quickTunnelError `json:"errors"`
 }
 
-func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
+func newQuickTunnel(tunnel v1.Tunnel) (*QuickTunnel, error) {
 	log := zerolog.New(io.Discard).With().Str("component", "quicktunnel").Logger()
 	client := http.Client{
 		Transport: &http.Transport{
