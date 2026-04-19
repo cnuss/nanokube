@@ -28,7 +28,7 @@ import (
 )
 
 type Ready interface {
-	Ready() chan struct{}
+	Ready() <-chan struct{}
 }
 
 type Options interface {

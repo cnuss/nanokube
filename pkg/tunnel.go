@@ -152,7 +152,7 @@ func (t *TunnelImpl) Domain() string {
 	return domain
 }
 
-func (t *TunnelImpl) Ready() chan struct{} {
+func (t *TunnelImpl) Ready() <-chan struct{} {
 	<-t.fqdnReady
 	return t.tunnelReady
 }

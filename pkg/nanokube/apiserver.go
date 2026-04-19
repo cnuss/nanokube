@@ -77,7 +77,7 @@ func NewApiServer(options v1.Options, opts *options.CompletedOptions, storage v1
 	}
 }
 
-func (h *ApiServerImpl) Ready() chan struct{} {
+func (h *ApiServerImpl) Ready() <-chan struct{} {
 	return h.ready
 }
 

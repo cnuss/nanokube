@@ -338,7 +338,7 @@ func (b *BackendImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) 
 	return nanokube.Unimplemented()
 }
 
-func (b *BackendImpl) Ready() chan struct{} {
+func (b *BackendImpl) Ready() <-chan struct{} {
 	return b.ready
 }
 
@@ -774,7 +774,7 @@ func (c *managerImpl) ShouldResetExtendedResourceCapacity() bool {
 	return false
 }
 
-func (c *managerImpl) Ready() chan struct{} {
+func (c *managerImpl) Ready() <-chan struct{} {
 	return c.ready
 }
 

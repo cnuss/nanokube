@@ -47,7 +47,7 @@ func NewStorageFactory(ctx context.Context, options v1.Options) v1.StorageFactor
 	}
 }
 
-func (s *StorageFactoryImpl) Ready() chan struct{} {
+func (s *StorageFactoryImpl) Ready() <-chan struct{} {
 	return s.ready
 }
 
