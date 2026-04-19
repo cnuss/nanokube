@@ -360,7 +360,7 @@ func (q *QuickTunnel) TunnelConfig() *supervisor.TunnelConfig {
 				}
 			}(),
 			ProtocolSelector: func() connection.ProtocolSelector {
-				protocolSelector, _ := connection.NewProtocolSelector("quic", q.AccountTag, false, false, edgediscovery.ProtocolPercentage, connection.ResolveTTL, q.log)
+				protocolSelector, _ := connection.NewProtocolSelector("auto", q.AccountTag, false, false, edgediscovery.ProtocolPercentage, connection.ResolveTTL, q.log)
 				return protocolSelector
 			}(),
 			EdgeTLSConfigs: func() map[connection.Protocol]*tls.Config {
@@ -396,17 +396,15 @@ func (q *QuickTunnel) OriginDialer() *ingress.OriginDialerService {
 
 func (q *QuickTunnel) OrchestrationConfig() *orchestration.Config {
 	noTLSVerify := true // kube-apiserver presents a self-signed cert
-	disableChunkedEncoding := false
-	http2Origin := HTTP2
+	http2Origin := v1.HTTP2
 
 	q.orchestrationConfigOnce.Do(func() {
 		orchestrationConfig := &orchestration.Config{
 			Ingress: func() *ingress.Ingress {
 				parsed, _ := ingress.ParseIngress(&config.Configuration{
 					OriginRequest: config.OriginRequestConfig{
-						NoTLSVerify:            &noTLSVerify,
-						Http2Origin:            &http2Origin,
-						DisableChunkedEncoding: &disableChunkedEncoding,
+						NoTLSVerify: &noTLSVerify,
+						Http2Origin: &http2Origin,
 					},
 					WarpRouting: config.WarpRoutingConfig{},
 					Ingress: []config.UnvalidatedIngressRule{

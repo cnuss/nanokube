@@ -3,6 +3,8 @@ package v1
 import "path/filepath"
 
 var (
+	HTTP2 = true
+
 	DataDirLock       DataDir  = "lock"
 	DataDirKubelet    DataDir  = "kubelet"
 	DataDirCerts      DataDir  = "certs"

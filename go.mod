@@ -232,5 +232,6 @@ replace (
 	k8s.io/kube-scheduler => github.com/kubernetes/kube-scheduler v0.35.0
 	k8s.io/kubectl => github.com/kubernetes/kubectl v0.35.0
 	k8s.io/kubernetes => ./kubernetes
+	k8s.io/apiserver => ./kubernetes/staging/src/k8s.io/apiserver
 	k8s.io/pod-security-admission => github.com/kubernetes/pod-security-admission v0.35.0
 )

@@ -43,25 +43,29 @@ index b8b7cfd84e9..08f79a46376 100644
  		}
  	}
  
-diff --git a/pkg/registry/core/pod/rest/log.go b/pkg/registry/core/pod/rest/log.go
-index 188e2464769..7d65f319b9c 100644
---- a/pkg/registry/core/pod/rest/log.go
-+++ b/pkg/registry/core/pod/rest/log.go
-@@ -89,6 +89,14 @@ func (r *LogREST) Get(ctx context.Context, name string, opts runtime.Object) (ru
+diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
+index 31ecfe65672..6bb0a442ce0 100644
+--- a/pkg/kubelet/server/server.go
++++ b/pkg/kubelet/server/server.go
+@@ -742,6 +742,7 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
+ 	containerName := request.PathParameter("containerName")
+ 	ctx := request.Request.Context()
  
- 	countSkipTLSMetric(logOpts.InsecureSkipTLSVerifyBackend)
- 
-+	// nanokube patch: drop TailLines when Follow is set. Combining --follow
-+	// with --tail=N makes the kubelet emit N history lines up-front, which
-+	// Cloudflare quick-tunnel edge buffers until ~128KB accumulate. Stripping
-+	// TailLines on follow forces pure tail-from-now streaming.
-+	if logOpts.Follow {
-+		logOpts.TailLines = nil
-+	}
 +
- 	if utilfeature.DefaultFeatureGate.Enabled(features.PodLogsQuerySplitStreams) {
- 		// Even with defaulters, logOpts.Stream can be nil if no arguments are provided at all.
- 		if logOpts.Stream == nil {
+ 	if len(podID) == 0 {
+ 		// TODO: Why return JSON when the rest return plaintext errors?
+ 		// TODO: Why return plaintext errors?
+@@ -835,6 +836,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
+ 	}
+ 
+ 	response.Header().Set("Transfer-Encoding", "chunked")
++	// nanokube patch: return 206 Partial Content to bypass Cloudflare edge's
++	// 128KB chunked-response buffer. apiserver proxies kubelet's response
++	// body through unchanged, so the 206 propagates end-to-end.
++	response.WriteHeader(http.StatusPartialContent)
+ 	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
+ 		response.WriteError(http.StatusBadRequest, err)
+ 		return
 diff --git a/pkg/volume/util/atomic_writer.go b/pkg/volume/util/atomic_writer.go
 index 0466dffacdf..9e26ad0a9b4 100644
 --- a/pkg/volume/util/atomic_writer.go
@@ -77,3 +81,56 @@ index 0466dffacdf..9e26ad0a9b4 100644
  		}
  	}
  
+diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
+index 55f8b657a3c..4b7a01cfe5c 100644
+--- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
++++ b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
+@@ -40,6 +40,7 @@ import (
+ 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
+ 	"k8s.io/apiserver/pkg/endpoints/metrics"
+ 	"k8s.io/apiserver/pkg/endpoints/request"
++	genericrest "k8s.io/apiserver/pkg/registry/generic/rest"
+ 	"k8s.io/apiserver/pkg/registry/rest"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+ 	"k8s.io/apiserver/pkg/util/flushwriter"
+@@ -73,6 +74,12 @@ func StreamObject(statusCode int, gv schema.GroupVersion, s runtime.NegotiatedSe
+ 	if len(contentType) == 0 {
+ 		contentType = "application/octet-stream"
+ 	}
++	// nanokube patch: forward the backend response's status code when the
++	// streamer recorded one (e.g. pods/log passes kubelet's 206 through so
++	// cloudflare's edge skips its 128KB chunked-response buffer).
++	if ls, ok := stream.(*genericrest.LocationStreamer); ok && ls.BackendStatus != 0 {
++		statusCode = ls.BackendStatus
++	}
+ 	w.Header().Set("Content-Type", contentType)
+ 	w.WriteHeader(statusCode)
+ 	// Flush headers, if possible
+diff --git a/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go b/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
+index b1a61991bf5..82d7a0426d7 100644
+--- a/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
++++ b/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
+@@ -43,6 +43,12 @@ type LocationStreamer struct {
+ 	Flush           bool
+ 	ResponseChecker HttpResponseChecker
+ 	RedirectChecker func(req *http.Request, via []*http.Request) error
++	// nanokube patch: InputStream records the backend's HTTP status code
++	// here so StreamObject can forward it to the client instead of the
++	// caller's default 200. Used by pods/log so kubelet's 206 Partial
++	// Content (which bypasses Cloudflare's 128KB chunked-response buffer)
++	// propagates end-to-end.
++	BackendStatus int
+ 	// TLSVerificationErrorCounter is an optional value that will Inc every time a TLS error is encountered.  This can
+ 	// be wired a single prometheus counter instance to get counts overall.
+ 	TLSVerificationErrorCounter CounterMetric
+@@ -104,6 +110,10 @@ func (s *LocationStreamer) InputStream(ctx context.Context, apiVersion, acceptHe
+ 		}
+ 	}
+ 
++	// nanokube patch: always capture backend status so StreamObject can
++	// forward it end-to-end.
++	s.BackendStatus = resp.StatusCode
++
+ 	contentType = s.ContentType
+ 	if len(contentType) == 0 {
+ 		contentType = resp.Header.Get("Content-Type")

@@ -6,12 +6,16 @@ metadata:
   namespace: kube-system
 spec:
   containers:
-    - name: debug
-      image: cnuss/dev:latest
-      command: ["sleep", "infinity"]
-      volumeMounts:
-        - name: home
-          mountPath: "$HOME"
+    - name: noise
+      image: busybox:1.36
+      command: [sh, -c]
+      args:
+        - |
+          while true; do
+            tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 1023
+            echo
+            sleep 1
+          done
     - name: kube-controller-manager
       image: registry.k8s.io/kube-controller-manager:v1.35.0 # TODO(incomplete): version
       command:

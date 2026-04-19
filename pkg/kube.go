@@ -41,10 +41,6 @@ var FeatureGates = map[string]bool{
 	"KubeletInUserNamespace": true,
 }
 
-// HTTP2 toggles HTTP/2 end-to-end: apiserver secure serving AND cloudflared tunnel origin dialing.
-// Must stay 1-1 — enabling Http2Origin on the tunnel without HTTP/2 serving on apiserver (or vice versa) breaks exec/port-forward stream multiplexing.
-var HTTP2 = true
-
 type KubeImpl struct {
 	ctx    context.Context
 	config v1.Config
@@ -116,14 +112,14 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.GenericServerRunOptions.ExternalHost = k.ApiServerFQDN()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.KubeletConfig.PreferredAddressTypes = []string{
-			// string(corev1.NodeExternalDNS), // TODO(partial): temp disabled to get logs working
-			string(corev1.NodeInternalIP),
-			string(corev1.NodeInternalDNS),
-			string(corev1.NodeHostName),
+			string(corev1.NodeExternalDNS),
+			// string(corev1.NodeInternalIP),
+			// string(corev1.NodeInternalDNS),
+			// string(corev1.NodeHostName),
 		}
 		opts.SecureServing.BindAddress = k.ApiServerTunnel().LocalHost()
 		opts.SecureServing.BindPort = int(k.ApiServerTunnel().LocalPort())
-		opts.SecureServing.DisableHTTP2Serving = !HTTP2
+		opts.SecureServing.DisableHTTP2Serving = !v1.HTTP2
 		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(v1.DataDirCerts)
 		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.config.Options().DataDir()), string(v1.KeyFile))
 
@@ -224,10 +220,10 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) v1.Kube {
 	kubelet.KubeletDeps.TLSOptions = &server.TLSOptions{
 		Config: &tls.Config{
 			NextProtos: func() []string {
-				if !HTTP2 {
+				if !v1.HTTP2 {
 					return []string{"http/1.1"}
 				}
-				return nil
+				return []string{"h2", "http/1.1"}
 			}(),
 			MinVersion: func() uint16 {
 				if v, err := cliflag.TLSVersion(kubelet.KubeletConfiguration.TLSMinVersion); err == nil {

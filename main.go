@@ -133,6 +133,10 @@ import (
 // }
 
 func init() {
+	if !v1.HTTP2 {
+		os.Setenv("DISABLE_HTTP2", "true")
+	}
+
 	// System Runtimes
 	pkg.Runtimes["docker"] = docker.Detect
 	pkg.Runtimes["podman"] = podman.Detect
