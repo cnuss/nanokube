@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -197,7 +198,7 @@ type quickTunnelResponse struct {
 }
 
 func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
-	log := zerolog.New(io.Discard).With().Str("component", "quicktunnel").Logger()
+	log := zerolog.New(os.Stderr).With().Str("component", "quicktunnel").Logger()
 	client := http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout:   httpTimeout,
@@ -227,12 +228,12 @@ func newQuickTunnel(tunnel nanokube.Tunnel) (*QuickTunnel, error) {
 		retryAfter := resp.Header.Get("Retry-After")
 		if secs, err := strconv.Atoi(retryAfter); err == nil {
 			now := time.Now()
-			return nil, fmt.Errorf("trycloudflare.com rate limit resets in %s", humanize.RelTime(now.Add(time.Duration(secs)*time.Second), now, "", ""))
+			return nil, fmt.Errorf("tunnel rate limit resets in %s", humanize.RelTime(now.Add(time.Duration(secs)*time.Second), now, "", ""))
 		}
 		if retryAfter != "" {
-			return nil, fmt.Errorf("trycloudflare.com rate limit hit (HTTP 429): Retry-After=%s", retryAfter)
+			return nil, fmt.Errorf("tunnel rate limit hit (HTTP 429): Retry-After=%s", retryAfter)
 		}
-		return nil, fmt.Errorf("trycloudflare.com rate limit hit (HTTP 429): no rate-limit headers returned")
+		return nil, fmt.Errorf("tunnel rate limit hit (HTTP 429): no rate-limit headers returned")
 	}
 
 	var data quickTunnelResponse
@@ -404,6 +405,7 @@ func (q *QuickTunnel) OrchestrationConfig() *orchestration.Config {
 						NoTLSVerify: &noTLSVerify,
 						Http2Origin: &http2Origin,
 					},
+					WarpRouting: config.WarpRoutingConfig{},
 					Ingress: []config.UnvalidatedIngressRule{
 						{Service: fmt.Sprintf("https://%s:%d", q.tunnel.LocalHost(), q.tunnel.LocalPort())},
 					},

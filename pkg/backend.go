@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -417,7 +416,7 @@ type managerImpl struct {
 	backend   Backend
 	startOnce sync.Once
 
-	logPipes sync.Map // containerID -> *os.File (write end of pipe to log stream)
+	logStreams sync.Map // containerID -> *LogStream
 
 	ready chan struct{}
 }
@@ -736,33 +735,27 @@ func (c *managerImpl) PreCreateContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1
 }
 
 func (c *managerImpl) PreStartContainer(_ klog.Logger, _ *corev1.Pod, _ *corev1.Container, containerID string) error {
-	logStream := c.backend.Driver().LogStream(containerID)
-	if logStream == nil {
-		return nil
-	}
-
 	status, err := c.backend.Driver().ContainerStatus(c.ctx, containerID, false)
-	if err != nil || status.Status == nil || status.Status.LogPath == "" {
+	if err != nil || status.Status == nil {
 		return nil
 	}
 
-	logPath := status.Status.LogPath
-	os.MkdirAll(filepath.Dir(logPath), 0o755)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
+	logStream := c.backend.Driver().LogStream(containerID, status.Status)
+	if logStream == nil {
+		return fmt.Errorf("unable to create log stream for container %q", containerID)
 	}
 
-	go func() {
-		io.Copy(f, logStream.Criout)
-		f.Close()
-	}()
+	c.logStreams.Store(containerID, logStream)
 
 	// TODO(partial): device plugin pre-start hooks
 	return nil
 }
 
 func (c *managerImpl) PostStopContainer(_ klog.Logger, containerID string) error {
+	if value, ok := c.logStreams.LoadAndDelete(containerID); ok {
+		value.(nanokube.LogStream).Destroy()
+	}
+
 	return nil // TODO(partial): device plugin post-stop hooks
 }
 

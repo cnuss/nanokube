@@ -2,10 +2,12 @@ package nanokube
 
 import (
 	"context"
+	"io"
 	"net"
 	"path/filepath"
 
 	cri "k8s.io/cri-api/pkg/apis"
+	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 type (
@@ -43,7 +45,7 @@ type Driver interface {
 
 	CgroupRoot() string
 	ExecHost(image string, cmd []string, mounts []Path) (string, error)
-	LogStream(containerID string) *LogStream
+	LogStream(containerID string, status *runtime.ContainerStatus) LogStream
 }
 
 type Options interface {
@@ -66,3 +68,18 @@ type Tunnel interface {
 	Domain() string
 	Ready() <-chan struct{}
 }
+
+// LogStream represents a container's log pump. Runtimes construct one via
+// NewLogStream, providing a LogSource that knows how to open stdout/stderr
+// readers. The impl owns pipes, CRI-format formatting, and log-file I/O.
+type LogStream interface {
+	Start()
+	Stop()
+	Destroy()
+	Stdout() io.ReadCloser
+	Stderr() io.ReadCloser
+}
+
+// LogSource opens the runtime's raw stdout/stderr streams for a container.
+// close is called to release the underlying resource (e.g. Docker ContainerLogs reader).
+type LogSource func(ctx context.Context) (stdout io.Reader, stderr io.Reader, close func(), err error)

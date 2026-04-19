@@ -20,6 +20,7 @@ spec:
         - --tls-cert-file=/home/nanokube/certs/apiserver.crt
         - --tls-private-key-file=/home/nanokube/certs/apiserver.key
         - --service-account-private-key-file=/home/nanokube/certs/apiserver.key
+        - --v=8
       volumeMounts:
         - name: nanokube-home
           mountPath: /home/nanokube
@@ -34,6 +35,7 @@ spec:
         - --leader-elect=true
         - --tls-cert-file=/home/nanokube/certs/apiserver.crt
         - --tls-private-key-file=/home/nanokube/certs/apiserver.key
+        - --v=8
       volumeMounts:
         - name: nanokube-home
           mountPath: /home/nanokube

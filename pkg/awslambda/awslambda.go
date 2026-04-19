@@ -215,7 +215,7 @@ func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) LogStream(containerID string) *nanokube.LogStream {
+func (d *driver) LogStream(containerID string, status *v1.ContainerStatus) nanokube.LogStream {
 	nanokube.Unimplemented()
 	return nil
 }
