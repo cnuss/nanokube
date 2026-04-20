@@ -28,6 +28,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubelet/pkg/cri/streaming"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
@@ -92,6 +93,9 @@ type driver struct {
 
 	cgroupRoot     string
 	cgroupRootOnce sync.Once
+
+	streamRuntime     streaming.Runtime
+	streamRuntimeOnce sync.Once
 
 	logStreams sync.Map // containerID -> *LogStream
 }
@@ -1384,4 +1388,11 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 	stream := nanokube.NewLogStream(d.Context(), source, status)
 	d.logStreams.Store(containerID, stream)
 	return stream
+}
+
+func (d *driver) StreamRuntime() streaming.Runtime {
+	d.streamRuntimeOnce.Do(func() {
+		d.streamRuntime = NewStreaming(d.client, d)
+	})
+	return d.streamRuntime
 }

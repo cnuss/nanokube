@@ -13,15 +13,16 @@ import (
 	"k8s.io/client-go/tools/record"
 	cri "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubelet/pkg/cri/streaming"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
+	"k8s.io/kubernetes/pkg/kubelet"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
-	"k8s.io/kubernetes/pkg/kubemark"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	mount "k8s.io/mount-utils"
@@ -98,6 +99,7 @@ type Driver interface {
 	CgroupRoot() string
 	ExecHost(image string, cmd []string, mounts []Path) (string, error)
 	LogStream(containerID string, status *criv1.ContainerStatus) LogStream
+	StreamRuntime() streaming.Runtime
 }
 
 type Client interface {
@@ -117,6 +119,15 @@ type ApiServer interface {
 
 	Client(ctx context.Context) Client
 	Config() *app.Config
+}
+
+type Kubelet interface {
+	Ready
+
+	Run(ctx context.Context)
+	Flags() *kubeletoptions.KubeletFlags
+	Configuration() *kubeletconfig.KubeletConfiguration
+	Deps() *kubelet.Dependencies
 }
 
 type StorageFactory interface {
@@ -152,6 +163,7 @@ type Backend interface {
 
 	Driver() Driver
 	Network() Network
+	StreamServer() streaming.Server
 	Manager() Manager
 }
 
@@ -174,8 +186,8 @@ type Kube interface {
 
 	Client() Client
 
-	WithKubelet(kubelet *kubemark.HollowKubelet) Kube
-	Kubelet() *kubemark.HollowKubelet
+	WithKubelet(kubelet Kubelet) Kube
+	Kubelet() Kubelet
 	WithApiServer(apiserver ApiServer) Kube
 	ApiServer() ApiServer
 	WithStorageFactory(storagefactory StorageFactory) Kube
@@ -196,7 +208,7 @@ type Config interface {
 
 	NewTunnel() Tunnel
 
-	WithKubelet(kubelet *kubemark.HollowKubelet) Config
+	WithKubelet(kubelet Kubelet) Config
 	WithApiServer(apiserver ApiServer) Config
 	WithStorageFactory(storagefactory StorageFactory) Config
 }

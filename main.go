@@ -29,7 +29,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/kubemark"
 )
 
 // var featureGates = map[string]bool{
@@ -200,7 +199,8 @@ func main() {
 				config.Options(),
 				config.Kube().ApiServerOptions(),
 				config.Kube().StorageFactory())).
-			WithKubelet(kubemark.NewHollowKubelet(
+			WithKubelet(nanokube.NewKubelet(
+				config.Options(),
 				config.Kube().KubeletFlags(),
 				config.Kube().KubeletConfiguration(),
 				config.Kube().Client().Clientset(),

@@ -4,12 +4,14 @@ import (
 	"context"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 func Detect(config v1.Config) v1.Backend {
@@ -41,6 +43,9 @@ func newBackend(config v1.Config) (v1.Backend, error) {
 
 type driver struct {
 	config v1.Config
+
+	streamRuntime     streaming.Runtime
+	streamRuntimeOnce sync.Once
 }
 
 var _ v1.Driver = &driver{}
@@ -235,4 +240,11 @@ func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
 func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1.LogStream {
 	nanokube.Unimplemented()
 	return nil
+}
+
+func (d *driver) StreamRuntime() streaming.Runtime {
+	d.streamRuntimeOnce.Do(func() {
+		d.streamRuntime = NewStreaming(d)
+	})
+	return d.streamRuntime
 }

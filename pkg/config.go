@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/component-base/version"
-	"k8s.io/kubernetes/pkg/kubemark"
 )
 
 type ConfigImpl struct {
@@ -111,7 +110,7 @@ func (c *ConfigImpl) Kube() v1.Kube {
 	return c.kube
 }
 
-func (c *ConfigImpl) WithKubelet(kubelet *kubemark.HollowKubelet) v1.Config {
+func (c *ConfigImpl) WithKubelet(kubelet v1.Kubelet) v1.Config {
 	c.Kube().WithKubelet(kubelet)
 	return c
 }

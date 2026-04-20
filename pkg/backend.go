@@ -26,6 +26,7 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 	podresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
+	"k8s.io/kubelet/pkg/cri/streaming"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/cm/resourceupdates"
 	"k8s.io/kubernetes/pkg/kubelet/config"
@@ -53,6 +54,9 @@ type BackendImpl struct {
 
 	network     v1.Network
 	networkOnce sync.Once
+
+	streaming     streaming.Server
+	streamingOnce sync.Once
 
 	startOnce sync.Once
 	ready     chan struct{}
@@ -85,6 +89,17 @@ func (b *BackendImpl) Network() v1.Network {
 		b.network = nanokube.NewNetwork(b.driver)
 	})
 	return b.network
+}
+
+func (b *BackendImpl) StreamServer() streaming.Server {
+	b.streamingOnce.Do(func() {
+		runtime := b.Driver().StreamRuntime()
+		server, _ := streaming.NewServer(streaming.Config{
+			// TODO(incomplete): unique base URL for b.Name()
+		}, runtime)
+		b.streaming = server
+	})
+	return b.streaming
 }
 
 func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {

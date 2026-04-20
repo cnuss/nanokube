@@ -24,7 +24,6 @@ import (
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/server"
-	"k8s.io/kubernetes/pkg/kubemark"
 )
 
 //go:embed kube-system.yaml
@@ -66,7 +65,7 @@ type KubeImpl struct {
 	defaultStorageFactory     *storage.DefaultStorageFactory
 	defaultStorageFactoryOnce sync.Once
 
-	kubelet         *kubemark.HollowKubelet
+	kubelet         v1.Kubelet
 	kubeletProvided chan struct{}
 
 	apiserver         v1.ApiServer
@@ -204,20 +203,20 @@ func (k *KubeImpl) Client() v1.Client {
 	return k.ApiServer().Client(k.ctx)
 }
 
-func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) v1.Kube {
+func (k *KubeImpl) WithKubelet(kubelet v1.Kubelet) v1.Kube {
 	if k.config.Options().Standalone() {
-		kubelet.KubeletConfiguration.RegisterNode = false
-		kubelet.KubeletDeps.KubeClient = nil
-		kubelet.KubeletDeps.EventClient = nil
-		kubelet.KubeletDeps.HeartbeatClient = nil
+		kubelet.Configuration().RegisterNode = false
+		kubelet.Deps().KubeClient = nil
+		kubelet.Deps().EventClient = nil
+		kubelet.Deps().HeartbeatClient = nil
 	}
-	kubelet.KubeletDeps.ProbeManager = nil
-	kubelet.KubeletDeps.Recorder = k
-	kubelet.KubeletDeps.OSInterface = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.Mounter = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.Subpather = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.HostUtil = k.config.Crid().DefaultBackend()
-	kubelet.KubeletDeps.TLSOptions = &server.TLSOptions{
+	kubelet.Deps().ProbeManager = nil
+	kubelet.Deps().Recorder = k
+	kubelet.Deps().OSInterface = k.config.Crid().DefaultBackend()
+	kubelet.Deps().Mounter = k.config.Crid().DefaultBackend()
+	kubelet.Deps().Subpather = k.config.Crid().DefaultBackend()
+	kubelet.Deps().HostUtil = k.config.Crid().DefaultBackend()
+	kubelet.Deps().TLSOptions = &server.TLSOptions{
 		Config: &tls.Config{
 			NextProtos: func() []string {
 				if !v1.HTTP2 {
@@ -226,13 +225,13 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) v1.Kube {
 				return []string{"h2", "http/1.1"}
 			}(),
 			MinVersion: func() uint16 {
-				if v, err := cliflag.TLSVersion(kubelet.KubeletConfiguration.TLSMinVersion); err == nil {
+				if v, err := cliflag.TLSVersion(kubelet.Configuration().TLSMinVersion); err == nil {
 					return v
 				}
 				return cliflag.DefaultTLSVersion()
 			}(),
 			CipherSuites: func() []uint16 {
-				if v, err := cliflag.TLSCipherSuites(kubelet.KubeletConfiguration.TLSCipherSuites); err == nil {
+				if v, err := cliflag.TLSCipherSuites(kubelet.Configuration().TLSCipherSuites); err == nil {
 					return v
 				}
 				return nil
@@ -246,7 +245,7 @@ func (k *KubeImpl) WithKubelet(kubelet *kubemark.HollowKubelet) v1.Kube {
 	return k
 }
 
-func (k *KubeImpl) Kubelet() *kubemark.HollowKubelet {
+func (k *KubeImpl) Kubelet() v1.Kubelet {
 	<-k.kubeletProvided
 	return k.kubelet
 }
