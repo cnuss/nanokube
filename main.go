@@ -6,19 +6,16 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/awslambda"
+	podman "github.com/cnuss/nanokube/pkg/awslambda"
 	"github.com/cnuss/nanokube/pkg/docker"
 	"github.com/cnuss/nanokube/pkg/nanokube"
-	"github.com/cnuss/nanokube/pkg/podman"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -136,19 +133,17 @@ func init() {
 		os.Setenv("DISABLE_HTTP2", "true")
 	}
 
-	// System Runtimes
-	pkg.Runtimes["docker"] = docker.Detect
-	pkg.Runtimes["podman"] = podman.Detect
-
-	// Cloud Runtimes
-	pkg.Runtimes["awslambda"] = awslambda.Detect
+	v1.Backends = append(v1.Backends, docker.Detect)
+	v1.Backends = append(v1.Backends, podman.Detect)
+	v1.Backends = append(v1.Backends, awslambda.Detect)
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	config, cancel, stop, err := pkg.NewConfig(context.Background())
 	defer stop()
 
-	config, cancel, err := pkg.NewConfig(ctx)
+	ctx := config.Context()
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -192,30 +187,17 @@ func main() {
 				panic(r)
 			}
 		}()
+
 		config = config.
-			WithStorageFactory(
-				nanokube.NewStorageFactory(ctx, config.Options())).
-			WithApiServer(nanokube.NewApiServer(
-				config.Options(),
-				config.Kube().ApiServerOptions(),
-				config.Kube().StorageFactory())).
-			WithKubelet(nanokube.NewKubelet(
-				config.Options(),
-				config.Kube().KubeletFlags(),
-				config.Kube().KubeletConfiguration(),
-				config.Kube().Client().Clientset(),
-				config.Kube().Client().WithHeartbeat(30*time.Second).Clientset(),
-				config.Crid().DefaultBackend(),
-				config.Crid().DefaultBackend().Driver(),
-				config.Crid().DefaultBackend().Driver(),
-				config.Crid().DefaultBackend().Manager(),
-			))
+			WithStorageFactory(nanokube.NewStorageFactory(config)).
+			WithApiServer(nanokube.NewApiServer(config)).
+			WithKubelet(nanokube.NewKubelet(config))
 
 		go run(ctx, cancel, config)
 		go updateKubeconfig(config)
 		go updateNode(config)
 
-		<-config.Context().Done()
+		<-config.Done()
 	}()
 
 	select {
@@ -237,7 +219,7 @@ func updateNode(config v1.Config) {
 	}
 
 	nodes := config.Kube().Client().CoreV1().Nodes()
-	tunnel := config.Kube().KubeletTunnel()
+	tunnel := config.Kube().Kubelet().Tunnel()
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		node, err := nodes.Get(config.Context(), ref.Name, metav1.GetOptions{})
@@ -286,8 +268,8 @@ func updateKubeconfig(config v1.Config) {
 		kubeconfig = clientcmdapi.NewConfig()
 	}
 
-	internal := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel(), true)
-	external := config.Kube().Client().WithTunnel(config.Kube().ApiServerTunnel(), false)
+	internal := config.Kube().Client().WithTunnel(config.Kube().ApiServer().Tunnel(), true)
+	external := config.Kube().Client().WithTunnel(config.Kube().ApiServer().Tunnel(), false)
 
 	if err := internal.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(v1.KubeconfigFile))); err != nil {
 		nanokube.Log.Error("failed to write internal kubeconfig", "path", string(config.Options().DataDir())+string(v1.KubeconfigFile), "error", err)

@@ -28,7 +28,6 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 	podresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
-	"k8s.io/kubelet/pkg/cri/streaming"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/cm/resourceupdates"
 	"k8s.io/kubernetes/pkg/kubelet/config"
@@ -48,6 +47,7 @@ type fsCacheEntry struct {
 }
 
 type BackendImpl struct {
+	name    v1.BackendName
 	driver  v1.Driver
 	options v1.Options
 
@@ -57,8 +57,8 @@ type BackendImpl struct {
 	network     v1.Network
 	networkOnce sync.Once
 
-	streaming     *restful.WebService
-	streamingOnce sync.Once
+	services     []*restful.WebService
+	servicesOnce sync.Once
 
 	startOnce sync.Once
 	ready     chan struct{}
@@ -69,13 +69,18 @@ type BackendImpl struct {
 
 var _ v1.Backend = &BackendImpl{}
 
-func NewBackend(driver v1.Driver) v1.Backend {
+func NewBackend(name v1.BackendName, driver v1.Driver) v1.Backend {
 	return &BackendImpl{
+		name:    name,
 		driver:  driver,
 		options: driver.Options(),
 		ready:   make(chan struct{}),
 		fsCache: make(map[string]fsCacheEntry),
 	}
+}
+
+func (b *BackendImpl) Name() v1.BackendName {
+	return b.name
 }
 
 func (b *BackendImpl) Context() context.Context {
@@ -93,15 +98,18 @@ func (b *BackendImpl) Network() v1.Network {
 	return b.network
 }
 
-func (b *BackendImpl) Streaming(baseURL *url.URL) *restful.WebService {
-	b.streamingOnce.Do(func() {
-		runtime := b.Driver().StreamRuntime(baseURL.JoinPath(b.Driver().Name()))
-		server, _ := streaming.NewServer(streaming.Config{
-			BaseURL: runtime.URL(),
-		}, runtime)
-		b.streaming = server.WebService()
+func (b *BackendImpl) Services() []*restful.WebService {
+	b.servicesOnce.Do(func() {
+		services := []*restful.WebService{}
+		services = append(services, b.Driver().Service())
+		b.services = nil
 	})
-	return b.streaming
+	return b.services
+}
+
+func (b *BackendImpl) WithBaseURL(baseURL *url.URL) v1.Backend {
+	b.Driver().WithBaseURL(baseURL.JoinPath(b.Driver().Name()))
+	return b
 }
 
 func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {

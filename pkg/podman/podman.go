@@ -5,12 +5,12 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/emicklei/go-restful/v3"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -19,7 +19,7 @@ func Detect(config v1.Config) v1.Backend {
 
 	for _, socket := range sockets {
 		if _, err := os.Stat(socket); err == nil {
-			backend, err := newBackend(config)
+			backend, err := NewBackend(config)
 			if err != nil {
 				continue
 			}
@@ -30,7 +30,7 @@ func Detect(config v1.Config) v1.Backend {
 	return nil
 }
 
-func newBackend(config v1.Config) (v1.Backend, error) {
+func NewBackend(config v1.Config) (v1.Backend, error) {
 	_, cancel := context.WithTimeout(config.Context(), 5*time.Second)
 	defer cancel()
 
@@ -38,20 +38,17 @@ func newBackend(config v1.Config) (v1.Backend, error) {
 
 	driver := &driver{config: config}
 
-	return pkg.NewBackend(driver), nil
+	return pkg.NewBackend(v1.PodmanBackend, driver), nil
 }
 
 type driver struct {
 	config v1.Config
-
-	streamRuntime     v1.StreamRuntime
-	streamRuntimeOnce sync.Once
 }
 
 var _ v1.Driver = &driver{}
 
 func (d *driver) Name() string {
-	return "podman"
+	return "todo" // similar to "name" from docker info response
 }
 
 func (d *driver) Context() context.Context {
@@ -60,6 +57,11 @@ func (d *driver) Context() context.Context {
 
 func (d *driver) Options() v1.Options {
 	return d.config.Options()
+}
+
+func (d *driver) Service() *restful.WebService {
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (d *driver) CgroupRoot() string {
@@ -208,12 +210,7 @@ func (d *driver) UpdateRuntimeConfig(ctx context.Context, runtimeConfig *criv1.R
 }
 
 func (d *driver) Version(ctx context.Context, apiVersion string) (*criv1.VersionResponse, error) {
-	return &criv1.VersionResponse{
-		Version:           d.config.Version(),
-		RuntimeName:       "podman",
-		RuntimeVersion:    "0.0.0", // TODO from podman
-		RuntimeApiVersion: apiVersion,
-	}, nil
+	return nil, nanokube.Unimplemented()
 }
 
 func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, error) {
@@ -242,9 +239,7 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 	return nil
 }
 
-func (d *driver) StreamRuntime(baseURL *url.URL) v1.StreamRuntime {
-	d.streamRuntimeOnce.Do(func() {
-		d.streamRuntime = NewStreamRuntime(d, baseURL)
-	})
-	return d.streamRuntime
+func (d *driver) WithBaseURL(baseURL *url.URL) v1.Driver {
+	nanokube.Unimplemented()
+	return d
 }

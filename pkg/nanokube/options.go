@@ -19,7 +19,8 @@ type OptionsImpl struct {
 	dataDir    string
 	standalone bool
 
-	dirs sync.Map
+	dirs    sync.Map
+	tunnels sync.Map // map[v1.ServiceName]v1.Tunnel
 }
 
 var _ v1.Options = &OptionsImpl{}

@@ -2,7 +2,6 @@ package pkg
 
 import (
 	"context"
-	"crypto/tls"
 	_ "embed"
 	"fmt"
 	"os"
@@ -18,12 +17,8 @@ import (
 	storage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
-	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
-	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
-	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	"k8s.io/kubernetes/pkg/kubelet/server"
 )
 
 //go:embed kube-system.yaml
@@ -46,21 +41,6 @@ type KubeImpl struct {
 
 	apiServerOptions     *apiserveroptions.CompletedOptions
 	apiServerOptionsOnce sync.Once
-
-	apiServerTunnel     v1.Tunnel
-	apiServerTunnelOnce sync.Once
-
-	kubeletTunnel     v1.Tunnel
-	kubeletTunnelOnce sync.Once
-
-	kubeletFlags     *kubeletoptions.KubeletFlags
-	kubeletFlagsOnce sync.Once
-
-	kubeletConfig     *kubeletconfig.KubeletConfiguration
-	kubeletConfigOnce sync.Once
-
-	tlsOptions     *server.TLSOptions
-	tlsOptionsOnce sync.Once
 
 	defaultStorageFactory     *storage.DefaultStorageFactory
 	defaultStorageFactoryOnce sync.Once
@@ -100,15 +80,20 @@ func newKube(config v1.Config) v1.Kube {
 	return kube
 }
 
+func (k *KubeImpl) Config() v1.Config {
+	return k.config
+}
+
 func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	k.apiServerOptionsOnce.Do(func() {
+		tunnel := k.Config().Tunnel(v1.APIServerService)
 		opts := apiserveroptions.NewServerRunOptions()
-		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", k.ApiServerTunnel().FQDN())}
-		opts.Authentication.ServiceAccounts.KeyFiles = []string{filepath.Join(string(k.config.Options().DataDir()), string(v1.KeyFile))}
+		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", tunnel.FQDN())}
+		opts.Authentication.ServiceAccounts.KeyFiles = []string{filepath.Join(string(k.Config().Options().DataDir()), string(v1.KeyFile))}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
 		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
-		opts.GenericServerRunOptions.ExternalHost = k.ApiServerFQDN()
+		opts.GenericServerRunOptions.ExternalHost = tunnel.FQDN()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.KubeletConfig.PreferredAddressTypes = []string{
 			string(corev1.NodeExternalDNS),
@@ -116,13 +101,13 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 			// string(corev1.NodeInternalDNS),
 			// string(corev1.NodeHostName),
 		}
-		opts.SecureServing.BindAddress = k.ApiServerTunnel().LocalHost()
-		opts.SecureServing.BindPort = int(k.ApiServerTunnel().LocalPort())
+		opts.SecureServing.BindAddress = tunnel.LocalHost()
+		opts.SecureServing.BindPort = int(tunnel.LocalPort())
 		opts.SecureServing.DisableHTTP2Serving = !v1.HTTP2
-		opts.SecureServing.ServerCert.CertDirectory = k.config.Options().DataDirAt(v1.DataDirCerts)
-		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.config.Options().DataDir()), string(v1.KeyFile))
+		opts.SecureServing.ServerCert.CertDirectory = k.Config().Options().DataDirAt(v1.DataDirCerts)
+		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.Config().Options().DataDir()), string(v1.KeyFile))
 
-		complete, err := opts.Complete(k.config.Context())
+		complete, err := opts.Complete(k.Config().Context())
 		if err != nil {
 			klog.Fatalf("Failed to complete apiserver options: %v", err)
 		}
@@ -138,111 +123,18 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	return k.apiServerOptions
 }
 
-func (k *KubeImpl) ApiServerTunnel() v1.Tunnel {
-	k.apiServerTunnelOnce.Do(func() {
-		k.apiServerTunnel = k.config.NewTunnel()
-	})
-	return k.apiServerTunnel
-}
-
-func (k *KubeImpl) ApiServerFQDN() string {
-	return k.ApiServerTunnel().FQDN()
-}
-
-func (k *KubeImpl) KubeletTunnel() v1.Tunnel {
-	k.kubeletTunnelOnce.Do(func() {
-		k.kubeletTunnel = k.config.NewTunnel()
-	})
-	return k.kubeletTunnel
-}
-
-func (k *KubeImpl) KubeletFQDN() string {
-	return k.KubeletTunnel().FQDN()
-}
-
-func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
-	k.kubeletFlagsOnce.Do(func() {
-		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
-		k.kubeletFlags.CloudProvider = "external"
-		k.kubeletFlags.HostnameOverride = k.KubeletTunnel().Hostname()
-		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
-		k.kubeletFlags.NodeIP = k.KubeletTunnel().LocalHost().String()
-		k.kubeletFlags.RootDirectory = k.config.Options().DataDirAt(v1.DataDirKubelet)
-	})
-	return k.kubeletFlags
-}
-
-func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
-	k.kubeletConfigOnce.Do(func() {
-		config, err := kubeletoptions.NewKubeletConfiguration()
-		if err != nil {
-			klog.Fatalf("Failed to create kubelet configuration: %v", err)
-		}
-		if err := k.writeStaticPods(); err != nil {
-			klog.Fatalf("Failed to write static pods: %v", err)
-		}
-		config.Address = k.KubeletTunnel().LocalHost().String()
-		config.ClusterDomain = k.KubeletTunnel().Domain()
-		// TODO(incomplete): probe a container to get resolv.conf
-		config.ClusterDNS = []string{"1.1.1.1"}
-		config.PodLogsDir = k.config.Options().DataDirAt(v1.DataDirLogs)
-		config.Port = k.KubeletTunnel().LocalPort()
-		config.ReadOnlyPort = 0
-		config.StaticPodPath = k.config.Options().DataDirAt(v1.DataDirStaticPods)
-
-		k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.config.Options().Name(), Host: k.KubeletFQDN()})
-		close(k.recorderProvided)
-
-		nanokube.Log.Info("kubelet configured", "fqdn", k.KubeletFQDN())
-		k.kubeletConfig = config
-	})
-	return k.kubeletConfig
-}
-
-func (k *KubeImpl) Client() v1.Client {
-	return k.ApiServer().Client(k.ctx)
-}
-
 func (k *KubeImpl) WithKubelet(kubelet v1.Kubelet) v1.Kube {
-	if k.config.Options().Standalone() {
-		kubelet.Configuration().RegisterNode = false
-		kubelet.Deps().KubeClient = nil
-		kubelet.Deps().EventClient = nil
-		kubelet.Deps().HeartbeatClient = nil
+	if err := os.WriteFile(filepath.Join(kubelet.Configuration().StaticPodPath, "static-pods.yaml"), []byte(kubeSystemManifest), 0o644); err != nil {
+		klog.Fatalf("Failed to write static pod manifest: %v", err)
 	}
-	kubelet.Deps().ProbeManager = nil
-	kubelet.Deps().Recorder = k
-	kubelet.Deps().Services = k.config.Crid().Services(k.KubeletTunnel().URL())
-	kubelet.Deps().OSInterface = k.config.Crid().DefaultBackend()
-	kubelet.Deps().Mounter = k.config.Crid().DefaultBackend()
-	kubelet.Deps().Subpather = k.config.Crid().DefaultBackend()
-	kubelet.Deps().HostUtil = k.config.Crid().DefaultBackend()
-	kubelet.Deps().TLSOptions = &server.TLSOptions{
-		Config: &tls.Config{
-			NextProtos: func() []string {
-				if !v1.HTTP2 {
-					return []string{"http/1.1"}
-				}
-				return []string{"h2", "http/1.1"}
-			}(),
-			MinVersion: func() uint16 {
-				if v, err := cliflag.TLSVersion(kubelet.Configuration().TLSMinVersion); err == nil {
-					return v
-				}
-				return cliflag.DefaultTLSVersion()
-			}(),
-			CipherSuites: func() []uint16 {
-				if v, err := cliflag.TLSCipherSuites(kubelet.Configuration().TLSCipherSuites); err == nil {
-					return v
-				}
-				return nil
-			}(),
-		},
-		CertFile: filepath.Join(string(k.config.Options().DataDir()), string(v1.CertFile)),
-		KeyFile:  filepath.Join(string(k.config.Options().DataDir()), string(v1.KeyFile)),
-	}
+
 	k.kubelet = kubelet
 	close(k.kubeletProvided)
+
+	k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Config().Options().Name(), Host: kubelet.Tunnel().FQDN()})
+	close(k.recorderProvided)
+
+	kubelet.Dependencies().Recorder = k
 	return k
 }
 
@@ -253,7 +145,6 @@ func (k *KubeImpl) Kubelet() v1.Kubelet {
 
 func (k *KubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Kube {
 	apiserver.Config().KubeAPIs.ControlPlane.StorageFactory = k.StorageFactory()
-	// TODO: set apiserver config on kubelet
 	k.apiserver = apiserver
 	close(k.apiserverProvided)
 	return k
@@ -275,12 +166,8 @@ func (k *KubeImpl) StorageFactory() v1.StorageFactory {
 	return k.storagefactory
 }
 
-func (k *KubeImpl) writeStaticPods() error {
-	path := k.config.Options().DataDirAt(v1.DataDirStaticPods)
-	if err := os.WriteFile(filepath.Join(path, "static-pods.yaml"), []byte(kubeSystemManifest), 0o644); err != nil {
-		return fmt.Errorf("write static pod manifest: %w", err)
-	}
-	return nil
+func (k *KubeImpl) Client() v1.Client {
+	return k.ApiServer().Client(k.ctx)
 }
 
 func (k *KubeImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {
@@ -307,7 +194,7 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
-			if ref.Name == k.KubeletTunnel().Hostname() {
+			if ref.Name == k.Kubelet().Tunnel().Hostname() {
 				k.nodeReadyOnce.Do(func() {
 					k.nodeReady <- ref
 					close(k.nodeReady)

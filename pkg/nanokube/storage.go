@@ -38,10 +38,10 @@ type StorageFactoryImpl struct {
 
 var _ v1.StorageFactory = &StorageFactoryImpl{}
 
-func NewStorageFactory(ctx context.Context, options v1.Options) v1.StorageFactory {
+func NewStorageFactory(config v1.Config) v1.StorageFactory {
 	return &StorageFactoryImpl{
-		ctx:                           ctx,
-		options:                       options,
+		ctx:                           config.Context(),
+		options:                       config.Options(),
 		defaultStorageFactoryProvided: make(chan struct{}),
 		ready:                         make(chan struct{}),
 	}

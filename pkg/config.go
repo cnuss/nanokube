@@ -3,12 +3,16 @@ package pkg
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
+	"os/signal"
 	"runtime"
 	"sync"
+	"syscall"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/component-base/version"
@@ -16,23 +20,26 @@ import (
 
 type ConfigImpl struct {
 	ctx     context.Context
+	stop    context.CancelFunc
 	cancel  context.CancelCauseFunc
 	cmd     *cobra.Command
 	options v1.Options
 
-	crid     v1.Crid
-	cridOnce sync.Once
-
 	kube     v1.Kube
 	kubeOnce sync.Once
 
-	dirs  sync.Map
-	files sync.Map
+	backends     sync.Map // map[v1.BackendName]v1.Backend
+	backendsOnce sync.Once
+
+	dirs    sync.Map
+	files   sync.Map
+	tunnels sync.Map
 }
 
 var _ v1.Config = &ConfigImpl{}
 
-func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, error) {
+func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, context.CancelFunc, error) {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	ctx, cancel := context.WithCancelCause(ctx)
 	var config *ConfigImpl = nil
 
@@ -55,6 +62,7 @@ func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, error) 
 		config = &ConfigImpl{
 			ctx:     ctx,
 			cancel:  cancel,
+			stop:    stop,
 			options: options,
 			cmd:     cmd,
 		}
@@ -62,14 +70,14 @@ func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, error) 
 	}
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		return nil, cancel, err
+		return nil, cancel, stop, err
 	}
 
 	if config == nil {
 		os.Exit(0)
 	}
 
-	return config, cancel, nil
+	return config, cancel, stop, nil
 }
 
 func (c *ConfigImpl) Context() context.Context {
@@ -84,6 +92,10 @@ func (c *ConfigImpl) Cancel(reason error) {
 	}
 }
 
+func (c *ConfigImpl) Done() <-chan struct{} {
+	return c.Context().Done()
+}
+
 func (c *ConfigImpl) Options() v1.Options {
 	return c.options
 }
@@ -92,15 +104,13 @@ func (c *ConfigImpl) Version() string {
 	return c.cmd.Version
 }
 
-func (c *ConfigImpl) Crid() v1.Crid {
-	c.cridOnce.Do(func() {
-		c.crid = newCrid(c)
-	})
-	return c.crid
-}
-
-func (c *ConfigImpl) NewTunnel() v1.Tunnel {
-	return NewTunnel(c)
+func (c *ConfigImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
+	if tunnel, ok := c.tunnels.Load(service); ok {
+		return tunnel.(v1.Tunnel)
+	}
+	tunnel := NewTunnel(c)
+	c.tunnels.Store(service, tunnel)
+	return tunnel
 }
 
 func (c *ConfigImpl) Kube() v1.Kube {
@@ -115,12 +125,74 @@ func (c *ConfigImpl) WithKubelet(kubelet v1.Kubelet) v1.Config {
 	return c
 }
 
+func (c *ConfigImpl) Kubelet() v1.Kubelet {
+	return c.Kube().Kubelet()
+}
+
 func (c *ConfigImpl) WithApiServer(apiserver v1.ApiServer) v1.Config {
 	c.Kube().WithApiServer(apiserver)
 	return c
 }
 
+func (c *ConfigImpl) ApiServer() v1.ApiServer {
+	return c.Kube().ApiServer()
+}
+
 func (c *ConfigImpl) WithStorageFactory(storagefactory v1.StorageFactory) v1.Config {
 	c.Kube().WithStorageFactory(storagefactory)
+	return c
+}
+
+func (c *ConfigImpl) StorageFactory() v1.StorageFactory {
+	return c.Kube().StorageFactory()
+}
+
+func (c *ConfigImpl) Backend(name v1.BackendName) v1.Backend {
+	if backend, ok := c.backends.Load(name); ok {
+		return backend.(v1.Backend)
+	}
+	return nil
+}
+
+func (c *ConfigImpl) Backends() map[v1.BackendName]v1.Backend {
+	c.backendsOnce.Do(func() {
+		for _, detect := range v1.Backends {
+			backend := detect(c)
+			if backend != nil {
+				nanokube.Log.Info("backend detected", "backend", backend.Name())
+				c.WithBackend(backend.Name(), backend)
+			}
+		}
+	})
+
+	backends := make(map[v1.BackendName]v1.Backend)
+	c.backends.Range(func(key, value any) bool {
+		name := key.(v1.BackendName)
+		backend := value.(v1.Backend)
+		backends[name] = backend
+		return true
+	})
+	return backends
+}
+
+func (c *ConfigImpl) Services(baseURL *url.URL) []*restful.WebService {
+	services := []*restful.WebService{}
+	c.backends.Range(func(key, value any) bool {
+		backend := value.(v1.Backend)
+		services = append(services, backend.WithBaseURL(baseURL.JoinPath(string(backend.Name()))).Services()...)
+		return true
+	})
+	return services
+}
+
+func (c *ConfigImpl) DefaultBackend() v1.Backend {
+	for _, backend := range c.Backends() {
+		return backend
+	}
+	return nil
+}
+
+func (c *ConfigImpl) WithBackend(name v1.BackendName, backend v1.Backend) v1.Config {
+	c.backends.Store(name, backend)
 	return c
 }

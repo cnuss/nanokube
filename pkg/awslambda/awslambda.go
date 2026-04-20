@@ -4,38 +4,38 @@ import (
 	"context"
 	"net"
 	"net/url"
-	"os"
-	"sync"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/emicklei/go-restful/v3"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
 func Detect(config v1.Config) v1.Backend {
-	temp := os.Getenv("AWS_TODO")
+	return nil
+}
 
-	if temp == "" {
-		return nil
-	}
+func NewBackend(config v1.Config) (v1.Backend, error) {
+	_, cancel := context.WithTimeout(config.Context(), 5*time.Second)
+	defer cancel()
+
+	// TODO: Setup client and ping
 
 	driver := &driver{config: config}
-	return pkg.NewBackend(driver)
+
+	return pkg.NewBackend(v1.AWSLambdaBackend, driver), nil
 }
 
 type driver struct {
 	config v1.Config
-
-	streamRuntime     v1.StreamRuntime
-	streamRuntimeOnce sync.Once
 }
 
 var _ v1.Driver = &driver{}
 
 func (d *driver) Name() string {
-	return "awslambda"
+	return "todo" // region probably?
 }
 
 func (d *driver) Context() context.Context {
@@ -44,6 +44,11 @@ func (d *driver) Context() context.Context {
 
 func (d *driver) Options() v1.Options {
 	return d.config.Options()
+}
+
+func (d *driver) Service() *restful.WebService {
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (d *driver) CgroupRoot() string {
@@ -192,12 +197,7 @@ func (d *driver) UpdateRuntimeConfig(ctx context.Context, runtimeConfig *criv1.R
 }
 
 func (d *driver) Version(ctx context.Context, apiVersion string) (*criv1.VersionResponse, error) {
-	return &criv1.VersionResponse{
-		Version:           d.config.Version(),
-		RuntimeName:       "awslambda",
-		RuntimeVersion:    "0.0.0", // TODO from lambda
-		RuntimeApiVersion: apiVersion,
-	}, nil
+	return nil, nanokube.Unimplemented()
 }
 
 func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, error) {
@@ -226,9 +226,7 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 	return nil
 }
 
-func (d *driver) StreamRuntime(baseURL *url.URL) v1.StreamRuntime {
-	d.streamRuntimeOnce.Do(func() {
-		d.streamRuntime = NewStreamRuntime(d, baseURL)
-	})
-	return d.streamRuntime
+func (d *driver) WithBaseURL(baseURL *url.URL) v1.Driver {
+	nanokube.Unimplemented()
+	return d
 }

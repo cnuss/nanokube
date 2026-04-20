@@ -1,9 +1,19 @@
 package v1
 
-import "path/filepath"
+import (
+	"path/filepath"
+)
 
 var (
 	HTTP2 = true
+
+	Backends         []BackendFunc = []BackendFunc{}
+	DockerBackend    BackendName   = "docker"
+	PodmanBackend    BackendName   = "podman"
+	AWSLambdaBackend BackendName   = "awslambda"
+
+	APIServerService ServiceName = "apiserver"
+	KubeletService   ServiceName = "kubelet"
 
 	DataDirLock       DataDir  = "lock"
 	DataDirKubelet    DataDir  = "kubelet"

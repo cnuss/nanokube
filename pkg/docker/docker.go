@@ -27,6 +27,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	"github.com/emicklei/go-restful/v3"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 
@@ -39,6 +40,7 @@ func Detect(config v1.Config) v1.Backend {
 	// TODO: Windows support
 	// TODO: DOCKER_HOST env var support
 	// TODO: Port number support
+	// TODO: Split Colima/Lima/RD into separate Detect functions
 	sockets := []string{
 		`//./pipe/docker_engine`, // TODO: Other windows named pipes?
 		filepath.Join(string(os.PathSeparator), "var", "run", "docker.sock"),
@@ -81,7 +83,7 @@ func newBackend(config v1.Config, socket string) (v1.Backend, error) {
 
 	driver := &driver{config: config, client: client}
 
-	return pkg.NewBackend(driver), nil
+	return pkg.NewBackend(v1.DockerBackend, driver), nil
 }
 
 type driver struct {
@@ -94,9 +96,6 @@ type driver struct {
 	cgroupRoot     string
 	cgroupRootOnce sync.Once
 
-	streamRuntime     v1.StreamRuntime
-	streamRuntimeOnce sync.Once
-
 	logStreams sync.Map // containerID -> *LogStream
 }
 
@@ -104,10 +103,9 @@ var _ v1.Driver = &driver{}
 
 func (d *driver) Name() string {
 	d.nameOnce.Do(func() {
-		d.name = "docker"
-		info, err := d.client.Info(d.Context())
-		if err == nil {
-			d.name = fmt.Sprintf("%s.%s", info.Name, d.name)
+		d.name = "unknown"
+		if info, err := d.client.Info(d.Context()); err == nil {
+			d.name = info.Name
 		}
 	})
 	return d.name
@@ -119,6 +117,11 @@ func (d *driver) Context() context.Context {
 
 func (d *driver) Options() v1.Options {
 	return d.config.Options()
+}
+
+func (d *driver) Service() *restful.WebService {
+	nanokube.Unimplemented()
+	return nil
 }
 
 func (d *driver) CgroupRoot() string {
@@ -1390,9 +1393,7 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 	return stream
 }
 
-func (d *driver) StreamRuntime(baseURL *url.URL) v1.StreamRuntime {
-	d.streamRuntimeOnce.Do(func() {
-		d.streamRuntime = NewStreamRuntime(d.client, d, baseURL)
-	})
-	return d.streamRuntime
+func (d *driver) WithBaseURL(baseURL *url.URL) v1.Driver {
+	nanokube.Unimplemented()
+	return d
 }

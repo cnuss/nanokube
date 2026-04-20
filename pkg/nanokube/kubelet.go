@@ -2,22 +2,23 @@ package nanokube
 
 import (
 	"context"
+	"crypto/tls"
+	"path/filepath"
+	"sync"
 
 	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 
-	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
-	internalapi "k8s.io/cri-api/pkg/apis"
+	cliflag "k8s.io/component-base/cli/flag"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
-	"k8s.io/kubernetes/pkg/kubelet/cm"
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
+	"k8s.io/kubernetes/pkg/kubelet/server"
 	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
@@ -41,55 +42,61 @@ import (
 )
 
 type KubeletImpl struct {
-	options v1.Options
-	flags   *kubeletoptions.KubeletFlags
-	config  *kubeletconfig.KubeletConfiguration
-	deps    *kubelet.Dependencies
+	config v1.Config
+
+	flags     *kubeletoptions.KubeletFlags
+	flagsOnce sync.Once
+
+	configuration     *kubeletconfig.KubeletConfiguration
+	configurationOnce sync.Once
+
+	dependencies     *kubelet.Dependencies
+	dependenciesOnce sync.Once
 
 	ready chan struct{}
 }
 
 var _ v1.Kubelet = &KubeletImpl{}
 
-func NewKubelet(
-	options v1.Options,
-	flags *kubeletoptions.KubeletFlags,
-	config *kubeletconfig.KubeletConfiguration,
-	client *clientset.Clientset,
-	heartbeatClient *clientset.Clientset,
-	cadvisorInterface cadvisor.Interface,
-	imageService internalapi.ImageManagerService,
-	runtimeService internalapi.RuntimeService,
-	containerManager cm.ContainerManager,
-) v1.Kubelet {
-	d := &kubelet.Dependencies{
-		KubeClient:                client,
-		HeartbeatClient:           heartbeatClient,
-		ProbeManager:              probetest.FakeManager{},
-		RemoteRuntimeService:      runtimeService,
-		RemoteImageService:        imageService,
-		CAdvisorInterface:         cadvisorInterface,
-		OSInterface:               &containertest.FakeOS{},
-		ContainerManager:          containerManager,
-		VolumePlugins:             volumePlugins(),
-		TLSOptions:                nil,
-		OOMAdjuster:               oom.NewFakeOOMAdjuster(),
-		Mounter:                   &mount.FakeMounter{},
-		Subpather:                 &subpath.FakeSubpath{},
-		HostUtil:                  hostutil.NewFakeHostUtil(nil),
-		PodStartupLatencyTracker:  kubeletutil.NewPodStartupLatencyTracker(),
-		NodeStartupLatencyTracker: kubeletutil.NewNodeStartupLatencyTracker(),
-		TracerProvider:            noopoteltrace.NewTracerProvider(),
-		Recorder:                  &record.FakeRecorder{}, // With real recorder we attempt to read /dev/kmsg.
-	}
-
+func NewKubelet(config v1.Config) v1.Kubelet {
 	return &KubeletImpl{
-		options: options,
-		flags:   flags,
-		config:  config,
-		deps:    d,
-		ready:   make(chan struct{}),
+		config: config,
+		flags:  kubeletoptions.NewKubeletFlags(),
+		configuration: func() *kubeletconfig.KubeletConfiguration {
+			if c, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
+				return c
+			}
+			return &kubeletconfig.KubeletConfiguration{}
+		}(),
+		dependencies: &kubelet.Dependencies{
+			// These dependencies are required by the kubelet
+			RemoteRuntimeService: nil,
+			RemoteImageService:   nil,
+			CAdvisorInterface:    nil,
+			ContainerManager:     nil,
+			TLSOptions:           nil,
+			// These are needed for non-standalone mode
+			KubeClient:      nil,
+			HeartbeatClient: nil,
+			// Use fake implementations for the rest of the dependencies
+			ProbeManager:              probetest.FakeManager{},
+			OSInterface:               &containertest.FakeOS{},
+			VolumePlugins:             volumePlugins(),
+			OOMAdjuster:               oom.NewFakeOOMAdjuster(),
+			Mounter:                   &mount.FakeMounter{},
+			Subpather:                 &subpath.FakeSubpath{},
+			HostUtil:                  hostutil.NewFakeHostUtil(nil),
+			PodStartupLatencyTracker:  kubeletutil.NewPodStartupLatencyTracker(),
+			NodeStartupLatencyTracker: kubeletutil.NewNodeStartupLatencyTracker(),
+			TracerProvider:            noopoteltrace.NewTracerProvider(),
+			Recorder:                  &record.FakeRecorder{},
+		},
+		ready: make(chan struct{}),
 	}
+}
+
+func (k *KubeletImpl) Tunnel() v1.Tunnel {
+	return k.config.Tunnel(v1.KubeletService)
 }
 
 func (k *KubeletImpl) Ready() <-chan struct{} {
@@ -97,22 +104,88 @@ func (k *KubeletImpl) Ready() <-chan struct{} {
 }
 
 func (k *KubeletImpl) Flags() *kubeletoptions.KubeletFlags {
+	k.flagsOnce.Do(func() {
+		k.flags.CloudProvider = "external"
+		k.flags.HostnameOverride = k.Tunnel().Hostname()
+		k.flags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
+		k.flags.NodeIP = k.Tunnel().LocalHost().String()
+		k.flags.RootDirectory = k.config.Options().DataDirAt(v1.DataDirKubelet)
+	})
 	return k.flags
 }
 
 func (k *KubeletImpl) Configuration() *kubeletconfig.KubeletConfiguration {
-	return k.config
+	k.configurationOnce.Do(func() {
+		if k.config.Options().Standalone() {
+			k.configuration.RegisterNode = false
+		}
+		k.configuration.Address = k.Tunnel().LocalHost().String()
+		k.configuration.ClusterDomain = k.Tunnel().Domain()
+		// TODO(incomplete): probe a container to get resolv.conf
+		k.configuration.ClusterDNS = []string{"1.1.1.1"}
+		k.configuration.PodLogsDir = k.config.Options().DataDirAt(v1.DataDirLogs)
+		k.configuration.Port = k.Tunnel().LocalPort()
+		k.configuration.ReadOnlyPort = 0
+		k.configuration.StaticPodPath = k.config.Options().DataDirAt(v1.DataDirStaticPods)
+	})
+	return k.configuration
 }
 
-func (k *KubeletImpl) Deps() *kubelet.Dependencies {
-	return k.deps
+func (k *KubeletImpl) Dependencies() *kubelet.Dependencies {
+	k.dependenciesOnce.Do(func() {
+		if !k.config.Options().Standalone() {
+			k.dependencies.KubeClient = k.config.Kube().Client()
+			k.dependencies.HeartbeatClient = k.config.Kube().Client()
+		} else {
+			k.dependencies.KubeClient = nil
+			k.dependencies.HeartbeatClient = nil
+			k.dependencies.EventClient = nil
+		}
+		k.dependencies.ProbeManager = nil
+		k.dependencies.Services = k.config.Services(k.Tunnel().URL())
+		k.dependencies.OSInterface = k.config.DefaultBackend()
+		k.dependencies.Mounter = k.config.DefaultBackend()
+		k.dependencies.Subpather = k.config.DefaultBackend()
+		k.dependencies.HostUtil = k.config.DefaultBackend()
+
+		// Required dependencies
+		k.dependencies.RemoteRuntimeService = k.config.DefaultBackend().Driver()
+		k.dependencies.RemoteImageService = k.config.DefaultBackend().Driver()
+		k.dependencies.CAdvisorInterface = k.config.DefaultBackend()
+		k.dependencies.ContainerManager = k.config.DefaultBackend().Manager()
+		k.dependencies.TLSOptions = &server.TLSOptions{
+			Config: &tls.Config{
+				NextProtos: func() []string {
+					if !v1.HTTP2 {
+						return []string{"http/1.1"}
+					}
+					return []string{"h2", "http/1.1"}
+				}(),
+				MinVersion: func() uint16 {
+					if v, err := cliflag.TLSVersion(k.Configuration().TLSMinVersion); err == nil {
+						return v
+					}
+					return cliflag.DefaultTLSVersion()
+				}(),
+				CipherSuites: func() []uint16 {
+					if v, err := cliflag.TLSCipherSuites(k.Configuration().TLSCipherSuites); err == nil {
+						return v
+					}
+					return nil
+				}(),
+			},
+			CertFile: filepath.Join(string(k.config.Options().DataDir()), string(v1.CertFile)),
+			KeyFile:  filepath.Join(string(k.config.Options().DataDir()), string(v1.KeyFile)),
+		}
+	})
+	return k.dependencies
 }
 
 func (k *KubeletImpl) Run(ctx context.Context) {
 	if err := kubeletapp.RunKubelet(ctx, &kubeletoptions.KubeletServer{
-		KubeletFlags:         *k.flags,
-		KubeletConfiguration: *k.config,
-	}, k.deps); err != nil {
+		KubeletFlags:         *k.Flags(),
+		KubeletConfiguration: *k.Configuration(),
+	}, k.Dependencies()); err != nil {
 		klog.Fatalf("Failed to run Kubelet: %v. Exiting.", err)
 	}
 	close(k.ready)

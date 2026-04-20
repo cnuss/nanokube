@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	cri "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kubelet/pkg/cri/streaming"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
@@ -90,11 +89,6 @@ type Network interface {
 	Default() AllocatedNetwork
 }
 
-type StreamRuntime interface {
-	streaming.Runtime
-	URL() *url.URL
-}
-
 type Driver interface {
 	cri.ImageManagerService
 	cri.RuntimeService
@@ -107,7 +101,9 @@ type Driver interface {
 	CgroupRoot() string
 	ExecHost(image string, cmd []string, mounts []Path) (string, error)
 	LogStream(containerID string, status *criv1.ContainerStatus) LogStream
-	StreamRuntime(baseURL *url.URL) StreamRuntime
+	Service() *restful.WebService
+
+	WithBaseURL(baseURL *url.URL) Driver
 }
 
 type Client interface {
@@ -127,6 +123,7 @@ type ApiServer interface {
 
 	Client(ctx context.Context) Client
 	Config() *app.Config
+	Tunnel() Tunnel
 }
 
 type Kubelet interface {
@@ -135,7 +132,8 @@ type Kubelet interface {
 	Run(ctx context.Context)
 	Flags() *kubeletoptions.KubeletFlags
 	Configuration() *kubeletconfig.KubeletConfiguration
-	Deps() *kubelet.Dependencies
+	Dependencies() *kubelet.Dependencies
+	Tunnel() Tunnel
 }
 
 type StorageFactory interface {
@@ -168,37 +166,30 @@ type Backend interface {
 	hostutil.HostUtils
 
 	Context() context.Context
+	Name() BackendName
 
 	Driver() Driver
 	Network() Network
 	Manager() Manager
-	Streaming(baseURL *url.URL) *restful.WebService
-}
+	Services() []*restful.WebService
 
-type Crid interface {
-	Backends() map[string]Backend
-	Services(baseURL *url.URL) []*restful.WebService
-	DefaultBackend() Backend
+	WithBaseURL(baseURL *url.URL) Backend
 }
 
 type Kube interface {
 	record.EventRecorder
+	Config() Config
 
 	ApiServerOptions() *apiserveroptions.CompletedOptions
-	ApiServerTunnel() Tunnel
-	ApiServerFQDN() string
-
-	KubeletFlags() *kubeletoptions.KubeletFlags
-	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
-	KubeletTunnel() Tunnel
-	KubeletFQDN() string
 
 	Client() Client
 
 	WithKubelet(kubelet Kubelet) Kube
 	Kubelet() Kubelet
+
 	WithApiServer(apiserver ApiServer) Kube
 	ApiServer() ApiServer
+
 	WithStorageFactory(storagefactory StorageFactory) Kube
 	StorageFactory() StorageFactory
 
@@ -208,16 +199,25 @@ type Kube interface {
 type Config interface {
 	Context() context.Context
 	Cancel(reason error)
+	Done() <-chan struct{}
 
 	Options() Options
 	Version() string
 
-	Kube() Kube
-	Crid() Crid
-
-	NewTunnel() Tunnel
+	Tunnel(name ServiceName) Tunnel
 
 	WithKubelet(kubelet Kubelet) Config
 	WithApiServer(apiserver ApiServer) Config
 	WithStorageFactory(storagefactory StorageFactory) Config
+	WithBackend(name BackendName, backend Backend) Config
+
+	Kube() Kube
+	Kubelet() Kubelet
+	ApiServer() ApiServer
+	StorageFactory() StorageFactory
+
+	Backends() map[BackendName]Backend
+	Services(baseURL *url.URL) []*restful.WebService
+	DefaultBackend() Backend
+	Backend(name BackendName) Backend
 }

@@ -13,7 +13,6 @@ import (
 	"k8s.io/apiserver/pkg/util/webhook"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
-	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/controlplane"
 	controlplaneapiserver "k8s.io/kubernetes/pkg/controlplane/apiserver"
@@ -23,9 +22,9 @@ import (
 )
 
 type ApiServerImpl struct {
-	options v1.Options
-	config  *app.Config
-	storage v1.StorageFactory
+	config    v1.Config
+	appConfig *app.Config
+	storage   v1.StorageFactory
 
 	client v1.Client
 
@@ -35,7 +34,8 @@ type ApiServerImpl struct {
 
 var _ v1.ApiServer = &ApiServerImpl{}
 
-func NewApiServer(options v1.Options, opts *options.CompletedOptions, storage v1.StorageFactory) v1.ApiServer {
+func NewApiServer(config v1.Config) v1.ApiServer {
+	opts := config.Kube().ApiServerOptions()
 	c := &app.Config{
 		Options: *opts,
 	}
@@ -50,7 +50,9 @@ func NewApiServer(options v1.Options, opts *options.CompletedOptions, storage v1
 		klog.Fatalf("Failed to build generic config: %v", err)
 	}
 
-	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.WithDefault(storageFactory).Default())
+	storage := config.Kube().StorageFactory().WithDefault(storageFactory)
+
+	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Default())
 	if err != nil {
 		klog.Fatalf("Failed to create kube-apiserver config: %v", err)
 	}
@@ -70,10 +72,10 @@ func NewApiServer(options v1.Options, opts *options.CompletedOptions, storage v1
 	c.Aggregator = aggregator
 
 	return &ApiServerImpl{
-		options: options,
-		config:  c,
-		storage: storage,
-		ready:   make(chan struct{}),
+		config:    config,
+		appConfig: c,
+		storage:   storage,
+		ready:     make(chan struct{}),
 	}
 }
 
@@ -82,14 +84,18 @@ func (h *ApiServerImpl) Ready() <-chan struct{} {
 }
 
 func (h *ApiServerImpl) Config() *app.Config {
-	return h.config
+	return h.appConfig
+}
+
+func (h *ApiServerImpl) Tunnel() v1.Tunnel {
+	return h.config.Tunnel(v1.APIServerService)
 }
 
 func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 	<-h.storage.Ready()
 
 	h.runOnce.Do(func() {
-		completed, err := h.config.Complete()
+		completed, err := h.appConfig.Complete()
 		if err != nil {
 			klog.Fatalf("Failed to complete API server config: %v", err)
 		}
