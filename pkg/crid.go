@@ -2,10 +2,12 @@ package pkg
 
 import (
 	"fmt"
+	"net/url"
 	"sync"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/emicklei/go-restful/v3"
 )
 
 type (
@@ -56,6 +58,14 @@ func (c *CridImpl) Backends() map[string]v1.Backend {
 		return true
 	})
 	return backends
+}
+
+func (c *CridImpl) Services(baseURL *url.URL) []*restful.WebService {
+	var services []*restful.WebService
+	for _, backend := range c.Backends() {
+		services = append(services, backend.Streaming(baseURL))
+	}
+	return services
 }
 
 func (c *CridImpl) DefaultBackend() v1.Backend {

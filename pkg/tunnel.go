@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -150,6 +151,13 @@ func (t *TunnelImpl) Hostname() string {
 func (t *TunnelImpl) Domain() string {
 	_, domain, _ := strings.Cut(t.FQDN(), ".")
 	return domain
+}
+
+func (t *TunnelImpl) URL() *url.URL {
+	return &url.URL{
+		Scheme: "https",
+		Host:   t.FQDN(),
+	}
 }
 
 func (t *TunnelImpl) Ready() <-chan struct{} {

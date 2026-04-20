@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"sync"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
@@ -13,22 +14,27 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"k8s.io/client-go/tools/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kubelet/pkg/cri/streaming"
 	utilexec "k8s.io/utils/exec"
 )
 
 type streamingRuntimeImpl struct {
-	client *client.Client
-	driver v1.Driver
+	client  *client.Client
+	driver  v1.Driver
+	baseURL *url.URL
 }
 
-var _ streaming.Runtime = &streamingRuntimeImpl{}
+var _ v1.StreamRuntime = &streamingRuntimeImpl{}
 
-func NewStreaming(client *client.Client, driver v1.Driver) streaming.Runtime {
+func NewStreamRuntime(client *client.Client, driver v1.Driver, baseURL *url.URL) v1.StreamRuntime {
 	return &streamingRuntimeImpl{
-		client: client,
-		driver: driver,
+		client:  client,
+		driver:  driver,
+		baseURL: baseURL,
 	}
+}
+
+func (s *streamingRuntimeImpl) URL() *url.URL {
+	return s.baseURL
 }
 
 func (s *streamingRuntimeImpl) Attach(ctx context.Context, containerID string, stdin io.Reader, stdout io.WriteCloser, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {

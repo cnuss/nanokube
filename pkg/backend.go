@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/emicklei/go-restful/v3"
 	cadvisorv1 "github.com/google/cadvisor/info/v1"
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
 	homedir "github.com/mitchellh/go-homedir"
@@ -55,7 +57,7 @@ type BackendImpl struct {
 	network     v1.Network
 	networkOnce sync.Once
 
-	streaming     streaming.Server
+	streaming     *restful.WebService
 	streamingOnce sync.Once
 
 	startOnce sync.Once
@@ -91,13 +93,13 @@ func (b *BackendImpl) Network() v1.Network {
 	return b.network
 }
 
-func (b *BackendImpl) StreamServer() streaming.Server {
+func (b *BackendImpl) Streaming(baseURL *url.URL) *restful.WebService {
 	b.streamingOnce.Do(func() {
-		runtime := b.Driver().StreamRuntime()
+		runtime := b.Driver().StreamRuntime(baseURL.JoinPath(b.Driver().Name()))
 		server, _ := streaming.NewServer(streaming.Config{
-			// TODO(incomplete): unique base URL for b.Name()
+			BaseURL: runtime.URL(),
 		}, runtime)
-		b.streaming = server
+		b.streaming = server.WebService()
 	})
 	return b.streaming
 }

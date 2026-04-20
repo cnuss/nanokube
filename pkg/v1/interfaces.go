@@ -4,8 +4,10 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/url"
 	"time"
 
+	"github.com/emicklei/go-restful/v3"
 	corev1 "k8s.io/api/core/v1"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	client "k8s.io/client-go/kubernetes"
@@ -52,6 +54,7 @@ type Tunnel interface {
 	FQDN() string
 	Hostname() string
 	Domain() string
+	URL() *url.URL
 }
 
 // LogStream represents a container's log pump. Runtimes construct one via
@@ -87,6 +90,11 @@ type Network interface {
 	Default() AllocatedNetwork
 }
 
+type StreamRuntime interface {
+	streaming.Runtime
+	URL() *url.URL
+}
+
 type Driver interface {
 	cri.ImageManagerService
 	cri.RuntimeService
@@ -99,7 +107,7 @@ type Driver interface {
 	CgroupRoot() string
 	ExecHost(image string, cmd []string, mounts []Path) (string, error)
 	LogStream(containerID string, status *criv1.ContainerStatus) LogStream
-	StreamRuntime() streaming.Runtime
+	StreamRuntime(baseURL *url.URL) StreamRuntime
 }
 
 type Client interface {
@@ -163,12 +171,13 @@ type Backend interface {
 
 	Driver() Driver
 	Network() Network
-	StreamServer() streaming.Server
 	Manager() Manager
+	Streaming(baseURL *url.URL) *restful.WebService
 }
 
 type Crid interface {
 	Backends() map[string]Backend
+	Services(baseURL *url.URL) []*restful.WebService
 	DefaultBackend() Backend
 }
 

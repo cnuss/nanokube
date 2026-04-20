@@ -3,22 +3,28 @@ package podman
 import (
 	"context"
 	"io"
+	"net/url"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"k8s.io/client-go/tools/remotecommand"
-	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 type streamingRuntimeImpl struct {
-	driver v1.Driver
+	driver  v1.Driver
+	baseURL *url.URL
 }
 
-var _ streaming.Runtime = &streamingRuntimeImpl{}
+var _ v1.StreamRuntime = &streamingRuntimeImpl{}
 
-func NewStreaming(driver v1.Driver) streaming.Runtime {
+func NewStreamRuntime(driver v1.Driver, baseURL *url.URL) v1.StreamRuntime {
 	return &streamingRuntimeImpl{
-		driver: driver,
+		driver:  driver,
+		baseURL: baseURL,
 	}
+}
+
+func (s *streamingRuntimeImpl) URL() *url.URL {
+	return s.baseURL
 }
 
 func (s *streamingRuntimeImpl) Attach(ctx context.Context, containerID string, in io.Reader, out io.WriteCloser, err io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {

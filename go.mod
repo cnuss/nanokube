@@ -9,6 +9,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/dustin/go-humanize v1.0.1
+	github.com/emicklei/go-restful/v3 v3.12.2
 	github.com/go-logr/logr v1.4.3
 	github.com/google/cadvisor v0.53.0
 	github.com/google/uuid v1.6.0
@@ -74,7 +75,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/euank/go-kmsg-parser v2.0.0+incompatible // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -221,6 +221,7 @@ require (
 )
 
 replace (
+	k8s.io/apiserver => ./kubernetes/staging/src/k8s.io/apiserver
 	k8s.io/cluster-bootstrap => github.com/kubernetes/cluster-bootstrap v0.35.0
 	k8s.io/cri-client => github.com/kubernetes/cri-client v0.35.0
 	k8s.io/csi-translation-lib => github.com/kubernetes/csi-translation-lib v0.35.0
@@ -231,7 +232,7 @@ replace (
 	k8s.io/kube-proxy => github.com/kubernetes/kube-proxy v0.35.0
 	k8s.io/kube-scheduler => github.com/kubernetes/kube-scheduler v0.35.0
 	k8s.io/kubectl => github.com/kubernetes/kubectl v0.35.0
+	k8s.io/kubelet => ./kubernetes/staging/src/k8s.io/kubelet
 	k8s.io/kubernetes => ./kubernetes
-	k8s.io/apiserver => ./kubernetes/staging/src/k8s.io/apiserver
 	k8s.io/pod-security-admission => github.com/kubernetes/pod-security-admission v0.35.0
 )

@@ -212,6 +212,7 @@ func (k *KubeImpl) WithKubelet(kubelet v1.Kubelet) v1.Kube {
 	}
 	kubelet.Deps().ProbeManager = nil
 	kubelet.Deps().Recorder = k
+	kubelet.Deps().Services = k.config.Crid().Services(k.KubeletTunnel().URL())
 	kubelet.Deps().OSInterface = k.config.Crid().DefaultBackend()
 	kubelet.Deps().Mounter = k.config.Crid().DefaultBackend()
 	kubelet.Deps().Subpather = k.config.Crid().DefaultBackend()

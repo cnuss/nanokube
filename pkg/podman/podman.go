@@ -3,6 +3,7 @@ package podman
 import (
 	"context"
 	"net"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kubelet/pkg/cri/streaming"
 )
 
 func Detect(config v1.Config) v1.Backend {
@@ -44,7 +44,7 @@ func newBackend(config v1.Config) (v1.Backend, error) {
 type driver struct {
 	config v1.Config
 
-	streamRuntime     streaming.Runtime
+	streamRuntime     v1.StreamRuntime
 	streamRuntimeOnce sync.Once
 }
 
@@ -242,9 +242,9 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 	return nil
 }
 
-func (d *driver) StreamRuntime() streaming.Runtime {
+func (d *driver) StreamRuntime(baseURL *url.URL) v1.StreamRuntime {
 	d.streamRuntimeOnce.Do(func() {
-		d.streamRuntime = NewStreaming(d)
+		d.streamRuntime = NewStreamRuntime(d, baseURL)
 	})
 	return d.streamRuntime
 }

@@ -30,10 +30,26 @@ index 00d08e6f800..db15b0c3951 100644
  	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
  	if port <= 0 {
 diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
-index b8b7cfd84e9..08f79a46376 100644
+index b8b7cfd84e9..8e2880b2801 100644
 --- a/pkg/kubelet/kubelet.go
 +++ b/pkg/kubelet/kubelet.go
-@@ -569,7 +569,8 @@ func NewMainKubelet(ctx context.Context,
+@@ -33,6 +33,7 @@ import (
+ 	"sync/atomic"
+ 	"time"
+ 
++	"github.com/emicklei/go-restful/v3"
+ 	cadvisorapi "github.com/google/cadvisor/info/v1"
+ 	inuserns "github.com/moby/sys/userns"
+ 	"github.com/opencontainers/selinux/go-selinux"
+@@ -335,6 +336,7 @@ type Dependencies struct {
+ 	PodStartupLatencyTracker  util.PodStartupLatencyTracker
+ 	NodeStartupLatencyTracker util.NodeStartupLatencyTracker
+ 	HealthChecker             watchdog.HealthChecker
++	Services                  []*restful.WebService
+ 	// remove it after cadvisor.UsingLegacyCadvisorStats dropped.
+ 	useLegacyCadvisorStats bool
+ }
+@@ -569,7 +571,8 @@ func NewMainKubelet(ctx context.Context,
  				return nil, err
  			}
  		} else {
@@ -43,19 +59,67 @@ index b8b7cfd84e9..08f79a46376 100644
  		}
  	}
  
+@@ -702,6 +705,7 @@ func NewMainKubelet(ctx context.Context,
+ 	)
+ 
+ 	klet.resourceAnalyzer = serverstats.NewResourceAnalyzer(ctx, klet, kubeCfg.VolumeStatsAggPeriod.Duration, kubeDeps.Recorder)
++	klet.additionalServices = kubeDeps.Services
+ 
+ 	klet.runtimeService = kubeDeps.RemoteRuntimeService
+ 
+@@ -1517,6 +1521,13 @@ type Kubelet struct {
+ 
+ 	// flagz is the Reader interface to get flags for flagz page.
+ 	flagz flagz.Reader
++
++	// nanokube patch: additional WebServices registered on the kubelet's
++	// HTTP server alongside the built-in routes. Populated from
++	// Dependencies.Services in NewMainKubelet and consumed by
++	// ListenAndServe so callers (e.g. per-backend streaming endpoints)
++	// inherit the container's auth/tracing/metrics filters.
++	additionalServices []*restful.WebService
+ }
+ 
+ // ListPodStats is delegated to StatsProvider, which implements stats.Provider interface
+@@ -3168,6 +3179,12 @@ func (kl *Kubelet) ListenAndServe(ctx context.Context, kubeCfg *kubeletconfigint
+ 	server.ListenAndServeKubeletServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, kubeCfg, tlsOptions, auth, tp)
+ }
+ 
++// AdditionalServices returns extra restful WebServices to register on the
++// kubelet HTTP server (populated from Dependencies.Services).
++func (kl *Kubelet) AdditionalServices() []*restful.WebService {
++	return kl.additionalServices
++}
++
+ // ListenAndServeReadOnly runs the kubelet HTTP server in read-only mode.
+ func (kl *Kubelet) ListenAndServeReadOnly(ctx context.Context, address net.IP, port uint, tp trace.TracerProvider) {
+ 	server.ListenAndServeKubeletReadOnlyServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, address, port, tp)
 diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
-index 31ecfe65672..6bb0a442ce0 100644
+index 31ecfe65672..05ec4e5e7fa 100644
 --- a/pkg/kubelet/server/server.go
 +++ b/pkg/kubelet/server/server.go
-@@ -742,6 +742,7 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
- 	containerName := request.PathParameter("containerName")
- 	ctx := request.Request.Context()
+@@ -182,6 +182,12 @@ func ListenAndServeKubeletServer(
+ 	logger.Info("Starting to listen", "address", address, "port", port)
+ 	handler := NewServer(ctx, host, resourceAnalyzer, checkers, flagz, auth, kubeCfg)
+ 	handler.InstallTracingFilter(tp)
++	// nanokube patch: register additional WebServices (e.g. per-backend
++	// streaming endpoints) on the kubelet's restful container so they
++	// inherit the container's auth/tracing/metrics filters.
++	for _, ws := range host.AdditionalServices() {
++		handler.restfulCont.Add(ws)
++	}
  
-+
- 	if len(podID) == 0 {
- 		// TODO: Why return JSON when the rest return plaintext errors?
- 		// TODO: Why return plaintext errors?
-@@ -835,6 +836,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
+ 	s := &http.Server{
+ 		Addr:           net.JoinHostPort(address.String(), strconv.FormatUint(uint64(port), 10)),
+@@ -286,6 +292,7 @@ type HostInterface interface {
+ 	GetPortForward(ctx context.Context, podName, podNamespace string, podUID types.UID, portForwardOpts portforward.V4Options) (*url.URL, error)
+ 	ListMetricDescriptors(ctx context.Context) ([]*runtimeapi.MetricDescriptor, error)
+ 	ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi.PodSandboxMetrics, error)
++	AdditionalServices() []*restful.WebService
+ }
+ 
+ // NewServer initializes and configures a kubelet.Server object to handle HTTP requests.
+@@ -835,6 +842,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
  	}
  
  	response.Header().Set("Transfer-Encoding", "chunked")
@@ -66,6 +130,29 @@ index 31ecfe65672..6bb0a442ce0 100644
  	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
  		response.WriteError(http.StatusBadRequest, err)
  		return
+diff --git a/pkg/kubelet/server/server_test.go b/pkg/kubelet/server/server_test.go
+index 97091722ef5..f87e44b7545 100644
+--- a/pkg/kubelet/server/server_test.go
++++ b/pkg/kubelet/server/server_test.go
+@@ -36,6 +36,7 @@ import (
+ 
+ 	cadvisorapi "github.com/google/cadvisor/info/v1"
+ 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
++	restful "github.com/emicklei/go-restful/v3"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 	"k8s.io/utils/ptr"
+@@ -152,6 +153,10 @@ func (fk *fakeKubelet) ListPodSandboxMetrics(ctx context.Context) ([]*runtimeapi
+ 	return nil, nil
+ }
+ 
++func (fk *fakeKubelet) AdditionalServices() []*restful.WebService {
++	return nil
++}
++
+ func (fk *fakeKubelet) SyncLoopHealthCheck(req *http.Request) error {
+ 	duration := fk.resyncInterval * 2
+ 	minDuration := time.Minute * 5
 diff --git a/pkg/volume/util/atomic_writer.go b/pkg/volume/util/atomic_writer.go
 index 0466dffacdf..9e26ad0a9b4 100644
 --- a/pkg/volume/util/atomic_writer.go
@@ -134,3 +221,36 @@ index b1a61991bf5..82d7a0426d7 100644
  	contentType = s.ContentType
  	if len(contentType) == 0 {
  		contentType = resp.Header.Get("Content-Type")
+diff --git a/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go b/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go
+index fe5c22b0497..0a76aa19419 100644
+--- a/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go
++++ b/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go
+@@ -58,6 +58,8 @@ type Server interface {
+ 	Start(stayUp bool) error
+ 	// Stop the server, and terminate any open connections.
+ 	Stop() error
++
++	WebService() *restful.WebService
+ }
+ 
+ // Runtime is the interface to execute the commands and provide the streams.
+@@ -145,6 +147,7 @@ func NewServer(config Config, runtime Runtime) (Server, error) {
+ 	handler := restful.NewContainer()
+ 	handler.Add(ws)
+ 	s.handler = handler
++	s.ws = ws
+ 	s.server = &http.Server{
+ 		Addr:      s.config.Addr,
+ 		Handler:   s.handler,
+@@ -160,6 +163,11 @@ type server struct {
+ 	handler http.Handler
+ 	cache   *requestCache
+ 	server  *http.Server
++	ws      *restful.WebService
++}
++
++func (s *server) WebService() *restful.WebService {
++	return s.ws
+ }
+ 
+ func validateExecRequest(req *runtimeapi.ExecRequest) error {
