@@ -243,3 +243,8 @@ func (d *driver) WithBaseURL(baseURL *url.URL) v1.Driver {
 	nanokube.Unimplemented()
 	return d
 }
+
+func (d *driver) BaseURL() *url.URL {
+	nanokube.Unimplemented()
+	return nil
+}

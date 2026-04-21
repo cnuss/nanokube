@@ -31,6 +31,9 @@ type ConfigImpl struct {
 	backends     sync.Map // map[v1.BackendName]v1.Backend
 	backendsOnce sync.Once
 
+	services     []*restful.WebService
+	servicesOnce sync.Once
+
 	dirs    sync.Map
 	files   sync.Map
 	tunnels sync.Map
@@ -108,7 +111,7 @@ func (c *ConfigImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
 	if tunnel, ok := c.tunnels.Load(service); ok {
 		return tunnel.(v1.Tunnel)
 	}
-	tunnel := NewTunnel(c)
+	tunnel := NewTunnel(c, service)
 	c.tunnels.Store(service, tunnel)
 	return tunnel
 }
@@ -176,13 +179,14 @@ func (c *ConfigImpl) Backends() map[v1.BackendName]v1.Backend {
 }
 
 func (c *ConfigImpl) Services(baseURL *url.URL) []*restful.WebService {
-	services := []*restful.WebService{}
-	c.backends.Range(func(key, value any) bool {
-		backend := value.(v1.Backend)
-		services = append(services, backend.WithBaseURL(baseURL.JoinPath(string(backend.Name()))).Services()...)
-		return true
+	c.servicesOnce.Do(func() {
+		services := []*restful.WebService{}
+		for _, backend := range c.Backends() {
+			services = append(services, backend.WithBaseURL(baseURL.JoinPath(string(backend.Name()))).Services()...)
+		}
+		c.services = services
 	})
-	return services
+	return c.services
 }
 
 func (c *ConfigImpl) DefaultBackend() v1.Backend {

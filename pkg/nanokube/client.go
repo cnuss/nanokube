@@ -77,7 +77,7 @@ func (c *ClientImpl) WithTunnel(tunnel v1.Tunnel, local bool) v1.Client {
 	if !local {
 		cfg.Host = fmt.Sprintf("https://%s", tunnel.FQDN())
 	} else {
-		cfg.Host = fmt.Sprintf("https://%s:%d", tunnel.LocalHost(), tunnel.LocalPort())
+		cfg.Host = fmt.Sprintf("https://%s:%d", tunnel.LocalIP(), tunnel.LocalPort())
 	}
 	cfg.CAData = nil
 	cfg.Insecure = local

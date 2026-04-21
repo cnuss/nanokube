@@ -49,10 +49,13 @@ type Tunnel interface {
 
 	Context() context.Context
 	LocalPort() int32
-	LocalHost() net.IP
+	LocalIP() net.IP
+	LocalHostname() string
+	LocalDomain() string
+	LocalFQDN() string
+	Domain() string
 	FQDN() string
 	Hostname() string
-	Domain() string
 	URL() *url.URL
 }
 
@@ -104,6 +107,7 @@ type Driver interface {
 	Service() *restful.WebService
 
 	WithBaseURL(baseURL *url.URL) Driver
+	BaseURL() *url.URL
 }
 
 type Client interface {

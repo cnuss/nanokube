@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,10 +30,15 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/emicklei/go-restful/v3"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	remotecommandconsts "k8s.io/apimachinery/pkg/util/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	remotecommandserver "k8s.io/kubelet/pkg/cri/streaming/remotecommand"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
+
+// streamIdleTimeout matches upstream cri/streaming server's default.
+const streamIdleTimeout = 4 * time.Hour
 
 func Detect(config v1.Config) v1.Backend {
 	home, _ := os.UserHomeDir()
@@ -56,7 +62,7 @@ func Detect(config v1.Config) v1.Backend {
 			nanokube.Log.Debug("docker socket not present", "socket", socket, "error", err)
 			continue
 		}
-		backend, err := newBackend(config, socket)
+		backend, err := NewBackend(config, socket)
 		if err != nil {
 			nanokube.Log.Warn("docker socket present but unusable", "socket", socket, "error", err)
 			continue
@@ -68,7 +74,7 @@ func Detect(config v1.Config) v1.Backend {
 	return nil
 }
 
-func newBackend(config v1.Config, socket string) (v1.Backend, error) {
+func NewBackend(config v1.Config, socket string) (v1.Backend, error) {
 	client, err := newClient(config, socket)
 	if err != nil {
 		return nil, err
@@ -81,9 +87,12 @@ func newBackend(config v1.Config, socket string) (v1.Backend, error) {
 		return nil, err
 	}
 
-	driver := &driver{config: config, client: client}
-
-	return pkg.NewBackend(v1.DockerBackend, driver), nil
+	return pkg.NewBackend(v1.DockerBackend, &driver{
+		config:          config,
+		client:          client,
+		baseURLProvided: make(chan struct{}),
+		streamsProvided: make(chan struct{}),
+	}), nil
 }
 
 type driver struct {
@@ -97,6 +106,13 @@ type driver struct {
 	cgroupRootOnce sync.Once
 
 	logStreams sync.Map // containerID -> *LogStream
+
+	streams         Streams
+	streamsOnce     sync.Once
+	streamsProvided chan struct{}
+
+	baseURL         *url.URL
+	baseURLProvided chan struct{}
 }
 
 var _ v1.Driver = &driver{}
@@ -120,8 +136,12 @@ func (d *driver) Options() v1.Options {
 }
 
 func (d *driver) Service() *restful.WebService {
-	nanokube.Unimplemented()
-	return nil
+	<-d.baseURLProvided
+	d.streamsOnce.Do(func() {
+		d.streams = NewStreams(d)
+		close(d.streamsProvided)
+	})
+	return d.streams.Service()
 }
 
 func (d *driver) CgroupRoot() string {
@@ -142,7 +162,15 @@ func (d *driver) CgroupRoot() string {
 }
 
 func (d *driver) Attach(ctx context.Context, req *criv1.AttachRequest) (*criv1.AttachResponse, error) {
-	return nil, nanokube.Unimplemented()
+	<-d.streamsProvided
+
+	url := d.streams.New().WithHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "attach: not implemented", http.StatusNotImplemented)
+	})).URL()
+
+	return &criv1.AttachResponse{
+		Url: url,
+	}, nil
 }
 
 func (d *driver) CheckpointContainer(ctx context.Context, options *criv1.CheckpointContainerRequest) error {
@@ -418,7 +446,43 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 }
 
 func (d *driver) Exec(ctx context.Context, request *criv1.ExecRequest) (*criv1.ExecResponse, error) {
-	return nil, nanokube.Unimplemented()
+	<-d.streamsProvided
+
+	containerID := request.GetContainerId()
+	cmd := request.GetCmd()
+	opts := &remotecommandserver.Options{
+		Stdin:  request.GetStdin(),
+		Stdout: request.GetStdout(),
+		Stderr: request.GetStderr(),
+		TTY:    request.GetTty(),
+	}
+	executor := &dockerExecutor{
+		client:      d.client,
+		containerID: containerID,
+		cmd:         cmd,
+		stdin:       opts.Stdin,
+		stdout:      opts.Stdout,
+		stderr:      opts.Stderr,
+		tty:         opts.TTY,
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remotecommandserver.ServeExec(
+			w, r, executor,
+			"", "", // podName, uid — unused by executor; request path does not carry them
+			containerID, cmd,
+			opts,
+			streamIdleTimeout,
+			remotecommandconsts.DefaultStreamCreationTimeout,
+			remotecommandconsts.SupportedStreamingProtocols,
+		)
+	})
+
+	url := d.streams.New().WithHandler(handler).URL()
+
+	return &criv1.ExecResponse{
+		Url: url,
+	}, nil
 }
 
 func (d *driver) ExecSync(ctx context.Context, containerID string, cmd []string, timeout time.Duration) (stdout []byte, stderr []byte, err error) {
@@ -809,7 +873,15 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 }
 
 func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequest) (*criv1.PortForwardResponse, error) {
-	return nil, nanokube.Unimplemented()
+	<-d.streamsProvided
+
+	url := d.streams.New().WithHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "portforward: not implemented", http.StatusNotImplemented)
+	})).URL()
+
+	return &criv1.PortForwardResponse{
+		Url: url,
+	}, nil
 }
 
 func (d *driver) PullImage(ctx context.Context, img *criv1.ImageSpec, auth *criv1.AuthConfig, podSandboxConfig *criv1.PodSandboxConfig) (string, error) {
@@ -1394,6 +1466,12 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 }
 
 func (d *driver) WithBaseURL(baseURL *url.URL) v1.Driver {
-	nanokube.Unimplemented()
+	d.baseURL = baseURL
+	close(d.baseURLProvided)
 	return d
+}
+
+func (d *driver) BaseURL() *url.URL {
+	<-d.baseURLProvided
+	return d.baseURL
 }

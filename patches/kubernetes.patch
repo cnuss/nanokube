@@ -153,6 +153,20 @@ index 97091722ef5..f87e44b7545 100644
  func (fk *fakeKubelet) SyncLoopHealthCheck(req *http.Request) error {
  	duration := fk.resyncInterval * 2
  	minDuration := time.Minute * 5
+diff --git a/pkg/registry/core/pod/rest/subresources.go b/pkg/registry/core/pod/rest/subresources.go
+index e6ffa3408ff..446b9cebfc5 100644
+--- a/pkg/registry/core/pod/rest/subresources.go
++++ b/pkg/registry/core/pod/rest/subresources.go
+@@ -281,5 +281,9 @@ func (r *PortForwardREST) Connect(ctx context.Context, name string, opts runtime
+ func newThrottledUpgradeAwareProxyHandler(location *url.URL, transport http.RoundTripper, wrapTransport, upgradeRequired bool, responder rest.Responder) http.Handler {
+ 	handler := proxy.NewUpgradeAwareHandler(location, transport, wrapTransport, upgradeRequired, proxy.NewErrorResponder(responder))
+ 	handler.MaxBytesPerSec = capabilities.Get().PerConnectionBandwidthLimitBytesPerSec
++	// nanokube: rewrite outgoing Host header to match the backend URL. Without
++	// this, the incoming Host (apiserver's cloudflare FQDN) is forwarded and
++	// cloudflare routes the apiserver→kubelet subrequest back to the apiserver.
++	handler.UseLocationHost = true
+ 	return handler
+ }
 diff --git a/pkg/volume/util/atomic_writer.go b/pkg/volume/util/atomic_writer.go
 index 0466dffacdf..9e26ad0a9b4 100644
 --- a/pkg/volume/util/atomic_writer.go
@@ -221,6 +235,41 @@ index b1a61991bf5..82d7a0426d7 100644
  	contentType = s.ContentType
  	if len(contentType) == 0 {
  		contentType = resp.Header.Get("Content-Type")
+diff --git a/staging/src/k8s.io/kubelet/pkg/cri/streaming/remotecommand/websocket.go b/staging/src/k8s.io/kubelet/pkg/cri/streaming/remotecommand/websocket.go
+index 25900888522..263d78bbbc7 100644
+--- a/staging/src/k8s.io/kubelet/pkg/cri/streaming/remotecommand/websocket.go
++++ b/staging/src/k8s.io/kubelet/pkg/cri/streaming/remotecommand/websocket.go
+@@ -37,6 +37,10 @@ const (
+ 	preV4Base64WebsocketProtocol = wsstream.Base64ChannelWebSocketProtocol
+ 	v4BinaryWebsocketProtocol    = "v4." + wsstream.ChannelWebSocketProtocol
+ 	v4Base64WebsocketProtocol    = "v4." + wsstream.Base64ChannelWebSocketProtocol
++	// v5 is v4 with an additional stream-close signal (see wsstream doc.go);
++	// binary-only. Handshake/handle code in wsstream.Conn already recognizes
++	// this protocol via protocolSupportsStreamClose.
++	v5BinaryWebsocketProtocol = "v5." + wsstream.ChannelWebSocketProtocol
+ )
+ 
+ // createChannels returns the standard channel types for a shell connection (STDIN 0, STDOUT 1, STDERR 2)
+@@ -93,6 +97,10 @@ func createWebSocketStreams(req *http.Request, w http.ResponseWriter, opts *Opti
+ 			Binary:   false,
+ 			Channels: channels,
+ 		},
++		v5BinaryWebsocketProtocol: {
++			Binary:   true,
++			Channels: channels,
++		},
+ 	})
+ 	conn.SetIdleTimeout(idleTimeout)
+ 	negotiatedProtocol, streams, err := conn.Open(responsewriter.GetOriginal(w), req)
+@@ -122,7 +130,7 @@ func createWebSocketStreams(req *http.Request, w http.ResponseWriter, opts *Opti
+ 	}
+ 
+ 	switch negotiatedProtocol {
+-	case v4BinaryWebsocketProtocol, v4Base64WebsocketProtocol:
++	case v4BinaryWebsocketProtocol, v4Base64WebsocketProtocol, v5BinaryWebsocketProtocol:
+ 		ctx.writeStatus = v4WriteStatusFunc(streams[errorChannel])
+ 	default:
+ 		ctx.writeStatus = v1WriteStatusFunc(streams[errorChannel])
 diff --git a/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go b/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go
 index fe5c22b0497..0a76aa19419 100644
 --- a/staging/src/k8s.io/kubelet/pkg/cri/streaming/server.go

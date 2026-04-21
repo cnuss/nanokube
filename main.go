@@ -182,7 +182,7 @@ func main() {
 		defer func() {
 			if r := recover(); r != nil && ctx.Err() == nil {
 				buf := make([]byte, 1<<16)
-				buf = buf[:runtime.Stack(buf, true)]
+				buf = buf[:runtime.Stack(buf, false)]
 				fmt.Fprintf(os.Stderr, "panic during init: %v\n%s\n", r, buf)
 				panic(r)
 			}

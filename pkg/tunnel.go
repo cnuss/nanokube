@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -49,8 +50,9 @@ const (
 var promMu sync.Mutex
 
 type TunnelImpl struct {
-	ctx    context.Context
-	config v1.Config
+	ctx         context.Context
+	config      v1.Config
+	serviceName v1.ServiceName
 
 	localHost     net.IP
 	localHostOnce sync.Once
@@ -69,10 +71,11 @@ type TunnelImpl struct {
 
 var _ v1.Tunnel = &TunnelImpl{}
 
-func NewTunnel(config v1.Config) v1.Tunnel {
+func NewTunnel(config v1.Config, serviceName v1.ServiceName) v1.Tunnel {
 	return &TunnelImpl{
 		ctx:         config.Context(),
 		config:      config,
+		serviceName: serviceName,
 		fqdnReady:   make(chan struct{}),
 		tunnelReady: make(chan struct{}),
 	}
@@ -82,7 +85,7 @@ func (t *TunnelImpl) Context() context.Context {
 	return t.ctx
 }
 
-func (t *TunnelImpl) LocalHost() net.IP {
+func (t *TunnelImpl) LocalIP() net.IP {
 	t.localHostOnce.Do(func() {
 		conn, _ := net.Dial("udp", "1.1.1.1:53")
 		defer conn.Close()
@@ -104,6 +107,23 @@ func (t *TunnelImpl) LocalPort() int32 {
 	return t.localPort
 }
 
+func (t *TunnelImpl) LocalHostname() string {
+	hostname, _ := os.Hostname()
+	hostname, _, _ = strings.Cut(hostname, ".")
+	return hostname
+}
+
+func (t *TunnelImpl) LocalDomain() string {
+	hostname, _ := os.Hostname()
+	_, domain, _ := strings.Cut(hostname, ".")
+	return domain
+}
+
+func (t *TunnelImpl) LocalFQDN() string {
+	hostname, _ := os.Hostname()
+	return hostname
+}
+
 func (t *TunnelImpl) FQDN() string {
 	t.fqdnOnce.Do(func() {
 		// Close both signal channels on any early exit so Ready() consumers
@@ -116,7 +136,7 @@ func (t *TunnelImpl) FQDN() string {
 			}
 		}()
 
-		tunnel, err := newQuickTunnel(t)
+		tunnel, err := newQuickTunnel(t, t.serviceName)
 		if err != nil {
 			t.config.Cancel(NewFatalError(fmt.Errorf("failed to create tunnel: %w", err)))
 			return
@@ -154,9 +174,11 @@ func (t *TunnelImpl) Domain() string {
 }
 
 func (t *TunnelImpl) URL() *url.URL {
+	<-t.Ready() // ensure FQDN is ready before constructing URL
 	return &url.URL{
 		Scheme: "https",
 		Host:   t.FQDN(),
+		Path:   "/",
 	}
 }
 
@@ -205,8 +227,8 @@ type quickTunnelResponse struct {
 	Errors  []quickTunnelError `json:"errors"`
 }
 
-func newQuickTunnel(tunnel v1.Tunnel) (*QuickTunnel, error) {
-	log := zerolog.New(io.Discard).With().Str("component", "quicktunnel").Logger()
+func newQuickTunnel(tunnel v1.Tunnel, serviceName v1.ServiceName) (*QuickTunnel, error) {
+	log := zerolog.New(io.Discard).With().Str("service", string(serviceName)).Str("component", "quicktunnel").Logger()
 	client := http.Client{
 		Transport: &http.Transport{
 			TLSHandshakeTimeout:   httpTimeout,
@@ -416,7 +438,7 @@ func (q *QuickTunnel) OrchestrationConfig() *orchestration.Config {
 					},
 					WarpRouting: config.WarpRoutingConfig{},
 					Ingress: []config.UnvalidatedIngressRule{
-						{Service: fmt.Sprintf("https://%s:%d", q.tunnel.LocalHost(), q.tunnel.LocalPort())},
+						{Service: fmt.Sprintf("https://%s:%d", q.tunnel.LocalIP(), q.tunnel.LocalPort())},
 					},
 				})
 				return &parsed

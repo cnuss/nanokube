@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	_ "unsafe"
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	storage "k8s.io/apiserver/pkg/server/storage"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -32,7 +34,11 @@ func init() {
 }
 
 var FeatureGates = map[string]bool{
-	"KubeletInUserNamespace": true,
+	// Disable apiserver's WebSocket→SPDY translator for exec/attach so the
+	// client's WebSocket upgrade is forwarded end-to-end to the kubelet.
+	// Cloudflare tunnels pass Upgrade: websocket but strip Upgrade: SPDY/3.1.
+	"TranslateStreamCloseWebsocketRequests": false,
+	"KubeletInUserNamespace":                true,
 }
 
 type KubeImpl struct {
@@ -66,6 +72,9 @@ type KubeImpl struct {
 var _ v1.Kube = &KubeImpl{}
 
 func newKube(config v1.Config) v1.Kube {
+	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(FeatureGates); err != nil {
+		klog.Fatalf("Failed to set feature gates: %v", err)
+	}
 	kube := &KubeImpl{
 		ctx:                    config.Context(),
 		config:                 config,
@@ -101,7 +110,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 			// string(corev1.NodeInternalDNS),
 			// string(corev1.NodeHostName),
 		}
-		opts.SecureServing.BindAddress = tunnel.LocalHost()
+		opts.SecureServing.BindAddress = tunnel.LocalIP()
 		opts.SecureServing.BindPort = int(tunnel.LocalPort())
 		opts.SecureServing.DisableHTTP2Serving = !v1.HTTP2
 		opts.SecureServing.ServerCert.CertDirectory = k.Config().Options().DataDirAt(v1.DataDirCerts)
@@ -194,11 +203,20 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
-			if ref.Name == k.Kubelet().Tunnel().Hostname() {
-				k.nodeReadyOnce.Do(func() {
-					k.nodeReady <- ref
-					close(k.nodeReady)
-				})
+			filterNames := []string{
+				k.Kubelet().Tunnel().Hostname(),
+				k.Kubelet().Tunnel().FQDN(),
+				k.Kubelet().Tunnel().LocalHostname(),
+				k.Kubelet().Tunnel().LocalFQDN(),
+			}
+			for _, name := range filterNames {
+				if strings.ToLower(ref.Name) == strings.ToLower(name) {
+					k.nodeReadyOnce.Do(func() {
+						k.nodeReady <- ref
+						close(k.nodeReady)
+					})
+					break
+				}
 			}
 		}
 	}

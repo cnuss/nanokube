@@ -108,7 +108,7 @@ func (k *KubeletImpl) Flags() *kubeletoptions.KubeletFlags {
 		k.flags.CloudProvider = "external"
 		k.flags.HostnameOverride = k.Tunnel().Hostname()
 		k.flags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
-		k.flags.NodeIP = k.Tunnel().LocalHost().String()
+		k.flags.NodeIP = k.Tunnel().LocalIP().String()
 		k.flags.RootDirectory = k.config.Options().DataDirAt(v1.DataDirKubelet)
 	})
 	return k.flags
@@ -119,7 +119,7 @@ func (k *KubeletImpl) Configuration() *kubeletconfig.KubeletConfiguration {
 		if k.config.Options().Standalone() {
 			k.configuration.RegisterNode = false
 		}
-		k.configuration.Address = k.Tunnel().LocalHost().String()
+		k.configuration.Address = k.Tunnel().LocalIP().String()
 		k.configuration.ClusterDomain = k.Tunnel().Domain()
 		// TODO(incomplete): probe a container to get resolv.conf
 		k.configuration.ClusterDNS = []string{"1.1.1.1"}
@@ -141,12 +141,6 @@ func (k *KubeletImpl) Dependencies() *kubelet.Dependencies {
 			k.dependencies.HeartbeatClient = nil
 			k.dependencies.EventClient = nil
 		}
-		k.dependencies.ProbeManager = nil
-		k.dependencies.Services = k.config.Services(k.Tunnel().URL())
-		k.dependencies.OSInterface = k.config.DefaultBackend()
-		k.dependencies.Mounter = k.config.DefaultBackend()
-		k.dependencies.Subpather = k.config.DefaultBackend()
-		k.dependencies.HostUtil = k.config.DefaultBackend()
 
 		// Required dependencies
 		k.dependencies.RemoteRuntimeService = k.config.DefaultBackend().Driver()
@@ -156,10 +150,7 @@ func (k *KubeletImpl) Dependencies() *kubelet.Dependencies {
 		k.dependencies.TLSOptions = &server.TLSOptions{
 			Config: &tls.Config{
 				NextProtos: func() []string {
-					if !v1.HTTP2 {
-						return []string{"http/1.1"}
-					}
-					return []string{"h2", "http/1.1"}
+					return []string{"http/1.1"}
 				}(),
 				MinVersion: func() uint16 {
 					if v, err := cliflag.TLSVersion(k.Configuration().TLSMinVersion); err == nil {
@@ -177,6 +168,13 @@ func (k *KubeletImpl) Dependencies() *kubelet.Dependencies {
 			CertFile: filepath.Join(string(k.config.Options().DataDir()), string(v1.CertFile)),
 			KeyFile:  filepath.Join(string(k.config.Options().DataDir()), string(v1.KeyFile)),
 		}
+
+		k.dependencies.ProbeManager = nil
+		k.dependencies.Services = k.config.Services(k.Tunnel().URL())
+		k.dependencies.OSInterface = k.config.DefaultBackend()
+		k.dependencies.Mounter = k.config.DefaultBackend()
+		k.dependencies.Subpather = k.config.DefaultBackend()
+		k.dependencies.HostUtil = k.config.DefaultBackend()
 	})
 	return k.dependencies
 }

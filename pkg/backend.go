@@ -102,7 +102,7 @@ func (b *BackendImpl) Services() []*restful.WebService {
 	b.servicesOnce.Do(func() {
 		services := []*restful.WebService{}
 		services = append(services, b.Driver().Service())
-		b.services = nil
+		b.services = services
 	})
 	return b.services
 }
