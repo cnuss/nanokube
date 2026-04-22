@@ -58,7 +58,7 @@ func (s *StreamsImpl) Service() *restful.WebService {
 		}
 
 		go func() {
-			// wait for cleanup and delete the stream
+			// wait for cleanup and delete the stream reference
 			done := <-stream.Done()
 			defer done.Cancel()
 			s.streams.Delete(streamID)
