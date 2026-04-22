@@ -445,9 +445,11 @@ func (d *driver) Exec(ctx context.Context, request *criv1.ExecRequest) (*criv1.E
 		Url: d.streams.New().WithExec(request, func(ctx context.Context, stream nanokube.Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize, timeout time.Duration) <-chan nanokube.Done {
 			ctx, cancel := context.WithCancel(ctx)
 			done := make(chan nanokube.Done, 1)
+			resizer := <-stream.Resizer(ctx, resize)
 
 			go func() {
 				defer close(done)
+				defer resizer.Done()
 
 				createResp, e := d.client.ContainerExecCreate(ctx, request.GetContainerId(), container.ExecOptions{
 					Cmd:          request.GetCmd(),
@@ -455,29 +457,27 @@ func (d *driver) Exec(ctx context.Context, request *criv1.ExecRequest) (*criv1.E
 					AttachStdout: true,
 					AttachStderr: true,
 					Tty:          request.GetTty(),
+					ConsoleSize:  resizer.ConsoleSize(),
 				})
 				if e != nil {
 					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("exec create: %w", e)}
 					return
 				}
 
-				attachResp, e := d.client.ContainerExecAttach(ctx, createResp.ID, container.ExecAttachOptions{Tty: request.GetTty()})
+				attachResp, e := d.client.ContainerExecAttach(ctx, createResp.ID, container.ExecAttachOptions{
+					Tty: request.GetTty(),
+					ConsoleSize: resizer.WithHandler(func(height, width uint) {
+						d.client.ContainerExecResize(ctx, createResp.ID, container.ResizeOptions{
+							Height: height,
+							Width:  width,
+						})
+					}).ConsoleSize(),
+				})
 				if e != nil {
 					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("exec attach: %w", e)}
 					return
 				}
 				defer attachResp.Close()
-
-				if request.GetTty() && resize != nil {
-					go func() {
-						for size := range resize {
-							d.client.ContainerExecResize(ctx, createResp.ID, container.ResizeOptions{
-								Height: uint(size.Height),
-								Width:  uint(size.Width),
-							})
-						}
-					}()
-				}
 
 				cancel, e := stream.ProxyStream(ctx, request.GetTty(), request.GetStdin(), in, request.GetStdout(), out, request.GetStderr(), err, &nanokube.Proxy{
 					Conn:       attachResp.Conn,

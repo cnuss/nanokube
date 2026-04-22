@@ -1,8 +1,8 @@
 package nanokube
 
 import (
-	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +12,6 @@ import (
 	"time"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/types"
@@ -94,7 +93,7 @@ type (
 
 type Proxy struct {
 	CloseWrite func() error
-	Reader     *bufio.Reader
+	Reader     io.Reader
 	Conn       net.Conn
 }
 
@@ -115,6 +114,7 @@ type Stream interface {
 
 	Handle(req *restful.Request, resp *restful.Response)
 	ProxyStream(ctx context.Context, tty bool, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, res *Proxy) (context.CancelFunc, error)
+	Resizer(ctx context.Context, resize <-chan tools.TerminalSize) <-chan Resizer
 }
 
 type Done struct {
@@ -295,17 +295,8 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 	defer res.Conn.Close()
 
 	ctx, cancel := context.WithCancel(ctx)
-	stdoutDone := make(chan struct{})
-	var outErr, errErr error
-
-	// Non-tty: stdcopy (in the stdout goroutine) demuxes stderr frames into
-	// errPipeW; the stderr goroutine drains errPipeR to the client's err.
-	// Tty: no stderr on the wire; the pipe stays unused.
-	var errPipeR *io.PipeReader
-	var errPipeW *io.PipeWriter
-	if !tty {
-		errPipeR, errPipeW = io.Pipe()
-	}
+	outputDone := make(chan struct{})
+	var outputErr error
 
 	// stdin: copy to conn if the client asked for it, else drain to /dev/null
 	// so the client side doesn't stall on a full buffer. AfterFunc closes the
@@ -324,58 +315,158 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 		io.Copy(dst, in)
 	}()
 
-	// stderr: drains the demux pipe in non-tty mode; in tty mode there's
-	// nothing on the wire so the goroutine just holds the pessimistic close
-	// hook until ctx cancel.
+	// output: sole reader of res.Reader. tty => raw single stream (no framing);
+	// non-tty => Docker's stdcopy wire format: [type:1][zero:3][size:4BE][payload].
+	// type 1 = stdout, 2 = stderr.
 	go func() {
-		stop := context.AfterFunc(ctx, func() {
-			err.Close()
-		})
-		defer stop()
-		if tty {
-			<-ctx.Done()
-			return
-		}
-		dst := io.Writer(io.Discard)
-		if stderr {
-			dst = err
-		}
-		_, errErr = io.Copy(dst, errPipeR)
-	}()
+		defer close(outputDone)
+		defer out.Close()
+		defer err.Close()
 
-	// stdout: sole reader of res.Reader. tty => single stream. non-tty =>
-	// stdcopy demuxes stdout→out and stderr→errPipeW (drained by the stderr
-	// goroutine). Closing errPipeW on the way out lets that goroutine finish.
-	go func() {
-		defer close(stdoutDone)
 		if tty {
 			dst := io.Writer(io.Discard)
 			if stdout {
 				dst = out
 			}
-			_, outErr = io.Copy(dst, res.Reader)
+			_, outputErr = io.Copy(dst, res.Reader)
 			return
 		}
-		outDst := io.Writer(io.Discard)
-		if stdout {
-			outDst = out
+
+		header := make([]byte, 8)
+		for {
+			if _, rerr := io.ReadFull(res.Reader, header); rerr != nil {
+				if !errors.Is(rerr, io.EOF) {
+					outputErr = rerr
+				}
+				return
+			}
+			size := binary.BigEndian.Uint32(header[4:8])
+			payload := make([]byte, size)
+			if _, rerr := io.ReadFull(res.Reader, payload); rerr != nil {
+				outputErr = rerr
+				return
+			}
+			var dst io.Writer = io.Discard
+			switch header[0] {
+			case 1:
+				if stdout {
+					dst = out
+				}
+			case 2:
+				if stderr {
+					dst = err
+				}
+			}
+			if _, werr := dst.Write(payload); werr != nil {
+				outputErr = werr
+				return
+			}
 		}
-		_, outErr = stdcopy.StdCopy(outDst, errPipeW, res.Reader)
-		errPipeW.Close()
 	}()
 
-	<-stdoutDone
+	<-outputDone
 	// TODO(research): some race condition between stdout closing and the response finishing
 	// TODO(research): extra newline on -it + sh
 	time.Sleep(1 * time.Second)
 
-	errs := []error{}
-	if outErr != nil {
-		errs = append(errs, fmt.Errorf("output: %w", outErr))
+	if outputErr != nil {
+		return cancel, fmt.Errorf("output: %w", outputErr)
 	}
-	if errErr != nil {
-		errs = append(errs, fmt.Errorf("stderr: %w", errErr))
-	}
+	return cancel, nil
+}
 
-	return cancel, errors.Join(errs...)
+// TODO(incomplete): move
+type Resizer interface {
+	TerminalSize() tools.TerminalSize
+	ConsoleSize() *[2]uint
+	WithHandler(func(height, width uint)) Resizer
+	Done() error
+}
+
+type resizerImpl struct {
+	cancelFunc   context.CancelFunc
+	mu           sync.Mutex
+	terminalSize tools.TerminalSize
+	consoleSize  *[2]uint
+	handler      func(height, width uint)
+}
+
+var _ Resizer = &resizerImpl{}
+
+// initialResizeTimeout bounds the wait for the client's first TerminalSize
+// event. Conformant clients (e.g. kubectl) prime their size queue with the
+// current terminal size, so in practice the first event arrives well under
+// this budget. Sparse clients fall through and attach proceeds unsized.
+const initialResizeTimeout = 250 * time.Millisecond
+
+func (r *resizerImpl) update(s tools.TerminalSize) {
+	r.mu.Lock()
+	Log.Info("terminal resized", "height", s.Height, "width", s.Width)
+	r.terminalSize = s
+	r.consoleSize = &[2]uint{uint(s.Height), uint(s.Width)}
+	h := r.handler
+	r.mu.Unlock()
+	if h != nil {
+		h(uint(s.Height), uint(s.Width))
+	}
+}
+
+func (r *resizerImpl) TerminalSize() tools.TerminalSize {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.terminalSize
+}
+
+func (r *resizerImpl) ConsoleSize() *[2]uint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.consoleSize
+}
+
+func (r *resizerImpl) WithHandler(handler func(height, width uint)) Resizer {
+	r.mu.Lock()
+	r.handler = handler
+	last := r.terminalSize
+	replay := handler != nil && r.consoleSize != nil
+	r.mu.Unlock()
+	if replay {
+		handler(uint(last.Height), uint(last.Width))
+	}
+	return r
+}
+
+func (r *resizerImpl) Done() error {
+	r.cancelFunc()
+	return nil
+}
+
+func (s *StreamImpl) Resizer(ctx context.Context, resize <-chan tools.TerminalSize) <-chan Resizer {
+	ctx, cancel := context.WithCancel(ctx)
+	r := &resizerImpl{cancelFunc: cancel}
+	ready := make(chan Resizer, 1)
+
+	go func() {
+		select {
+		case s, ok := <-resize:
+			if ok {
+				r.update(s)
+			}
+		case <-time.After(initialResizeTimeout):
+		case <-ctx.Done():
+		}
+		ready <- r
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case s, ok := <-resize:
+				if !ok {
+					return
+				}
+				r.update(s)
+			}
+		}
+	}()
+	return ready
 }
