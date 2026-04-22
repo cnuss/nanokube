@@ -58,12 +58,11 @@ func (s *StreamsImpl) Service() *restful.WebService {
 		}
 
 		go func() {
+			// wait for cleanup and delete the stream
 			done := <-stream.Done()
-			defer done.Cancel() // ensure any resources associated with the stream are cleaned up
-			Log.Info("stream done", "streamID", streamID, "code", done.Code, "error", done.Err)
+			defer done.Cancel()
 			s.streams.Delete(streamID)
 		}()
-		Log.Info("handling stream", "streamID", streamID)
 		stream.WithTimeout(4*time.Hour).Handle(req, resp)
 	}
 
@@ -401,7 +400,6 @@ const initialResizeTimeout = 250 * time.Millisecond
 
 func (r *resizerImpl) update(s tools.TerminalSize) {
 	r.mu.Lock()
-	Log.Info("terminal resized", "height", s.Height, "width", s.Width)
 	r.terminalSize = s
 	r.consoleSize = &[2]uint{uint(s.Height), uint(s.Width)}
 	h := r.handler
