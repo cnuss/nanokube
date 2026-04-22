@@ -291,6 +291,9 @@ func (s *StreamImpl) PortForward(ctx context.Context, _ string, _ types.UID, por
 }
 
 func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, res *Proxy) (context.CancelFunc, error) {
+	defer res.CloseWrite()
+	defer res.Conn.Close()
+
 	ctx, cancel := context.WithCancel(ctx)
 	stdoutDone := make(chan struct{})
 	var outErr, errErr error
@@ -310,7 +313,6 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 	go func() {
 		if closer, ok := in.(io.Closer); ok {
 			stop := context.AfterFunc(ctx, func() {
-				Log.Info("PROXY_STREAM: stdin close")
 				closer.Close()
 			})
 			defer stop()
@@ -320,7 +322,6 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 			dst = res.Conn
 		}
 		io.Copy(dst, in)
-		Log.Info("PROXY_STREAM: stdin done")
 	}()
 
 	// stderr: drains the demux pipe in non-tty mode; in tty mode there's
@@ -328,13 +329,11 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 	// hook until ctx cancel.
 	go func() {
 		stop := context.AfterFunc(ctx, func() {
-			Log.Info("PROXY_STREAM: stderr close")
 			err.Close()
 		})
 		defer stop()
 		if tty {
 			<-ctx.Done()
-			Log.Info("PROXY_STREAM: stderr done (tty)")
 			return
 		}
 		dst := io.Writer(io.Discard)
@@ -342,7 +341,6 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 			dst = err
 		}
 		_, errErr = io.Copy(dst, errPipeR)
-		Log.Info("PROXY_STREAM: stderr done (demux)")
 	}()
 
 	// stdout: sole reader of res.Reader. tty => single stream. non-tty =>
@@ -356,7 +354,6 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 				dst = out
 			}
 			_, outErr = io.Copy(dst, res.Reader)
-			Log.Info("PROXY_STREAM: stdout done (tty)")
 			return
 		}
 		outDst := io.Writer(io.Discard)
@@ -365,16 +362,12 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 		}
 		_, outErr = stdcopy.StdCopy(outDst, errPipeW, res.Reader)
 		errPipeW.Close()
-		Log.Info("PROXY_STREAM: stdout done (demux)")
 	}()
 
 	<-stdoutDone
+	// TODO(research): some race condition between stdout closing and the response finishing
+	// TODO(research): extra newline on -it + sh
 	time.Sleep(1 * time.Second)
-	Log.Info("PROXY_STREAM: stdoutDone")
-	closeWriteErr := res.CloseWrite()
-	Log.Info("PROXY_STREAM: CloseWrite")
-	closeErr := res.Conn.Close()
-	Log.Info("PROXY_STREAM: conn close")
 
 	errs := []error{}
 	if outErr != nil {
@@ -382,12 +375,6 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 	}
 	if errErr != nil {
 		errs = append(errs, fmt.Errorf("stderr: %w", errErr))
-	}
-	if closeWriteErr != nil {
-		errs = append(errs, fmt.Errorf("close write: %w", closeWriteErr))
-	}
-	if closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
-		errs = append(errs, fmt.Errorf("close conn: %w", closeErr))
 	}
 
 	return cancel, errors.Join(errs...)
