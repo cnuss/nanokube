@@ -89,7 +89,7 @@ func (c *ConfigImpl) Context() context.Context {
 
 func (c *ConfigImpl) Cancel(reason error) {
 	c.cancel(reason)
-	var fatal *FatalError
+	var fatal nanokube.Error
 	if errors.As(reason, &fatal) {
 		runtime.Goexit()
 	}

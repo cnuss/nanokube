@@ -98,7 +98,7 @@ func (t *TunnelImpl) LocalPort() int32 {
 	t.localPortOnce.Do(func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			t.config.Cancel(NewFatalError(fmt.Errorf("failed to acquire tunnel port: %w", err)))
+			t.config.Cancel(nanokube.NewError(fmt.Errorf("failed to acquire tunnel port: %w", err)))
 			return
 		}
 		defer listener.Close()
@@ -138,7 +138,7 @@ func (t *TunnelImpl) FQDN() string {
 
 		tunnel, err := newQuickTunnel(t, t.serviceName)
 		if err != nil {
-			t.config.Cancel(NewFatalError(fmt.Errorf("failed to create tunnel: %w", err)))
+			t.config.Cancel(nanokube.NewError(fmt.Errorf("failed to create tunnel: %w", err)))
 			return
 		}
 
@@ -157,7 +157,7 @@ func (t *TunnelImpl) FQDN() string {
 			case <-t.tunnel.Stopped():
 				close(t.tunnelReady)
 			}
-			t.config.Cancel(NewFatalError(fmt.Errorf("tunnel cancelled")))
+			t.config.Cancel(nanokube.NewError(fmt.Errorf("tunnel cancelled")))
 		}()
 	})
 	return t.fqdn

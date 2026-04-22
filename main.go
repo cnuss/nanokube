@@ -161,17 +161,17 @@ func main() {
 	}()
 
 	klog.OsExit = func(code int) {
-		cancel(pkg.NewFatalError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
+		cancel(nanokube.NewError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
 		runtime.Goexit()
 	}
 
 	defer func() {
 		cancel(nil)
 		if cause := context.Cause(config.Context()); cause != nil {
-			var fatal *pkg.FatalError
-			if errors.As(cause, &fatal) {
-				fmt.Fprintln(os.Stderr, fatal)
-				os.Exit(fatal.Code())
+			var err nanokube.Error
+			if errors.As(cause, &err) {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(err.ExitStatus())
 			}
 		}
 	}()
@@ -209,7 +209,7 @@ func main() {
 func run(ctx context.Context, cancel context.CancelCauseFunc, config v1.Config) {
 	// DEVNOTE: everything runs implicitly when we call their accessors
 	config.Kube().Kubelet().Run(ctx)
-	cancel(pkg.NewFatalError(fmt.Errorf("kubelet exited unexpectedly")))
+	cancel(nanokube.NewError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
 func updateNode(config v1.Config) {

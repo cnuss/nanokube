@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,9 +29,8 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/emicklei/go-restful/v3"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	remotecommandconsts "k8s.io/apimachinery/pkg/util/remotecommand"
+	tools "k8s.io/client-go/tools/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	remotecommandserver "k8s.io/kubelet/pkg/cri/streaming/remotecommand"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
@@ -107,7 +105,7 @@ type driver struct {
 
 	logStreams sync.Map // containerID -> *LogStream
 
-	streams         Streams
+	streams         nanokube.Streams
 	streamsOnce     sync.Once
 	streamsProvided chan struct{}
 
@@ -138,7 +136,7 @@ func (d *driver) Options() v1.Options {
 func (d *driver) Service() *restful.WebService {
 	<-d.baseURLProvided
 	d.streamsOnce.Do(func() {
-		d.streams = NewStreams(d)
+		d.streams = nanokube.NewStreams(d)
 		close(d.streamsProvided)
 	})
 	return d.streams.Service()
@@ -163,13 +161,9 @@ func (d *driver) CgroupRoot() string {
 
 func (d *driver) Attach(ctx context.Context, req *criv1.AttachRequest) (*criv1.AttachResponse, error) {
 	<-d.streamsProvided
-
-	url := d.streams.New().WithHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "attach: not implemented", http.StatusNotImplemented)
-	})).URL()
-
 	return &criv1.AttachResponse{
-		Url: url,
+		// TODO: attach func
+		Url: d.streams.New().URL(),
 	}, nil
 }
 
@@ -447,41 +441,70 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 
 func (d *driver) Exec(ctx context.Context, request *criv1.ExecRequest) (*criv1.ExecResponse, error) {
 	<-d.streamsProvided
-
-	containerID := request.GetContainerId()
-	cmd := request.GetCmd()
-	opts := &remotecommandserver.Options{
-		Stdin:  request.GetStdin(),
-		Stdout: request.GetStdout(),
-		Stderr: request.GetStderr(),
-		TTY:    request.GetTty(),
-	}
-	executor := &dockerExecutor{
-		client:      d.client,
-		containerID: containerID,
-		cmd:         cmd,
-		stdin:       opts.Stdin,
-		stdout:      opts.Stdout,
-		stderr:      opts.Stderr,
-		tty:         opts.TTY,
-	}
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		remotecommandserver.ServeExec(
-			w, r, executor,
-			"", "", // podName, uid — unused by executor; request path does not carry them
-			containerID, cmd,
-			opts,
-			streamIdleTimeout,
-			remotecommandconsts.DefaultStreamCreationTimeout,
-			remotecommandconsts.SupportedStreamingProtocols,
-		)
-	})
-
-	url := d.streams.New().WithHandler(handler).URL()
-
 	return &criv1.ExecResponse{
-		Url: url,
+		Url: d.streams.New().WithExec(request, func(ctx context.Context, stream nanokube.Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize, timeout time.Duration) <-chan nanokube.Done {
+			ctx, cancel := context.WithCancel(ctx)
+			done := make(chan nanokube.Done, 1)
+
+			go func() {
+				defer close(done)
+
+				createResp, e := d.client.ContainerExecCreate(ctx, request.GetContainerId(), container.ExecOptions{
+					Cmd:          request.GetCmd(),
+					AttachStdin:  true,
+					AttachStdout: true,
+					AttachStderr: true,
+					Tty:          request.GetTty(),
+				})
+				if e != nil {
+					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("exec create: %w", e)}
+					return
+				}
+
+				attachResp, e := d.client.ContainerExecAttach(ctx, createResp.ID, container.ExecAttachOptions{Tty: request.GetTty()})
+				if e != nil {
+					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("exec attach: %w", e)}
+					return
+				}
+				defer attachResp.Close()
+
+				if request.GetTty() && resize != nil {
+					go func() {
+						for size := range resize {
+							d.client.ContainerExecResize(ctx, createResp.ID, container.ResizeOptions{
+								Height: uint(size.Height),
+								Width:  uint(size.Width),
+							})
+						}
+					}()
+				}
+
+				cancel, e := stream.ProxyStream(ctx, request.GetTty(), request.GetStdin(), in, request.GetStdout(), out, request.GetStderr(), err, &nanokube.Proxy{
+					Conn:       attachResp.Conn,
+					Reader:     attachResp.Reader,
+					CloseWrite: attachResp.CloseWrite,
+				})
+				if e != nil {
+					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("proxy stream: %w", e)}
+					return
+				}
+
+				inspect, e := d.client.ContainerExecInspect(ctx, createResp.ID)
+				if e != nil {
+					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("exec inspect: %w", e)}
+					return
+				}
+
+				if inspect.ExitCode != 0 {
+					done <- nanokube.Done{Cancel: cancel, Code: int(inspect.ExitCode), Err: fmt.Errorf("command exited with code %d", inspect.ExitCode)}
+					return
+				}
+
+				done <- nanokube.Done{Cancel: cancel, Code: 0}
+			}()
+
+			return done
+		}).URL(),
 	}, nil
 }
 
@@ -874,13 +897,8 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 
 func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequest) (*criv1.PortForwardResponse, error) {
 	<-d.streamsProvided
-
-	url := d.streams.New().WithHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "portforward: not implemented", http.StatusNotImplemented)
-	})).URL()
-
 	return &criv1.PortForwardResponse{
-		Url: url,
+		Url: d.streams.New().URL(),
 	}, nil
 }
 
