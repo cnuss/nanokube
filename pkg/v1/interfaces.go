@@ -88,6 +88,7 @@ type NetworkService interface {
 }
 
 type Network interface {
+	Get(status *criv1.PodSandboxStatus) (AllocatedNetwork, error)
 	Allocate(config *criv1.PodSandboxConfig) (AllocatedNetwork, error)
 	Default() AllocatedNetwork
 }
@@ -101,8 +102,10 @@ type Driver interface {
 	Options() Options
 	Name() string
 
+	ExecOnHost(ctx context.Context, image string, cmd []string, mounts []Path) (string, error)
+	ExecOnNetwork(ctx context.Context, network AllocatedNetwork, image string, cmd []string, portMap []PortMap) (string, error)
+
 	CgroupRoot() string
-	ExecHost(image string, cmd []string, mounts []Path) (string, error)
 	LogStream(containerID string, status *criv1.ContainerStatus) LogStream
 	Service() *restful.WebService
 
@@ -224,4 +227,10 @@ type Config interface {
 	Services(baseURL *url.URL) []*restful.WebService
 	DefaultBackend() Backend
 	Backend(name BackendName) Backend
+}
+
+type PortMap interface {
+	Local() int32
+	Remote() int32
+	Protocol() Protocol
 }

@@ -213,7 +213,11 @@ func (d *driver) Version(ctx context.Context, apiVersion string) (*criv1.Version
 	return nil, nanokube.Unimplemented()
 }
 
-func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, error) {
+func (d *driver) ExecOnHost(ctx context.Context, img string, cmd []string, mounts []v1.Path) (string, error) {
+	return "", nanokube.Unimplemented()
+}
+
+func (d *driver) ExecOnNetwork(ctx context.Context, net v1.AllocatedNetwork, image string, cmd []string, portMap []v1.PortMap) (string, error) {
 	return "", nanokube.Unimplemented()
 }
 

@@ -171,7 +171,7 @@ func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
 	}
 	b.fsCacheMu.Unlock()
 
-	out, err := b.driver.ExecHost("busybox", []string{"stat", "-f", "-c", "%S %b %a %c %d", "/host" + path}, []v1.Path{v1.Path(path)})
+	out, err := b.driver.ExecOnHost(b.Context(), "busybox", []string{"stat", "-f", "-c", "%S %b %a %c %d", "/host" + path}, []v1.Path{v1.Path(path)})
 	if err != nil {
 		return cadvisorv2.FsInfo{}, err
 	}

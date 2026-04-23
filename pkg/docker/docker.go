@@ -1245,8 +1245,8 @@ func (d *driver) Version(ctx context.Context, version string) (*criv1.VersionRes
 	}, nil
 }
 
-func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, error) {
-	reader, err := d.client.ImagePull(d.Context(), img, image.PullOptions{})
+func (d *driver) ExecOnHost(ctx context.Context, img string, cmd []string, mounts []v1.Path) (string, error) {
+	reader, err := d.client.ImagePull(ctx, img, image.PullOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -1268,7 +1268,7 @@ func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, e
 		Privileged:  true,
 	}
 
-	resp, err := d.client.ContainerCreate(d.Context(), &container.Config{
+	resp, err := d.client.ContainerCreate(ctx, &container.Config{
 		Image:        img,
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -1278,20 +1278,77 @@ func (d *driver) ExecHost(img string, cmd []string, mounts []v1.Path) (string, e
 		return "", err
 	}
 
-	attach, err := d.client.ContainerAttach(d.Context(), resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	attach, err := d.client.ContainerAttach(ctx, resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
 		return "", err
 	}
 	defer attach.Close()
 
-	if err := d.client.ContainerStart(d.Context(), resp.ID, container.StartOptions{}); err != nil {
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return "", err
 	}
 
 	var stdout, stderr bytes.Buffer
 	stdcopy.StdCopy(&stdout, &stderr, attach.Reader)
 
-	waitCh, errCh := d.client.ContainerWait(d.Context(), resp.ID, container.WaitConditionNotRunning)
+	waitCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			return "", fmt.Errorf("exit code %d: %s", result.StatusCode, strings.TrimSpace(stderr.String()))
+		}
+	case err := <-errCh:
+		if err != nil {
+			return "", fmt.Errorf("waiting for container: %w", err)
+		}
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (d *driver) ExecOnNetwork(ctx context.Context, net v1.AllocatedNetwork, img string, cmd []string, portMap []v1.PortMap) (string, error) {
+	reader, err := d.client.ImagePull(ctx, img, image.PullOptions{})
+	if err != nil {
+		return "", err
+	}
+	io.Copy(io.Discard, reader)
+	reader.Close()
+
+	hostConfig := &container.HostConfig{
+		AutoRemove: true,
+	}
+
+	networkName := net.Name()
+	networkConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			networkName: {},
+		},
+	}
+
+	resp, err := d.client.ContainerCreate(ctx, &container.Config{
+		Image:        img,
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}, hostConfig, networkConfig, nil, "")
+	if err != nil {
+		return "", err
+	}
+
+	attach, err := d.client.ContainerAttach(ctx, resp.ID, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return "", err
+	}
+	defer attach.Close()
+
+	if err := d.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return "", err
+	}
+
+	var stdout, stderr bytes.Buffer
+	stdcopy.StdCopy(&stdout, &stderr, attach.Reader)
+
+	waitCh, errCh := d.client.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {

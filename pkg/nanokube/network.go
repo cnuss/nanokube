@@ -94,6 +94,13 @@ func (n *NetworkImpl) Default() v1.AllocatedNetwork {
 	return n.defaultNet
 }
 
+func (n *NetworkImpl) Get(status *criv1.PodSandboxStatus) (v1.AllocatedNetwork, error) {
+	if status.GetNetwork() == nil {
+		return nil, nil
+	}
+	return newAllocatedNetwork(status.GetMetadata().GetName(), n)
+}
+
 func (n *NetworkImpl) Allocate(config *criv1.PodSandboxConfig) (v1.AllocatedNetwork, error) {
 	if config != nil && config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
 		return n.Default(), nil
@@ -194,4 +201,26 @@ func (a *allocatedNetworkImpl) Deallocate(ctx context.Context) error {
 	}
 	a.network.networks.Store(ipKey, nil) // preserve slot for reclamation
 	return nil
+}
+
+type portMapImpl struct {
+	local    int32
+	remote   int32
+	protocol v1.Protocol
+}
+
+func (p *portMapImpl) Local() int32 {
+	return p.local
+}
+
+func (p *portMapImpl) Remote() int32 {
+	return p.remote
+}
+
+func (p *portMapImpl) Protocol() v1.Protocol {
+	return p.protocol
+}
+
+func NewPortMap(local, remote int32, protocol v1.Protocol) v1.PortMap {
+	return &portMapImpl{local: local, remote: remote, protocol: protocol}
 }
