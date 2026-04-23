@@ -938,7 +938,14 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequest) (*criv1.PortForwardResponse, error) {
 	<-d.streamsProvided
 	return &criv1.PortForwardResponse{
-		Url: d.streams.New().URL(),
+		Url: d.streams.New().WithForward(request, func(ctx context.Context, stream nanokube.Stream, port int32, closer io.ReadWriteCloser) <-chan nanokube.Done {
+			done := make(chan nanokube.Done, 1)
+			go func() {
+				// TODO: setup port forwarding
+				done <- nanokube.Done{Err: nil, Code: 0}
+			}()
+			return done
+		}).URL(),
 	}, nil
 }
 

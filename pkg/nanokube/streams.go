@@ -87,7 +87,7 @@ func (s *StreamsImpl) New() Stream {
 type (
 	ExecHandler    func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize, timeout time.Duration) <-chan Done
 	AttachHandler  func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize) <-chan Done
-	ForwardHandler func(ctx context.Context, stream Stream, port int32, closer io.ReadWriteCloser) error
+	ForwardHandler func(ctx context.Context, stream Stream, port int32, closer io.ReadWriteCloser) <-chan Done
 )
 
 type Proxy struct {
@@ -291,7 +291,13 @@ func (s *StreamImpl) PortForward(ctx context.Context, _ string, _ types.UID, por
 		return fmt.Errorf("stream %s: forward handler not configured", s.id)
 	}
 
-	return s.forwardHandler(ctx, s, port, stream)
+	done := <-s.WithDone(s.forwardHandler(ctx, s, port, stream)).Done()
+
+	if done.Err != nil {
+		return NewError(done.Err).WithCode(done.Code)
+	}
+
+	return nil
 }
 
 func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, res *Proxy) (context.CancelFunc, error) {
