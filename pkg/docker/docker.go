@@ -162,8 +162,48 @@ func (d *driver) CgroupRoot() string {
 func (d *driver) Attach(ctx context.Context, req *criv1.AttachRequest) (*criv1.AttachResponse, error) {
 	<-d.streamsProvided
 	return &criv1.AttachResponse{
-		// TODO: attach func
-		Url: d.streams.New().URL(),
+		Url: d.streams.New().WithAttach(req, func(ctx context.Context, stream nanokube.Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize) <-chan nanokube.Done {
+			ctx, cancel := context.WithCancel(ctx)
+			done := make(chan nanokube.Done, 1)
+			resizer := <-stream.Resizer(ctx, resize)
+
+			go func() {
+				defer close(done)
+				defer resizer.Done()
+
+				attachResp, e := d.client.ContainerAttach(ctx, req.GetContainerId(), container.AttachOptions{
+					Stdin:  true,
+					Stdout: true,
+					Stderr: true,
+					Stream: true,
+				})
+				if e != nil {
+					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("attach: %w", e)}
+					return
+				}
+				defer attachResp.Close()
+
+				resizer.WithHandler(func(height, width uint) {
+					d.client.ContainerResize(ctx, req.GetContainerId(), container.ResizeOptions{
+						Height: height,
+						Width:  width,
+					})
+				})
+
+				cancel, e := stream.ProxyStream(ctx, req.GetTty(), stdin, in, stdout, out, stderr, err, &nanokube.Proxy{
+					Conn:       attachResp.Conn,
+					Reader:     attachResp.Reader,
+					CloseWrite: attachResp.CloseWrite,
+				})
+				if e != nil {
+					done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("proxy stream: %w", e)}
+					return
+				}
+
+				done <- nanokube.Done{Cancel: cancel}
+			}()
+			return done
+		}).URL(),
 	}, nil
 }
 

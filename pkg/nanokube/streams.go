@@ -86,7 +86,7 @@ func (s *StreamsImpl) New() Stream {
 
 type (
 	ExecHandler    func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize, timeout time.Duration) <-chan Done
-	AttachHandler  func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize) error
+	AttachHandler  func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize) <-chan Done
 	ForwardHandler func(ctx context.Context, stream Stream, port int32, closer io.ReadWriteCloser) error
 )
 
@@ -257,7 +257,12 @@ func (s *StreamImpl) AttachContainer(ctx context.Context, _ string, _ types.UID,
 		return fmt.Errorf("stream %s: attach handler not configured", s.id)
 	}
 
-	return s.attachHandler(ctx, s, s.attach.Stdin, in, s.attach.Stdout, out, s.attach.Stderr, err, resize)
+	done := <-s.WithDone(s.attachHandler(ctx, s, s.attach.Stdin, in, s.attach.Stdout, out, s.attach.Stderr, err, resize)).Done()
+	if done.Err != nil {
+		return NewError(done.Err).WithCode(done.Code)
+	}
+
+	return nil
 }
 
 func (s *StreamImpl) ExecInContainer(ctx context.Context, _ string, _ types.UID, _ string, cmd []string, in io.Reader, out io.WriteCloser, err io.WriteCloser, tty bool, resize <-chan tools.TerminalSize, timeout time.Duration) error {
@@ -365,7 +370,6 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 
 	<-outputDone
 	// TODO(research): some race condition between stdout closing and the response finishing
-	// TODO(research): extra newline on -it + sh
 	time.Sleep(1 * time.Second)
 
 	if outputErr != nil {

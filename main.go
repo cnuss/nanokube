@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/awslambda"
@@ -139,6 +140,14 @@ func init() {
 }
 
 func main() {
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			nanokube.Log.Info("goroutines", "count", runtime.NumGoroutine())
+		}
+	}()
+
 	config, cancel, stop, err := pkg.NewConfig(context.Background())
 	defer stop()
 
