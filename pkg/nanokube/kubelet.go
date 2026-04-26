@@ -150,7 +150,10 @@ func (k *KubeletImpl) Dependencies() *kubelet.Dependencies {
 		k.dependencies.TLSOptions = &server.TLSOptions{
 			Config: &tls.Config{
 				NextProtos: func() []string {
-					return []string{"http/1.1"}
+					if !v1.HTTP2 {
+						return []string{"http/1.1"}
+					}
+					return []string{"h2", "http/1.1"}
 				}(),
 				MinVersion: func() uint16 {
 					if v, err := cliflag.TLSVersion(k.Configuration().TLSMinVersion); err == nil {

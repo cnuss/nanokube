@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 //go:embed kube-system.yaml
@@ -34,11 +35,9 @@ func init() {
 }
 
 var FeatureGates = map[string]bool{
-	// Disable apiserver's WebSocket→SPDY translator for exec/attach so the
-	// client's WebSocket upgrade is forwarded end-to-end to the kubelet.
-	// Cloudflare tunnels pass Upgrade: websocket but strip Upgrade: SPDY/3.1.
-	"TranslateStreamCloseWebsocketRequests": false,
-	"KubeletInUserNamespace":                true,
+	string(features.TranslateStreamCloseWebsocketRequests): false,
+	string(features.PortForwardWebsockets):                 false,
+	string(features.KubeletInUserNamespace):                true,
 }
 
 type KubeImpl struct {

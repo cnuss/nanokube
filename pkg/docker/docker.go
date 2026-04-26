@@ -959,10 +959,10 @@ func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequ
 				done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("get network info: %w", err)}
 				return done
 			}
-			nanokube.Log.Info("!!! POD SANDBOX STATUS", "status", status.GetStatus(), "network", network)
 			go func() {
-				// docker run --rm --network static-network.nanokube -p 1234:1234 alpine/socat TCP-LISTEN:1234,fork,reuseaddr TCP:172.18.0.1:8080
-				// TODO: setup port forwarding
+				nanokube.Log.Info("port foraward", "network", network, "port", port)
+				// TODO(incomplete): docker run --rm --network static-network.nanokube -p 1234:1234 alpine/socat TCP-LISTEN:1234,fork,reuseaddr TCP:172.18.0.1:8080
+				// TODO(incomplete): figure out API Server doing SPDY, SPDY headers are stripped by cloudflare
 				done <- nanokube.Done{Cancel: cancel, Err: nanokube.Unimplemented()}
 			}()
 			return done
