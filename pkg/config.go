@@ -41,10 +41,9 @@ type ConfigImpl struct {
 
 var _ v1.Config = &ConfigImpl{}
 
-func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, context.CancelFunc, error) {
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+func NewConfig() v1.Config {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	ctx, cancel := context.WithCancelCause(ctx)
-	var config *ConfigImpl = nil
 
 	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
 	cmd := &cobra.Command{
@@ -57,39 +56,39 @@ func NewConfig(ctx context.Context) (v1.Config, context.CancelCauseFunc, context
 
 	options := nanokube.NewOptions(cmd)
 
+	config := &ConfigImpl{
+		ctx:     ctx,
+		cancel:  cancel,
+		stop:    stop,
+		options: options,
+		cmd:     cmd,
+	}
+
+	ran := false
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		ran = true
 		if options.Clean() {
 			os.RemoveAll(string(options.DataDir()))
-		}
-
-		config = &ConfigImpl{
-			ctx:     ctx,
-			cancel:  cancel,
-			stop:    stop,
-			options: options,
-			cmd:     cmd,
 		}
 		return nil
 	}
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		return nil, cancel, stop, err
+		config.Cancel(nanokube.NewError(err).WithCode(1))
+	} else if !ran {
+		config.Cancel(nil)
 	}
 
-	if config == nil {
-		os.Exit(0)
-	}
-
-	return config, cancel, stop, nil
+	return config
 }
 
 func (c *ConfigImpl) Context() context.Context {
 	return c.ctx
 }
 
-func (c *ConfigImpl) Cancel(reason error) {
+func (c *ConfigImpl) Cancel(reason v1.Error) {
 	c.cancel(reason)
-	var fatal nanokube.Error
+	var fatal v1.Error
 	if errors.As(reason, &fatal) {
 		runtime.Goexit()
 	}

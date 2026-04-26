@@ -15,6 +15,7 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -74,6 +75,18 @@ func newKube(config v1.Config) v1.Kube {
 	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(FeatureGates); err != nil {
 		klog.Fatalf("Failed to set feature gates: %v", err)
 	}
+
+	stopCh := make(chan struct{})
+	wait.NeverStop = stopCh
+	go func() {
+		<-config.Context().Done()
+		close(stopCh)
+	}()
+
+	klog.OsExit = func(code int) {
+		config.Cancel(nanokube.NewError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
+	}
+
 	kube := &KubeImpl{
 		ctx:                    config.Context(),
 		config:                 config,

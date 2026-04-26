@@ -7,10 +7,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/awslambda"
@@ -20,13 +18,11 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
-	"k8s.io/klog/v2"
 )
 
 // var featureGates = map[string]bool{
@@ -140,85 +136,33 @@ func init() {
 }
 
 func main() {
-	go func() {
-		t := time.NewTicker(5 * time.Second)
-		defer t.Stop()
-		for range t.C {
-			nanokube.Log.Info("goroutines", "count", runtime.NumGoroutine())
-		}
-	}()
-
-	config, cancel, stop, err := pkg.NewConfig(context.Background())
-	defer stop()
-
+	config := pkg.NewConfig()
 	ctx := config.Context()
-
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 
 	nanokube.SetupLogging(config.Options().Verbosity())
 	nanokube.Log.Info("starting nanokube", "version", config.Version())
 
-	// Override wait.NeverStop
-	stopCh := make(chan struct{})
-	wait.NeverStop = stopCh
-	go func() {
-		<-config.Context().Done()
-		close(stopCh)
-	}()
+	config = config.
+		WithStorageFactory(nanokube.NewStorageFactory(config)).
+		WithApiServer(nanokube.NewApiServer(config)).
+		WithKubelet(nanokube.NewKubelet(config))
 
-	klog.OsExit = func(code int) {
-		cancel(nanokube.NewError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
-		runtime.Goexit()
-	}
+	go run(ctx, config)
+	go updateKubeconfig(config)
+	go updateNode(config)
 
-	defer func() {
-		cancel(nil)
-		if cause := context.Cause(config.Context()); cause != nil {
-			var err nanokube.Error
-			if errors.As(cause, &err) {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(err.ExitStatus())
-			}
-		}
-	}()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer func() {
-			if r := recover(); r != nil && ctx.Err() == nil {
-				buf := make([]byte, 1<<16)
-				buf = buf[:runtime.Stack(buf, false)]
-				fmt.Fprintf(os.Stderr, "panic during init: %v\n%s\n", r, buf)
-				panic(r)
-			}
-		}()
-
-		config = config.
-			WithStorageFactory(nanokube.NewStorageFactory(config)).
-			WithApiServer(nanokube.NewApiServer(config)).
-			WithKubelet(nanokube.NewKubelet(config))
-
-		go run(ctx, cancel, config)
-		go updateKubeconfig(config)
-		go updateNode(config)
-
-		<-config.Done()
-	}()
-
-	select {
-	case <-done:
-	case <-ctx.Done():
+	<-config.Done()
+	var err v1.Error
+	if errors.As(context.Cause(config.Context()), &err) {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(err.ExitStatus())
 	}
 }
 
-func run(ctx context.Context, cancel context.CancelCauseFunc, config v1.Config) {
+func run(ctx context.Context, config v1.Config) {
 	// DEVNOTE: everything runs implicitly when we call their accessors
 	config.Kube().Kubelet().Run(ctx)
-	cancel(nanokube.NewError(fmt.Errorf("kubelet exited unexpectedly")))
+	config.Cancel(nanokube.NewError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
 func updateNode(config v1.Config) {

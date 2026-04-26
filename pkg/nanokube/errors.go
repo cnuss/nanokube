@@ -6,17 +6,8 @@ import (
 	"runtime"
 	"strings"
 
-	"k8s.io/utils/exec"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
-
-type Error interface {
-	error
-	exec.ExitError
-	WithCommand(cmd []string) Error
-	WithCode(code int) Error
-	WithError(err error) Error
-	WithErrors(errs ...error) Error
-}
 
 type ErrorImpl struct {
 	code    int
@@ -24,18 +15,18 @@ type ErrorImpl struct {
 	command []string
 }
 
-var _ Error = &ErrorImpl{}
+var _ v1.Error = &ErrorImpl{}
 
-func NewError(err error) Error {
+func NewError(err error) v1.Error {
 	return &ErrorImpl{code: -1, err: err, command: nil}
 }
 
-func (e *ErrorImpl) WithCode(code int) Error {
+func (e *ErrorImpl) WithCode(code int) v1.Error {
 	e.code = code
 	return e
 }
 
-func (e *ErrorImpl) WithError(err error) Error {
+func (e *ErrorImpl) WithError(err error) v1.Error {
 	if err == nil {
 		return e
 	}
@@ -47,14 +38,14 @@ func (e *ErrorImpl) WithError(err error) Error {
 	return e
 }
 
-func (e *ErrorImpl) WithErrors(errs ...error) Error {
+func (e *ErrorImpl) WithErrors(errs ...error) v1.Error {
 	for _, err := range errs {
 		e.WithError(err)
 	}
 	return e
 }
 
-func (e *ErrorImpl) WithCommand(cmd []string) Error {
+func (e *ErrorImpl) WithCommand(cmd []string) v1.Error {
 	e.command = cmd
 	return e
 }
@@ -82,10 +73,6 @@ func (e *ErrorImpl) String() string {
 		return fmt.Sprintf("nanokube error: %d", e.code)
 	}
 	return fmt.Sprintf("nanokube error: %d: %v", e.code, e.err)
-}
-
-func (e *ErrorImpl) Exit() exec.ExitError {
-	return e
 }
 
 // Unimplemented returns an error that includes the calling function's name.

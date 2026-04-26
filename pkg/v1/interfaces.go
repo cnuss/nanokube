@@ -27,6 +27,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	mount "k8s.io/mount-utils"
+	"k8s.io/utils/exec"
 )
 
 type Ready interface {
@@ -208,7 +209,7 @@ type Kube interface {
 
 type Config interface {
 	Context() context.Context
-	Cancel(reason error)
+	Cancel(reason Error)
 	Done() <-chan struct{}
 
 	Options() Options
@@ -236,4 +237,13 @@ type PortMap interface {
 	Local() int32
 	Remote() int32
 	Protocol() Protocol
+}
+
+type Error interface {
+	error
+	exec.ExitError
+	WithCommand(cmd []string) Error
+	WithCode(code int) Error
+	WithError(err error) Error
+	WithErrors(errs ...error) Error
 }
