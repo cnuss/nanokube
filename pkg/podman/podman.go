@@ -252,3 +252,13 @@ func (d *driver) BaseURL() *url.URL {
 	nanokube.Unimplemented()
 	return nil
 }
+
+func (d *driver) WithNetwork(network v1.Network) v1.Driver {
+	nanokube.Unimplemented()
+	return d
+}
+
+func (d *driver) Network() v1.Network {
+	nanokube.Unimplemented()
+	return nil
+}

@@ -111,6 +111,9 @@ type Driver interface {
 
 	WithBaseURL(baseURL *url.URL) Driver
 	BaseURL() *url.URL
+
+	WithNetwork(network Network) Driver
+	Network() Network
 }
 
 type Client interface {

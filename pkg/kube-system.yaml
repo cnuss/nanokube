@@ -9,6 +9,9 @@ spec:
     - name: httpd
       image: cnuss/dev:latest
       command: [busybox, httpd, "-f", "-p", "8080"]
+      ports:
+        - containerPort: 8080
+          protocol: TCP
     - name: kube-controller-manager
       image: registry.k8s.io/kube-controller-manager:v1.35.0 # TODO(incomplete): version
       command:

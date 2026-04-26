@@ -90,6 +90,7 @@ func NewBackend(config v1.Config, socket string) (v1.Backend, error) {
 		client:          client,
 		baseURLProvided: make(chan struct{}),
 		streamsProvided: make(chan struct{}),
+		networkProvided: make(chan struct{}),
 	}), nil
 }
 
@@ -110,7 +111,12 @@ type driver struct {
 	streamsProvided chan struct{}
 
 	baseURL         *url.URL
+	baseURLOnce     sync.Once
 	baseURLProvided chan struct{}
+
+	network         v1.Network
+	networkOnce     sync.Once
+	networkProvided chan struct{}
 }
 
 var _ v1.Driver = &driver{}
@@ -937,12 +943,27 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 
 func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequest) (*criv1.PortForwardResponse, error) {
 	<-d.streamsProvided
+	<-d.networkProvided
+
 	return &criv1.PortForwardResponse{
 		Url: d.streams.New().WithForward(request, func(ctx context.Context, stream nanokube.Stream, port int32, closer io.ReadWriteCloser) <-chan nanokube.Done {
 			done := make(chan nanokube.Done, 1)
+			ctx, cancel := context.WithCancel(ctx)
+			status, err := d.PodSandboxStatus(ctx, request.GetPodSandboxId(), false)
+			if err != nil || status.GetStatus() == nil {
+				done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("get pod sandbox status: %w", err)}
+				return done
+			}
+			network, err := d.network.Get(status.GetStatus())
+			if err != nil {
+				done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("get network info: %w", err)}
+				return done
+			}
+			nanokube.Log.Info("!!! POD SANDBOX STATUS", "status", status.GetStatus(), "network", network)
 			go func() {
+				// docker run --rm --network static-network.nanokube -p 1234:1234 alpine/socat TCP-LISTEN:1234,fork,reuseaddr TCP:172.18.0.1:8080
 				// TODO: setup port forwarding
-				done <- nanokube.Done{Err: nil, Code: 0}
+				done <- nanokube.Done{Cancel: cancel, Err: nanokube.Unimplemented()}
 			}()
 			return done
 		}).URL(),
@@ -1588,12 +1609,27 @@ func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1
 }
 
 func (d *driver) WithBaseURL(baseURL *url.URL) v1.Driver {
-	d.baseURL = baseURL
-	close(d.baseURLProvided)
+	d.baseURLOnce.Do(func() {
+		d.baseURL = baseURL
+		close(d.baseURLProvided)
+	})
 	return d
 }
 
 func (d *driver) BaseURL() *url.URL {
 	<-d.baseURLProvided
 	return d.baseURL
+}
+
+func (d *driver) WithNetwork(network v1.Network) v1.Driver {
+	d.networkOnce.Do(func() {
+		d.network = network
+		close(d.networkProvided)
+	})
+	return d
+}
+
+func (d *driver) Network() v1.Network {
+	<-d.networkProvided
+	return d.network
 }

@@ -94,6 +94,7 @@ func (b *BackendImpl) Driver() v1.Driver {
 func (b *BackendImpl) Network() v1.Network {
 	b.networkOnce.Do(func() {
 		b.network = nanokube.NewNetwork(b.driver)
+		b.driver.WithNetwork(b.network)
 	})
 	return b.network
 }
