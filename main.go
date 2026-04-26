@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -152,11 +151,6 @@ func main() {
 	go updateNode(config)
 
 	<-config.Done()
-	var err v1.Error
-	if errors.As(context.Cause(config.Context()), &err) {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(err.ExitStatus())
-	}
 }
 
 func run(ctx context.Context, config v1.Config) {

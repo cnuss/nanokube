@@ -3,6 +3,7 @@ package pkg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/signal"
@@ -63,6 +64,17 @@ func NewConfig() v1.Config {
 		options: options,
 		cmd:     cmd,
 	}
+
+	go func() {
+		<-ctx.Done()
+		cause := context.Cause(ctx)
+		var err v1.Error
+		if errors.As(cause, &err) {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(err.ExitStatus())
+		}
+		os.Exit(0)
+	}()
 
 	ran := false
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
