@@ -15,7 +15,6 @@ import (
 type OptionsImpl struct {
 	name       string
 	verbosity  int
-	clean      bool
 	dataDir    string
 	standalone bool
 
@@ -29,7 +28,6 @@ func NewOptions(cmd *cobra.Command) v1.Options {
 	options := &OptionsImpl{}
 	cmd.Flags().StringVar(&options.name, "name", "nanokube", "cluster name")
 	cmd.Flags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
-	cmd.Flags().BoolVar(&options.clean, "clean", false, "clean data directory before starting")
 	cmd.Flags().StringVar(&options.dataDir, "data", func() string {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, fmt.Sprintf(".%s", options.Name()))
@@ -46,10 +44,6 @@ func (o *OptionsImpl) Name() string {
 
 func (o *OptionsImpl) Verbosity() int {
 	return o.verbosity
-}
-
-func (o *OptionsImpl) Clean() bool {
-	return o.clean
 }
 
 func (o *OptionsImpl) DataDir() v1.DataDir {

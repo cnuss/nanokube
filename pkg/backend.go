@@ -39,6 +39,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
+	utilspath "k8s.io/utils/path"
 )
 
 type fsCacheEntry struct {
@@ -128,8 +129,17 @@ func (b *BackendImpl) Chtimes(path string, atime time.Time, mtime time.Time) err
 	return nanokube.Unimplemented()
 }
 
-func (b *BackendImpl) CleanSubPaths(poodDir string, volumeName string) error {
-	return nanokube.Unimplemented()
+func (b *BackendImpl) CleanSubPaths(podDir string, volumeName string) error {
+	if !b.options.InDataDir(podDir) {
+		return os.ErrPermission
+	}
+	nanokube.Log.Info("cleaning subpaths", "podDir", podDir, "volumeName", volumeName)
+	if err := os.RemoveAll(filepath.Join(podDir, "volume-subpaths", volumeName)); err != nil {
+		return err
+	}
+	// Best-effort prune of the shared parent; only succeeds when no other volumes remain.
+	_ = os.Remove(filepath.Join(podDir, "volume-subpaths"))
+	return nil
 }
 
 func (b *BackendImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
@@ -248,7 +258,10 @@ func (b *BackendImpl) GetSELinuxSupport(pathname string) (bool, error) {
 }
 
 func (b *BackendImpl) Glob(pattern string) ([]string, error) {
-	return nil, fmt.Errorf("unsupported")
+	if !b.options.InDataDir(filepath.Dir(pattern)) {
+		return nil, os.ErrPermission
+	}
+	return filepath.Glob(pattern)
 }
 
 func (b *BackendImpl) Hostname() (name string, err error) {
@@ -293,9 +306,14 @@ func (b *BackendImpl) MakeRShared(path string) error {
 }
 
 func (b *BackendImpl) MkdirAll(path string, perm os.FileMode) error {
-	// TODO(partial): route to host os.MkdirAll or VM depending on path
-	// DEVNOTE: kubelet calls this for pod log dirs, plugin dirs, etc.
-	return nil
+	nanokube.Log.Info("mkdir", "path", path, "perm", perm)
+	if path == "/var/log/containers" {
+		return nil
+	}
+	if !b.options.InDataDir(path) {
+		return os.ErrPermission
+	}
+	return os.MkdirAll(path, perm)
 }
 
 func (b *BackendImpl) Mount(source string, target string, fstype string, options []string) error {
@@ -307,6 +325,11 @@ func (b *BackendImpl) MountSensitive(source string, target string, fstype string
 }
 
 func (b *BackendImpl) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
+	if source == "tmpfs" && fstype == "tmpfs" {
+		// TODO(partial): let these pass, the directory has already been created
+		//                potentially remap it to /tmp?
+		return nil
+	}
 	return nanokube.Unimplemented()
 }
 
@@ -323,7 +346,10 @@ func (b *BackendImpl) OpenFile(name string, flag int, perm os.FileMode) (*os.Fil
 }
 
 func (b *BackendImpl) PathExists(pathname string) (bool, error) {
-	return false, nanokube.Unimplemented()
+	if !b.options.InDataDir(pathname) {
+		return false, os.ErrPermission
+	}
+	return utilspath.Exists(utilspath.CheckFollowSymlink, pathname)
 }
 
 func (b *BackendImpl) PathIsDevice(pathname string) (bool, error) {
@@ -335,7 +361,19 @@ func (b *BackendImpl) Pipe() (r *os.File, w *os.File, err error) {
 }
 
 func (b *BackendImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	return "", nil, nanokube.Unimplemented()
+	nanokube.Log.Info("preparing safe subpath", "subPath", subPath)
+	if !b.options.InDataDir(subPath.PodDir) || !b.options.InDataDir(subPath.VolumePath) || !b.options.InDataDir(subPath.Path) {
+		return "", nil, os.ErrPermission
+	}
+	parent := filepath.Join(subPath.PodDir, "volume-subpaths", subPath.VolumeName, subPath.ContainerName)
+	leaf := filepath.Join(parent, strconv.Itoa(subPath.VolumeMountIndex))
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", nil, err
+	}
+	if err := os.Symlink(subPath.Path, leaf); err != nil && !os.IsExist(err) {
+		return "", nil, err
+	}
+	return leaf, nil, nil
 }
 
 func (b *BackendImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
@@ -345,7 +383,13 @@ func (b *BackendImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
 }
 
 func (b *BackendImpl) Remove(path string) error {
-	return nanokube.Unimplemented()
+	if strings.HasPrefix(path, "/var/log/containers/") {
+		return nil
+	}
+	if !b.options.InDataDir(path) {
+		return os.ErrPermission
+	}
+	return os.Remove(path)
 }
 
 func (b *BackendImpl) RemoveAll(path string) error {
@@ -862,7 +906,8 @@ func (c *managerImpl) Updates() <-chan resourceupdates.Update {
 }
 
 func (c *managerImpl) Destroy(logger klog.Logger, name cm.CgroupName) error {
-	return nanokube.Unimplemented()
+	// TODO(partial): any cleanup needed?
+	return nil
 }
 
 func (c *managerImpl) EnsureExists(logger klog.Logger, pod *corev1.Pod) error {

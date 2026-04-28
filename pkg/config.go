@@ -96,9 +96,7 @@ func NewConfig() v1.Config {
 	ran := false
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ran = true
-		if options.Clean() {
-			os.RemoveAll(string(options.DataDir()))
-		}
+		// TODO(future): subprocess management
 		return nil
 	}
 

@@ -38,7 +38,6 @@ type Ready interface {
 type Options interface {
 	Name() string
 	Verbosity() int
-	Clean() bool
 	DataDir() DataDir
 	Standalone() bool
 
