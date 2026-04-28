@@ -29,9 +29,11 @@ type ConfigImpl struct {
 	cmd     *cobra.Command
 	options v1.Options
 
-	shutdownMu    sync.Mutex
-	shutdownHooks [][]func(context.Context)
-	shutdownOnce  sync.Once
+	canceled     chan struct{}
+	canceledOnce sync.Once
+	cancelMu     sync.Mutex
+	cancelHooks  [][]func(context.Context)
+	cancelOnce   sync.Once
 
 	kube     v1.Kube
 	kubeOnce sync.Once
@@ -64,10 +66,11 @@ func NewConfig() v1.Config {
 	options := nanokube.NewOptions(cmd)
 
 	config := &ConfigImpl{
-		ctx:     ctx,
-		cancel:  cancel,
-		options: options,
-		cmd:     cmd,
+		ctx:      ctx,
+		cancel:   cancel,
+		canceled: make(chan struct{}),
+		options:  options,
+		cmd:      cmd,
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -113,8 +116,8 @@ func (c *ConfigImpl) Context() context.Context {
 }
 
 func (c *ConfigImpl) Cancel(reason v1.Error) {
-	nanokube.Log.Warn("canceling context", "reason", reason)
-	c.runShutdownHooks()
+	c.canceledOnce.Do(func() { close(c.canceled) })
+	c.runCancelHooks()
 	c.cancel(reason)
 	var fatal v1.Error
 	if errors.As(reason, &fatal) {
@@ -122,18 +125,22 @@ func (c *ConfigImpl) Cancel(reason v1.Error) {
 	}
 }
 
-func (c *ConfigImpl) OnShutdown(fns ...func(ctx context.Context)) v1.Config {
-	c.shutdownMu.Lock()
-	defer c.shutdownMu.Unlock()
-	c.shutdownHooks = append(c.shutdownHooks, fns)
+func (c *ConfigImpl) Canceled() <-chan struct{} {
+	return c.canceled
+}
+
+func (c *ConfigImpl) OnCancel(fns ...func(ctx context.Context)) v1.Config {
+	c.cancelMu.Lock()
+	defer c.cancelMu.Unlock()
+	c.cancelHooks = append(c.cancelHooks, fns)
 	return c
 }
 
-func (c *ConfigImpl) runShutdownHooks() {
-	c.shutdownOnce.Do(func() {
-		c.shutdownMu.Lock()
-		groups := append([][]func(context.Context){}, c.shutdownHooks...)
-		c.shutdownMu.Unlock()
+func (c *ConfigImpl) runCancelHooks() {
+	c.cancelOnce.Do(func() {
+		c.cancelMu.Lock()
+		groups := append([][]func(context.Context){}, c.cancelHooks...)
+		c.cancelMu.Unlock()
 
 		hookCtx, hookCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer hookCancel()
@@ -146,7 +153,7 @@ func (c *ConfigImpl) runShutdownHooks() {
 					defer wg.Done()
 					defer func() {
 						if r := recover(); r != nil {
-							nanokube.Log.Error("shutdown hook panicked", "group", groupIdx, "recover", r, "stack", string(debug.Stack()))
+							nanokube.Log.Error("cancel hook panicked", "group", groupIdx, "recover", r, "stack", string(debug.Stack()))
 						}
 					}()
 					fn(hookCtx)
@@ -162,14 +169,14 @@ func (c *ConfigImpl) runShutdownHooks() {
 			select {
 			case <-done:
 			case <-hookCtx.Done():
-				nanokube.Log.Warn("shutdown hook group timed out", "group", groupIdx, "timeout", shutdownTimeout)
+				nanokube.Log.Warn("cancel hook group timed out", "group", groupIdx, "timeout", shutdownTimeout)
 				return
 			}
 		}
 	})
 }
 
-func (c *ConfigImpl) Done() <-chan struct{} {
+func (c *ConfigImpl) Finished() <-chan struct{} {
 	return c.Context().Done()
 }
 

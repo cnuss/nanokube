@@ -79,7 +79,7 @@ func newKube(config v1.Config) v1.Kube {
 	stopCh := make(chan struct{})
 	wait.NeverStop = stopCh
 	go func() {
-		<-config.Context().Done()
+		<-config.Canceled()
 		close(stopCh)
 	}()
 

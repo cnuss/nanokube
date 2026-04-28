@@ -216,9 +216,11 @@ type Kube interface {
 
 type Config interface {
 	Context() context.Context
+	Finished() <-chan struct{}
+
 	Cancel(reason Error)
-	Done() <-chan struct{}
-	OnShutdown(fns ...func(ctx context.Context)) Config
+	Canceled() <-chan struct{}
+	OnCancel(fns ...func(ctx context.Context)) Config
 
 	Options() Options
 	Version() string

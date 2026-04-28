@@ -151,11 +151,11 @@ func main() {
 	go updateNode(config)
 
 	<-config.
-		OnShutdown(deleteNode(config), stopSandboxes(config)).
-		OnShutdown(snapshotStorage(config), snapshotPods()).
-		OnShutdown(removeSandboxes(config)).
-		OnShutdown(removeNetworks(config)).
-		Done()
+		OnCancel(deleteNode(config), stopSandboxes(config)).
+		OnCancel(snapshotStorage(config), snapshotPods()).
+		OnCancel(removeSandboxes(config)).
+		OnCancel(removeNetworks(config)).
+		Finished()
 }
 
 func run(ctx context.Context, config v1.Config) {
@@ -242,6 +242,7 @@ func updateKubeconfig(config v1.Config) {
 
 func deleteNode(config v1.Config) func(ctx context.Context) {
 	return func(ctx context.Context) {
+		// TODO(incomplete): cordon and drain node before deleting
 		nodes := config.Kube().Client().CoreV1().Nodes()
 		nodes.Delete(ctx, config.Kube().Kubelet().Flags().HostnameOverride, metav1.DeleteOptions{})
 	}
