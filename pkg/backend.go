@@ -133,7 +133,6 @@ func (b *BackendImpl) CleanSubPaths(podDir string, volumeName string) error {
 	if !b.options.InDataDir(podDir) {
 		return os.ErrPermission
 	}
-	nanokube.Log.Info("cleaning subpaths", "podDir", podDir, "volumeName", volumeName)
 	if err := os.RemoveAll(filepath.Join(podDir, "volume-subpaths", volumeName)); err != nil {
 		return err
 	}
@@ -306,7 +305,6 @@ func (b *BackendImpl) MakeRShared(path string) error {
 }
 
 func (b *BackendImpl) MkdirAll(path string, perm os.FileMode) error {
-	nanokube.Log.Info("mkdir", "path", path, "perm", perm)
 	if path == "/var/log/containers" {
 		return nil
 	}
@@ -361,7 +359,6 @@ func (b *BackendImpl) Pipe() (r *os.File, w *os.File, err error) {
 }
 
 func (b *BackendImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	nanokube.Log.Info("preparing safe subpath", "subPath", subPath)
 	if !b.options.InDataDir(subPath.PodDir) || !b.options.InDataDir(subPath.VolumePath) || !b.options.InDataDir(subPath.Path) {
 		return "", nil, os.ErrPermission
 	}
