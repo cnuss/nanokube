@@ -221,20 +221,15 @@ func (d *driver) ExecOnNetwork(ctx context.Context, net v1.AllocatedNetwork, ima
 	return "", nanokube.Unimplemented()
 }
 
-func (d *driver) CreateNetwork(ctx context.Context, name string, networkType v1.NetworkType, net *net.IPNet, gateway *net.IP) error {
-	return nanokube.Unimplemented()
+func (d *driver) GetNetwork(ctx context.Context, id string) (*v1.NetworkType, *net.IP, *net.IPNet, error) {
+	return nil, nil, nil, nanokube.Unimplemented()
 }
 
-func (d *driver) DefaultNetwork(ctx context.Context) string {
-	nanokube.Unimplemented()
-	return ""
+func (d *driver) CreateNetwork(ctx context.Context, networkType v1.NetworkType, net *net.IPNet, gateway *net.IP) (string, error) {
+	return "", nanokube.Unimplemented()
 }
 
-func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *v1.NetworkType, *net.IP, *net.IPNet, error) {
-	return nil, nil, nil, nil, nanokube.Unimplemented()
-}
-
-func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
+func (d *driver) RemoveNetwork(ctx context.Context, id string) error {
 	return nanokube.Unimplemented()
 }
 

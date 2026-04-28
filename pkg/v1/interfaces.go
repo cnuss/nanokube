@@ -9,6 +9,7 @@ import (
 
 	"github.com/emicklei/go-restful/v3"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	client "k8s.io/client-go/kubernetes"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -72,26 +73,32 @@ type LogStream interface {
 }
 
 type AllocatedNetwork interface {
-	Name() string
+	ID() string
 	Type() NetworkType
 	Gateway() net.IP
 	Network() net.IPNet
 
-	Deallocate(ctx context.Context) error
+	Deallocate() error
+
+	WithSandboxUID(sandboxUID *types.UID) AllocatedNetwork
+	SandboxUID() *types.UID
 }
 
 type NetworkService interface {
 	Context() context.Context
-	DefaultNetwork(ctx context.Context) string
-	GetNetwork(ctx context.Context, name string) (*string, *NetworkType, *net.IP, *net.IPNet, error)
-	CreateNetwork(ctx context.Context, name string, networkType NetworkType, net *net.IPNet, gateway *net.IP) error
-	RemoveNetwork(ctx context.Context, name string) error
+	GetNetwork(ctx context.Context, id string) (*NetworkType, *net.IP, *net.IPNet, error)
+	CreateNetwork(ctx context.Context, networkType NetworkType, net *net.IPNet, gateway *net.IP) (string, error)
+	RemoveNetwork(ctx context.Context, id string) error
 }
 
 type Network interface {
-	Get(status *criv1.PodSandboxStatus) (AllocatedNetwork, error)
-	Allocate(config *criv1.PodSandboxConfig) (AllocatedNetwork, error)
-	Default() AllocatedNetwork
+	Networks() []AllocatedNetwork
+	FromID(ctx context.Context, id string) (AllocatedNetwork, error)
+	FromIP(ctx context.Context, ip net.IP) (AllocatedNetwork, error)
+	FromUID(ctx context.Context, sandboxUID types.UID) (AllocatedNetwork, error)
+	FromStatus(ctx context.Context, status *criv1.PodSandboxStatus) (AllocatedNetwork, error)
+	FromConfig(ctx context.Context, config *criv1.PodSandboxConfig) (AllocatedNetwork, error)
+	Default(ctx context.Context) AllocatedNetwork
 }
 
 type Driver interface {
@@ -211,6 +218,7 @@ type Config interface {
 	Context() context.Context
 	Cancel(reason Error)
 	Done() <-chan struct{}
+	OnShutdown(fns ...func(ctx context.Context)) Config
 
 	Options() Options
 	Version() string

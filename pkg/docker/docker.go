@@ -687,7 +687,7 @@ func (d *driver) ListContainers(ctx context.Context, filter *criv1.ContainerFilt
 
 	containers, err := d.client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
 	if err != nil {
-		return nil, err
+		return []*criv1.Container{}, err
 	}
 
 	selector := filter.GetLabelSelector()
@@ -903,7 +903,7 @@ func (d *driver) PodSandboxStatus(ctx context.Context, podSandboxID string, verb
 	var additionalIPs []*criv1.PodIP
 	if inspect.NetworkSettings != nil {
 		for name, n := range inspect.NetworkSettings.Networks {
-			if name == "host" || name == "none" || n.IPAddress == "" {
+			if ip == n.IPAddress || name == "host" || name == "none" || n.IPAddress == "" {
 				continue
 			}
 			additionalIPs = append(additionalIPs, &criv1.PodIP{Ip: n.IPAddress})
@@ -950,11 +950,11 @@ func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequ
 			done := make(chan nanokube.Done, 1)
 			ctx, cancel := context.WithCancel(ctx)
 			status, err := d.PodSandboxStatus(ctx, request.GetPodSandboxId(), false)
-			if err != nil || status.GetStatus() == nil {
+			if err != nil || status == nil {
 				done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("get pod sandbox status: %w", err)}
 				return done
 			}
-			network, err := d.network.Get(status.GetStatus())
+			network, err := d.network.FromStatus(ctx, status.GetStatus())
 			if err != nil {
 				done <- nanokube.Done{Cancel: cancel, Err: fmt.Errorf("get network info: %w", err)}
 				return done
@@ -989,7 +989,13 @@ func (d *driver) PullImage(ctx context.Context, img *criv1.ImageSpec, auth *criv
 }
 
 func (d *driver) RemoveContainer(ctx context.Context, containerID string) error {
-	return nanokube.Unimplemented()
+	if err := d.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	if logStream, ok := d.logStreams.Load(containerID); ok {
+		logStream.(v1.LogStream).Stop()
+	}
+	return nil
 }
 
 func (d *driver) RemoveImage(ctx context.Context, image *criv1.ImageSpec) error {
@@ -997,7 +1003,31 @@ func (d *driver) RemoveImage(ctx context.Context, image *criv1.ImageSpec) error 
 }
 
 func (d *driver) RemovePodSandbox(ctx context.Context, podSandboxID string) error {
-	return nanokube.Unimplemented()
+	// DEVNOTE: Best effort, ignores errors for complete cleanup attempt
+	status := func() *criv1.PodSandboxStatus {
+		resp, _ := d.PodSandboxStatus(ctx, podSandboxID, false)
+		if resp == nil {
+			return &criv1.PodSandboxStatus{}
+		}
+		return resp.GetStatus()
+	}()
+
+	containers, _ := d.ListContainers(ctx, &criv1.ContainerFilter{
+		PodSandboxId: podSandboxID,
+	})
+
+	for _, c := range containers {
+		d.RemoveContainer(ctx, c.Id)
+	}
+
+	d.RemoveContainer(ctx, podSandboxID)
+
+	network, _ := d.Network().FromStatus(ctx, status)
+	if network != nil {
+		network.Deallocate()
+	}
+
+	return nil
 }
 
 func (d *driver) ReopenContainerLog(ctx context.Context, containerID string) error {
@@ -1105,8 +1135,8 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConf
 
 		if networkMode != container.NetworkMode("host") {
 			networks := []string{"bridge"}
-			if networksStr, ok := config.GetAnnotations()[configTb.Key(nanokube.KeyNetworks)]; ok {
-				networks = strings.Split(networksStr, ",")
+			if networkStr, ok := config.GetAnnotations()[configTb.Key(nanokube.KeyNetwork)]; ok {
+				networks = []string{networkStr}
 			}
 
 			if len(config.GetPortMappings()) > 0 {
@@ -1339,10 +1369,10 @@ func (d *driver) ExecOnNetwork(ctx context.Context, net v1.AllocatedNetwork, img
 		AutoRemove: true,
 	}
 
-	networkName := net.Name()
+	networkID := net.ID()
 	networkConfig := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
-			networkName: {},
+			networkID: {},
 		},
 	}
 
@@ -1384,18 +1414,37 @@ func (d *driver) ExecOnNetwork(ctx context.Context, net v1.AllocatedNetwork, img
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func (d *driver) CreateNetwork(ctx context.Context, name string, networkType v1.NetworkType, net *net.IPNet, gateway *net.IP) error {
-	existing, _, _, _, _ := d.GetNetwork(ctx, name)
-	if existing != nil {
-		return nil
-	}
-
-	netName, netLabels, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceNetwork).WithName(name).Build()
+func (d *driver) GetNetwork(ctx context.Context, id string) (*v1.NetworkType, *net.IP, *net.IPNet, error) {
+	inspect, err := d.client.NetworkInspect(ctx, id, network.InspectOptions{})
 	if err != nil {
-		return err
+		return nil, nil, nil, err
+	}
+	networkType := v1.NetworkType(inspect.Driver)
+	config := inspect.IPAM.Config
+	if len(config) == 0 || config[0].Subnet == "" {
+		return nil, nil, nil, fmt.Errorf("invalid ipam config: %v", config)
+	}
+	_, parsed, err := net.ParseCIDR(config[0].Subnet)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	gateway := net.ParseIP(config[0].Gateway)
+	return &networkType, &gateway, parsed, nil
+}
+
+func (d *driver) CreateNetwork(ctx context.Context, networkType v1.NetworkType, net *net.IPNet, gateway *net.IP) (string, error) {
+	nameSuffix := string(networkType)
+	if net != nil {
+		nameSuffix = strings.ReplaceAll(net.IP.String(), ".", "-")
+	}
+	netName, netLabels, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceNetwork).
+		WithName(nameSuffix).
+		Build()
+	if err != nil {
+		return "", err
 	}
 	createOptions := network.CreateOptions{
-		Driver: "bridge",
+		Driver: string(networkType),
 		Labels: netLabels,
 		Options: map[string]string{
 			"com.docker.network.bridge.enable_icc":           "true",
@@ -1420,90 +1469,15 @@ func (d *driver) CreateNetwork(ctx context.Context, name string, networkType v1.
 		}
 	}
 
-	_, err = d.client.NetworkCreate(ctx, netName, createOptions)
-	return err
+	created, err := d.client.NetworkCreate(ctx, netName, createOptions)
+	if err != nil {
+		return "", err
+	}
+	return created.ID, nil
 }
 
-func (d *driver) DefaultNetwork(ctx context.Context) string {
-	var resp network.Inspect
-	var err error
-
-	resp, err = d.client.NetworkInspect(ctx, "bridge", network.InspectOptions{Verbose: true})
-	if err == nil {
-		return resp.Name
-	}
-
-	resp, err = d.client.NetworkInspect(ctx, "host", network.InspectOptions{Verbose: true})
-	if err == nil {
-		return resp.Name
-	}
-
-	resp, err = d.client.NetworkInspect(ctx, "none", network.InspectOptions{Verbose: true})
-	if err == nil {
-		return resp.Name
-	}
-
-	nanokube.Log.Warn("failed to get default networks")
-	return ""
-}
-
-func (d *driver) GetNetwork(ctx context.Context, name string) (*string, *v1.NetworkType, *net.IP, *net.IPNet, error) {
-	netName, _, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceNetwork).WithName(name).Build()
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	resp, err := d.client.NetworkInspect(ctx, netName, network.InspectOptions{Verbose: true})
-	if err != nil {
-		if errdefs.IsNotFound(err) {
-			return nil, nil, nil, nil, nil
-		}
-		return nil, nil, nil, nil, err
-	}
-
-	var networkType v1.NetworkType
-	switch resp.Driver {
-	case "bridge":
-		networkType = v1.NetworkBridge
-	case "host":
-		networkType = v1.NetworkHost
-	default:
-		return nil, nil, nil, nil, fmt.Errorf("unsupported network driver: %s", resp.Driver)
-	}
-
-	isDefault := resp.Options["com.docker.network.bridge.default_bridge"] == "true"
-	if !isDefault && !nanokube.NewTagBuilder(d).WithTags(resp.Labels).IsManaged() {
-		return nil, nil, nil, nil, fmt.Errorf("network %s is not managed by nanokube", name)
-	}
-
-	var network net.IPNet
-	var gateway net.IP
-
-	if resp.IPAM.Config != nil {
-		for _, cfg := range resp.IPAM.Config {
-			if cfg.Subnet != "" && cfg.Gateway != "" {
-				gateway = net.ParseIP(cfg.Gateway)
-				if gateway == nil {
-					continue
-				}
-				_, ipNet, err := net.ParseCIDR(cfg.Subnet)
-				if err != nil {
-					continue
-				}
-				network = *ipNet
-				break
-			}
-		}
-	}
-
-	return &resp.Name, &networkType, &gateway, &network, nil
-}
-
-func (d *driver) RemoveNetwork(ctx context.Context, name string) error {
-	netName, _, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceNetwork).WithName(name).Build()
-	if err != nil {
-		return err
-	}
-	return d.client.NetworkRemove(ctx, netName)
+func (d *driver) RemoveNetwork(ctx context.Context, id string) error {
+	return d.client.NetworkRemove(ctx, id)
 }
 
 func (d *driver) LogStream(containerID string, status *criv1.ContainerStatus) v1.LogStream {

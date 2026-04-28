@@ -84,7 +84,7 @@ func newKube(config v1.Config) v1.Kube {
 	}()
 
 	klog.OsExit = func(code int) {
-		config.Cancel(nanokube.NewError(fmt.Errorf("klog exited with code %d", code)).WithCode(code))
+		config.Cancel(nanokube.NewError(fmt.Errorf("klog exit")).WithCode(code))
 	}
 
 	kube := &KubeImpl{

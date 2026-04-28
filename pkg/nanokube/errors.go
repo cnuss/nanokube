@@ -69,10 +69,7 @@ func (e *ErrorImpl) String() string {
 		}
 		return fmt.Sprintf("command %s exited with code %d: %v", strings.Join(e.command, " "), e.code, e.err)
 	}
-	if e.err == nil {
-		return fmt.Sprintf("nanokube error: %d", e.code)
-	}
-	return fmt.Sprintf("nanokube error: %d: %v", e.code, e.err)
+	return fmt.Sprintf("nanokube error: %v (code: %d)", e.err, e.code)
 }
 
 // Unimplemented returns an error that includes the calling function's name.

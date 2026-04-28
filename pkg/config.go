@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
@@ -19,12 +21,17 @@ import (
 	"k8s.io/component-base/version"
 )
 
+const shutdownTimeout = 30 * time.Second
+
 type ConfigImpl struct {
 	ctx     context.Context
-	stop    context.CancelFunc
 	cancel  context.CancelCauseFunc
 	cmd     *cobra.Command
 	options v1.Options
+
+	shutdownMu    sync.Mutex
+	shutdownHooks [][]func(context.Context)
+	shutdownOnce  sync.Once
 
 	kube     v1.Kube
 	kubeOnce sync.Once
@@ -43,8 +50,7 @@ type ConfigImpl struct {
 var _ v1.Config = &ConfigImpl{}
 
 func NewConfig() v1.Config {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	ctx, cancel := context.WithCancelCause(ctx)
+	ctx, cancel := context.WithCancelCause(context.Background())
 
 	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
 	cmd := &cobra.Command{
@@ -60,17 +66,25 @@ func NewConfig() v1.Config {
 	config := &ConfigImpl{
 		ctx:     ctx,
 		cancel:  cancel,
-		stop:    stop,
 		options: options,
 		cmd:     cmd,
 	}
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		sig := <-sigCh
+		nanokube.Log.Info("shutdown initiated", "signal", sig)
+		config.Cancel(nil)
+	}()
+
 	go func() {
 		<-ctx.Done()
+		signal.Stop(sigCh)
 		cause := context.Cause(ctx)
 		var err v1.Error
 		if errors.As(cause, &err) {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, fmt.Sprintf("nanokube exiting: %v", err))
 			os.Exit(err.ExitStatus())
 		}
 		os.Exit(0)
@@ -99,11 +113,60 @@ func (c *ConfigImpl) Context() context.Context {
 }
 
 func (c *ConfigImpl) Cancel(reason v1.Error) {
+	nanokube.Log.Warn("canceling context", "reason", reason)
+	c.runShutdownHooks()
 	c.cancel(reason)
 	var fatal v1.Error
 	if errors.As(reason, &fatal) {
 		runtime.Goexit()
 	}
+}
+
+func (c *ConfigImpl) OnShutdown(fns ...func(ctx context.Context)) v1.Config {
+	c.shutdownMu.Lock()
+	defer c.shutdownMu.Unlock()
+	c.shutdownHooks = append(c.shutdownHooks, fns)
+	return c
+}
+
+func (c *ConfigImpl) runShutdownHooks() {
+	c.shutdownOnce.Do(func() {
+		c.shutdownMu.Lock()
+		groups := append([][]func(context.Context){}, c.shutdownHooks...)
+		c.shutdownMu.Unlock()
+
+		hookCtx, hookCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer hookCancel()
+
+		for groupIdx, group := range groups {
+			var wg sync.WaitGroup
+			for _, hook := range group {
+				wg.Add(1)
+				go func(fn func(context.Context)) {
+					defer wg.Done()
+					defer func() {
+						if r := recover(); r != nil {
+							nanokube.Log.Error("shutdown hook panicked", "group", groupIdx, "recover", r, "stack", string(debug.Stack()))
+						}
+					}()
+					fn(hookCtx)
+				}(hook)
+			}
+
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-hookCtx.Done():
+				nanokube.Log.Warn("shutdown hook group timed out", "group", groupIdx, "timeout", shutdownTimeout)
+				return
+			}
+		}
+	})
 }
 
 func (c *ConfigImpl) Done() <-chan struct{} {

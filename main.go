@@ -150,7 +150,12 @@ func main() {
 	go updateKubeconfig(config)
 	go updateNode(config)
 
-	<-config.Done()
+	<-config.
+		OnShutdown(deleteNode(config), stopSandboxes(config)).
+		OnShutdown(snapshotStorage(config), snapshotPods()).
+		OnShutdown(removeSandboxes(config)).
+		OnShutdown(removeNetworks(config)).
+		Done()
 }
 
 func run(ctx context.Context, config v1.Config) {
@@ -232,5 +237,58 @@ func updateKubeconfig(config v1.Config) {
 		nanokube.Log.Error("failed to update kubeconfig", "path", clientcmd.RecommendedHomeFile, "error", err)
 	} else {
 		nanokube.Log.Info("kubeconfig updated", "path", clientcmd.RecommendedHomeFile)
+	}
+}
+
+func deleteNode(config v1.Config) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		nodes := config.Kube().Client().CoreV1().Nodes()
+		nodes.Delete(ctx, config.Kube().Kubelet().Flags().HostnameOverride, metav1.DeleteOptions{})
+	}
+}
+
+func stopSandboxes(config v1.Config) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		for _, backend := range config.Backends() {
+			if sandboxes, err := backend.Driver().ListPodSandbox(ctx, nil); err == nil {
+				for _, sandbox := range sandboxes {
+					backend.Driver().StopPodSandbox(ctx, sandbox.Id)
+				}
+			}
+		}
+	}
+}
+
+func snapshotStorage(config v1.Config) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		nanokube.Log.Warn("please visit nanokube.cloud to enable storage snapshots")
+	}
+}
+
+func snapshotPods() func(ctx context.Context) {
+	return func(ctx context.Context) {
+		nanokube.Log.Warn("please visit nanokube.cloud to enable pod snapshots")
+	}
+}
+
+func removeSandboxes(config v1.Config) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		for _, backend := range config.Backends() {
+			if sandboxes, err := backend.Driver().ListPodSandbox(ctx, nil); err == nil {
+				for _, sandbox := range sandboxes {
+					backend.Driver().RemovePodSandbox(ctx, sandbox.Id)
+				}
+			}
+		}
+	}
+}
+
+func removeNetworks(config v1.Config) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		for _, backend := range config.Backends() {
+			for _, network := range backend.Network().Networks() {
+				backend.Driver().RemoveNetwork(ctx, network.ID())
+			}
+		}
 	}
 }

@@ -778,7 +778,7 @@ func (c *managerImpl) PrepareDynamicResources(ctx context.Context, pod *corev1.P
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
 	network := c.backend.Network()
 
-	allocated, err := network.Allocate(&criv1.PodSandboxConfig{
+	allocated, err := network.FromConfig(ctx, &criv1.PodSandboxConfig{
 		Metadata:    &criv1.PodSandboxMetadata{Name: pod.Name, Namespace: pod.Namespace, Uid: string(pod.UID)},
 		Annotations: pod.Annotations,
 	})
@@ -789,8 +789,7 @@ func (c *managerImpl) PrepareDynamicResources(ctx context.Context, pod *corev1.P
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
-	networks := allocated.Name() + "," + network.Default().Name()
-	pod.Annotations[tb.Key(nanokube.KeyNetworks)] = networks
+	pod.Annotations[tb.Key(nanokube.KeyNetwork)] = allocated.ID()
 	return nil
 }
 
@@ -830,11 +829,11 @@ func (c *managerImpl) SystemCgroupsLimit() corev1.ResourceList {
 
 func (c *managerImpl) UnprepareDynamicResources(ctx context.Context, pod *corev1.Pod) error {
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
-	networksStr, ok := pod.Annotations[tb.Key(nanokube.KeyNetworks)]
+	networkStr, ok := pod.Annotations[tb.Key(nanokube.KeyNetwork)]
 	if !ok {
 		return nil
 	}
-	for _, name := range strings.Split(networksStr, ",") {
+	for _, name := range strings.Split(networkStr, ",") {
 		c.backend.Driver().RemoveNetwork(ctx, name)
 	}
 	return nil
