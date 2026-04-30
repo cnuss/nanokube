@@ -36,10 +36,6 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/pluginmanager/cache"
 	"k8s.io/kubernetes/pkg/kubelet/status"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
-	"k8s.io/kubernetes/pkg/volume/util/hostutil"
-	"k8s.io/kubernetes/pkg/volume/util/subpath"
-	"k8s.io/mount-utils"
-	utilspath "k8s.io/utils/path"
 )
 
 type fsCacheEntry struct {
@@ -114,33 +110,6 @@ func (b *BackendImpl) WithBaseURL(baseURL *url.URL) v1.Backend {
 	return b
 }
 
-func (b *BackendImpl) CanSafelySkipMountPointCheck() bool {
-	return false
-}
-
-func (b *BackendImpl) Chmod(path string, perm os.FileMode) error {
-	if !b.options.InDataDir(path) {
-		return os.ErrPermission
-	}
-	return os.Chmod(path, perm)
-}
-
-func (b *BackendImpl) Chtimes(path string, atime time.Time, mtime time.Time) error {
-	return nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) CleanSubPaths(podDir string, volumeName string) error {
-	if !b.options.InDataDir(podDir) {
-		return os.ErrPermission
-	}
-	if err := os.RemoveAll(filepath.Join(podDir, "volume-subpaths", volumeName)); err != nil {
-		return err
-	}
-	// Best-effort prune of the shared parent; only succeeds when no other volumes remain.
-	_ = os.Remove(filepath.Join(podDir, "volume-subpaths"))
-	return nil
-}
-
 func (b *BackendImpl) ContainerFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
 	return b.GetDirFsInfo("/")
 }
@@ -156,21 +125,6 @@ func (b *BackendImpl) ContainerInfoV2(name string, options cadvisorv2.RequestOpt
 			},
 		},
 	}, nil
-}
-
-func (b *BackendImpl) Create(path string) (*os.File, error) {
-	if !b.options.InDataDir(path) {
-		return nil, os.ErrPermission
-	}
-	return os.Create(path)
-}
-
-func (b *BackendImpl) DeviceOpened(pathname string) (bool, error) {
-	return false, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) EvalHostSymlinks(pathname string) (string, error) {
-	return "", nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
@@ -228,43 +182,8 @@ func (b *BackendImpl) GetDirFsInfo(path string) (cadvisorv2.FsInfo, error) {
 	return info, nil
 }
 
-func (b *BackendImpl) GetFileType(pathname string) (hostutil.FileType, error) {
-	return "", nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) GetMode(pathname string) (os.FileMode, error) {
-	return 0, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) GetMountRefs(pathname string) ([]string, error) {
-	return nil, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) GetOwner(pathname string) (int64, int64, error) {
-	return 0, 0, nanokube.Unimplemented()
-}
-
 func (b *BackendImpl) GetRequestedContainersInfo(containerName string, options cadvisorv2.RequestOptions) (map[string]*cadvisorv1.ContainerInfo, error) {
 	return nil, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) GetSELinuxMountContext(pathname string) (string, error) {
-	return "", nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) GetSELinuxSupport(pathname string) (bool, error) {
-	return false, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) Glob(pattern string) ([]string, error) {
-	if !b.options.InDataDir(filepath.Dir(pattern)) {
-		return nil, os.ErrPermission
-	}
-	return filepath.Glob(pattern)
-}
-
-func (b *BackendImpl) Hostname() (name string, err error) {
-	return "", nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) ImagesFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
@@ -272,21 +191,6 @@ func (b *BackendImpl) ImagesFsInfo(context.Context) (cadvisorv2.FsInfo, error) {
 		// TODO(partial): report image filesystem info from VM
 		// DEVNOTE: old impl delegated to ContainerFsInfo -> GetDirFsInfo("/")
 	}, nil
-}
-
-func (b *BackendImpl) IsLikelyNotMountPoint(file string) (bool, error) {
-	if !b.options.InDataDir(file) {
-		return true, os.ErrPermission
-	}
-	return true, nil
-}
-
-func (b *BackendImpl) IsMountPoint(file string) (bool, error) {
-	return false, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) List() ([]mount.MountPoint, error) {
-	return nil, nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) MachineInfo() (*cadvisorv1.MachineInfo, error) {
@@ -300,109 +204,8 @@ func (b *BackendImpl) MachineInfo() (*cadvisorv1.MachineInfo, error) {
 	}, nil
 }
 
-func (b *BackendImpl) MakeRShared(path string) error {
-	return nil
-}
-
-func (b *BackendImpl) MkdirAll(path string, perm os.FileMode) error {
-	if path == "/var/log/containers" {
-		return nil
-	}
-	if !b.options.InDataDir(path) {
-		return os.ErrPermission
-	}
-	return os.MkdirAll(path, perm)
-}
-
-func (b *BackendImpl) Mount(source string, target string, fstype string, options []string) error {
-	return nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	return nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	if source == "tmpfs" && fstype == "tmpfs" {
-		// TODO(partial): let these pass, the directory has already been created
-		//                potentially remap it to /tmp?
-		return nil
-	}
-	return nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	return nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) Open(name string) (*os.File, error) {
-	return nil, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
-	return nil, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) PathExists(pathname string) (bool, error) {
-	if !b.options.InDataDir(pathname) {
-		return false, os.ErrPermission
-	}
-	return utilspath.Exists(utilspath.CheckFollowSymlink, pathname)
-}
-
-func (b *BackendImpl) PathIsDevice(pathname string) (bool, error) {
-	return false, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) Pipe() (r *os.File, w *os.File, err error) {
-	return nil, nil, nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	if !b.options.InDataDir(subPath.PodDir) || !b.options.InDataDir(subPath.VolumePath) || !b.options.InDataDir(subPath.Path) {
-		return "", nil, os.ErrPermission
-	}
-	parent := filepath.Join(subPath.PodDir, "volume-subpaths", subPath.VolumeName, subPath.ContainerName)
-	leaf := filepath.Join(parent, strconv.Itoa(subPath.VolumeMountIndex))
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", nil, err
-	}
-	if err := os.Symlink(subPath.Path, leaf); err != nil && !os.IsExist(err) {
-		return "", nil, err
-	}
-	return leaf, nil, nil
-}
-
-func (b *BackendImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
-	return []os.DirEntry{
-		// TODO(partial): route to host or VM depending on path
-	}, nil
-}
-
-func (b *BackendImpl) Remove(path string) error {
-	if strings.HasPrefix(path, "/var/log/containers/") {
-		return nil
-	}
-	if !b.options.InDataDir(path) {
-		return os.ErrPermission
-	}
-	return os.Remove(path)
-}
-
-func (b *BackendImpl) RemoveAll(path string) error {
-	return nanokube.Unimplemented()
-}
-
-func (b *BackendImpl) Rename(oldpath string, newpath string) error {
-	return nanokube.Unimplemented()
-}
-
 func (b *BackendImpl) RootFsInfo() (cadvisorv2.FsInfo, error) {
 	return b.GetDirFsInfo("/")
-}
-
-func (b *BackendImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
-	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) Ready() <-chan struct{} {
@@ -417,26 +220,6 @@ func (b *BackendImpl) Start() error {
 		close(b.ready)
 	})
 	return nil
-}
-
-func (b *BackendImpl) Stat(path string) (os.FileInfo, error) {
-	if !b.options.InDataDir(path) {
-		return nil, os.ErrPermission
-	}
-	return os.Stat(path)
-}
-
-func (b *BackendImpl) Symlink(oldname string, newname string) error {
-	if !b.options.InDataDir(oldname) || !b.options.InDataDir(newname) {
-		klog.Warningf("skipping symlink from %q to %q outside of data dir", oldname, newname)
-		return nil
-	}
-	os.MkdirAll(filepath.Dir(newname), 0o755)
-	return os.Symlink(oldname, newname)
-}
-
-func (b *BackendImpl) Unmount(target string) error {
-	return nanokube.Unimplemented()
 }
 
 func (b *BackendImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {

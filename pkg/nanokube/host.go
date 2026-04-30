@@ -1,0 +1,269 @@
+package nanokube
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	v1 "github.com/cnuss/nanokube/pkg/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
+)
+
+type HostImpl struct {
+	volumeHost         volume.VolumeHost
+	volumeHostOnce     sync.Once
+	volumeHostProvided chan struct{}
+
+	mounters sync.Map // map[string]volume.Mounter
+}
+
+func (h *HostImpl) CanSupport(spec *volume.Spec) bool {
+	<-h.volumeHostProvided
+	// take ownership of all volumes, mounter decides/routes
+	return true
+}
+
+func (h *HostImpl) ConstructVolumeSpec(volumeName string, volumePath string) (volume.ReconstructedVolume, error) {
+	panic("unimplemented hostimpl constructvolumespec")
+}
+
+func (h *HostImpl) GetPluginName() string {
+	return "nanokube-host"
+}
+
+func (h *HostImpl) GetVolumeName(spec *volume.Spec) (string, error) {
+	panic("unimplemented hostimpl getvolumename")
+}
+
+func (h *HostImpl) Init(host volume.VolumeHost) error {
+	h.volumeHostOnce.Do(func() {
+		h.volumeHost = host
+		close(h.volumeHostProvided)
+	})
+	return nil
+}
+
+func (h *HostImpl) NewMounter(spec *volume.Spec, pod *corev1.Pod) (volume.Mounter, error) {
+	<-h.volumeHostProvided
+	mounter, _ := h.mounters.LoadOrStore(pod.GetUID(), &mounterImpl{
+		host:         h,
+		spec:         spec,
+		pod:          pod,
+		argsProvided: make(chan struct{}),
+		dirProvided:  make(chan struct{}),
+	})
+	return mounter.(*mounterImpl), nil
+}
+
+func (h *HostImpl) NewUnmounter(name string, podUID types.UID) (volume.Unmounter, error) {
+	<-h.volumeHostProvided
+	mounter, ok := h.mounters.Load(podUID)
+	if !ok {
+		return nil, fmt.Errorf("no mounter found for pod %s", podUID)
+	}
+	return mounter.(*mounterImpl), nil
+}
+
+func (h *HostImpl) RequiresRemount(spec *volume.Spec) bool {
+	// TODO(partial): compare specs
+	return false
+}
+
+func (h *HostImpl) SupportsMountOption() bool {
+	panic("unimplemented hostimpl supportsmountoption")
+}
+
+func (h *HostImpl) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	panic("unimplemented hostimpl supportsselinuxcontextmount")
+}
+
+func (h *HostImpl) Chmod(path string, perm os.FileMode) error {
+	return os.Chmod(path, perm)
+}
+
+func (h *HostImpl) Chtimes(path string, atime time.Time, mtime time.Time) error {
+	panic("unimplemented hostimpl chtimes")
+}
+
+func (h *HostImpl) Create(path string) (*os.File, error) {
+	return os.Create(path)
+}
+
+func (h *HostImpl) Glob(pattern string) ([]string, error) {
+	return filepath.Glob(pattern)
+}
+
+func (h *HostImpl) Hostname() (name string, err error) {
+	panic("unimplemented hostimpl hostname")
+}
+
+func (h *HostImpl) MkdirAll(path string, perm os.FileMode) error {
+	if path == "/var/log/containers" {
+		return nil
+	}
+	return os.MkdirAll(path, perm)
+}
+
+func (h *HostImpl) Open(name string) (*os.File, error) {
+	panic("unimplemented hostimpl open")
+}
+
+func (h *HostImpl) OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+	panic("unimplemented hostimpl openfile")
+}
+
+func (h *HostImpl) Pipe() (r *os.File, w *os.File, err error) {
+	panic("unimplemented hostimpl pipe")
+}
+
+func (h *HostImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
+	return os.ReadDir(dirname)
+}
+
+func (h *HostImpl) Remove(path string) error {
+	panic("unimplemented hostimpl remove")
+}
+
+func (h *HostImpl) RemoveAll(path string) error {
+	panic("unimplemented hostimpl removeall")
+}
+
+func (h *HostImpl) Rename(oldpath string, newpath string) error {
+	panic("unimplemented hostimpl rename")
+}
+
+func (h *HostImpl) Stat(path string) (os.FileInfo, error) {
+	return os.Lstat(path)
+}
+
+func (h *HostImpl) Symlink(oldname string, newname string) error {
+	return os.Symlink(oldname, newname)
+}
+
+func (h *HostImpl) DeviceOpened(pathname string) (bool, error) {
+	panic("unimplemented hostimpl deviceopened")
+}
+
+func (h *HostImpl) EvalHostSymlinks(pathname string) (string, error) {
+	panic("unimplemented hostimpl evalhostsymlinks")
+}
+
+func (h *HostImpl) GetFileType(pathname string) (hostutil.FileType, error) {
+	panic("unimplemented hostimpl getfiletype")
+}
+
+func (h *HostImpl) GetMode(pathname string) (os.FileMode, error) {
+	panic("unimplemented hostimpl getmode")
+}
+
+func (h *HostImpl) GetOwner(pathname string) (int64, int64, error) {
+	panic("unimplemented hostimpl getowner")
+}
+
+func (h *HostImpl) GetSELinuxMountContext(pathname string) (string, error) {
+	panic("unimplemented hostimpl getselinuxmountcontext")
+}
+
+func (h *HostImpl) GetSELinuxSupport(pathname string) (bool, error) {
+	panic("unimplemented hostimpl getselinuxsupport")
+}
+
+func (h *HostImpl) MakeRShared(path string) error {
+	return nil
+}
+
+func (h *HostImpl) PathExists(pathname string) (bool, error) {
+	panic("unimplemented hostimpl pathexists")
+}
+
+func (h *HostImpl) PathIsDevice(pathname string) (bool, error) {
+	panic("unimplemented hostimpl pathisdevice")
+}
+
+func NewHost() v1.Host {
+	return &HostImpl{
+		volumeHostProvided: make(chan struct{}),
+	}
+}
+
+type mounterImpl struct {
+	host v1.Host
+	spec *volume.Spec
+	pod  *corev1.Pod
+
+	args         *volume.MounterArgs
+	argsOnce     sync.Once
+	argsProvided chan struct{}
+
+	dir         *string
+	dirOnce     sync.Once
+	dirProvided chan struct{}
+}
+
+func (m *mounterImpl) TearDown() error {
+	panic("unimplemented mounterimpl teardown")
+}
+
+func (m *mounterImpl) TearDownAt(dir string) error {
+	panic("unimplemented mounterimpl teardownat")
+}
+
+func (m *mounterImpl) GetAttributes() volume.Attributes {
+	<-m.argsProvided
+	if m.spec.Volume.VolumeSource.HostPath != nil {
+		return volume.Attributes{
+			ReadOnly:       false,
+			Managed:        false,
+			SELinuxRelabel: false,
+		}
+	}
+	Log.Error("GetAttributes", "spec", m.spec, "pod", m.pod, "args", m.args)
+	panic("unimplemented mounterimpl getattributes")
+}
+
+func (m *mounterImpl) GetMetrics() (*volume.Metrics, error) {
+	if m.spec.Volume.VolumeSource.HostPath != nil {
+		return &volume.Metrics{
+			Time: metav1.Now(),
+			// TODO(partial): get real metrics
+		}, nil
+	}
+	panic("unimplemented mounterimpl getmetrics")
+}
+
+func (m *mounterImpl) GetPath() string {
+	<-m.argsProvided
+	if m.spec.Volume.VolumeSource.HostPath != nil {
+		return m.spec.Volume.VolumeSource.HostPath.Path
+	}
+	Log.Error("GetPath", "spec", m.spec, "pod", m.pod, "args", m.args)
+	panic("unimplemented mounterimpl getpath")
+}
+
+func (m *mounterImpl) SetUp(args volume.MounterArgs) error {
+	m.argsOnce.Do(func() {
+		m.args = &args
+		close(m.argsProvided)
+	})
+	return nil
+}
+
+func (m *mounterImpl) SetUpAt(dir string, args volume.MounterArgs) error {
+	m.dirOnce.Do(func() {
+		m.dir = &dir
+		close(m.dirProvided)
+	})
+	return m.SetUp(args)
+}
+
+var (
+	_ v1.Host          = &HostImpl{}
+	_ volume.Mounter   = &mounterImpl{}
+	_ volume.Unmounter = &mounterImpl{}
+)

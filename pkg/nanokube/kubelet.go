@@ -174,10 +174,16 @@ func (k *KubeletImpl) Dependencies() *kubelet.Dependencies {
 
 		k.dependencies.ProbeManager = nil
 		k.dependencies.Services = k.config.Services(k.Tunnel().URL())
-		k.dependencies.OSInterface = k.config.DefaultBackend()
-		k.dependencies.Mounter = k.config.DefaultBackend()
-		k.dependencies.Subpather = k.config.DefaultBackend()
-		k.dependencies.HostUtil = k.config.DefaultBackend()
+		// k.dependencies.OSInterface = k.config.DefaultBackend()
+		// k.dependencies.Mounter = k.config.DefaultBackend()
+		// k.dependencies.Subpather = k.config.DefaultBackend()
+		// k.dependencies.HostUtil = k.config.DefaultBackend()
+
+		k.dependencies.VolumePlugins = []volume.VolumePlugin{k.config.Host()}
+		k.dependencies.OSInterface = k.config.Host()
+		k.dependencies.Mounter = nil
+		k.dependencies.Subpather = nil
+		k.dependencies.HostUtil = k.config.Host()
 	})
 	return k.dependencies
 }
@@ -197,7 +203,7 @@ func volumePlugins() []volume.VolumePlugin {
 	allPlugins := []volume.VolumePlugin{}
 	allPlugins = append(allPlugins, emptydir.ProbeVolumePlugins()...)
 	allPlugins = append(allPlugins, git_repo.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, hostpath.FakeProbeVolumePlugins(volume.VolumeConfig{})...)
+	allPlugins = append(allPlugins, hostpath.ProbeVolumePlugins(volume.VolumeConfig{})...)
 	allPlugins = append(allPlugins, nfs.ProbeVolumePlugins(volume.VolumeConfig{})...)
 	allPlugins = append(allPlugins, secret.ProbeVolumePlugins()...)
 	allPlugins = append(allPlugins, iscsi.ProbeVolumePlugins()...)

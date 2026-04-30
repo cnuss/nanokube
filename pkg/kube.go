@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -245,6 +246,9 @@ func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, 
 	kv := []interface{}{"gvk", object.GetObjectKind().GroupVersionKind().String(), "reason", reason}
 	if ref, ok := object.(*corev1.ObjectReference); ok {
 		kv = append(kv, "namespace", ref.Namespace, "name", ref.Name)
+	}
+	if eventtype == corev1.EventTypeWarning && k.config.Options().Verbosity() >= 2 {
+		kv = append(kv, "stack", string(debug.Stack()))
 	}
 	logFunc(fmt.Sprintf(messageFmt, args...), kv...)
 }

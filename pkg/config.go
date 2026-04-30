@@ -35,6 +35,9 @@ type ConfigImpl struct {
 	cancelHooks  [][]func(context.Context)
 	cancelOnce   sync.Once
 
+	host     v1.Host
+	hostOnce sync.Once
+
 	kube     v1.Kube
 	kubeOnce sync.Once
 
@@ -193,6 +196,13 @@ func (c *ConfigImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
 	tunnel := NewTunnel(c, service)
 	c.tunnels.Store(service, tunnel)
 	return tunnel
+}
+
+func (c *ConfigImpl) Host() v1.Host {
+	c.hostOnce.Do(func() {
+		c.host = nanokube.NewHost()
+	})
+	return c.host
 }
 
 func (c *ConfigImpl) Kube() v1.Kube {

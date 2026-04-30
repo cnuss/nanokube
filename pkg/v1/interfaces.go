@@ -25,9 +25,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
+	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
-	"k8s.io/kubernetes/pkg/volume/util/subpath"
-	mount "k8s.io/mount-utils"
 	"k8s.io/utils/exec"
 )
 
@@ -177,10 +176,6 @@ type Backend interface {
 	Ready
 
 	cadvisor.Interface
-	container.OSInterface
-	mount.Interface
-	subpath.Interface
-	hostutil.HostUtils
 
 	Context() context.Context
 	Name() BackendName
@@ -231,6 +226,7 @@ type Config interface {
 	WithStorageFactory(storagefactory StorageFactory) Config
 	WithBackend(name BackendName, backend Backend) Config
 
+	Host() Host
 	Kube() Kube
 	Kubelet() Kubelet
 	ApiServer() ApiServer
@@ -255,4 +251,10 @@ type Error interface {
 	WithCode(code int) Error
 	WithError(err error) Error
 	WithErrors(errs ...error) Error
+}
+
+type Host interface {
+	hostutil.HostUtils
+	container.OSInterface
+	volume.VolumePlugin
 }
