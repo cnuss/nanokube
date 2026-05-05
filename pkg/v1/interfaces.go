@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"crypto/x509"
 	"io"
 	"net"
 	"net/url"
@@ -27,6 +28,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
+	"k8s.io/kubernetes/pkg/volume/util/subpath"
+	"k8s.io/mount-utils"
 	"k8s.io/utils/exec"
 )
 
@@ -57,6 +60,7 @@ type Tunnel interface {
 	FQDN() string
 	Hostname() string
 	URL() *url.URL
+	CACerts() []*x509.Certificate
 }
 
 // LogStream represents a container's log pump. Runtimes construct one via
@@ -105,7 +109,7 @@ type Driver interface {
 	NetworkService
 
 	Context() context.Context
-	Options() Options
+	Config() Config
 	Name() string
 
 	ExecOnHost(ctx context.Context, image string, cmd []string, mounts []Path) (string, error)
@@ -140,6 +144,7 @@ type ApiServer interface {
 	Client(ctx context.Context) Client
 	Config() *app.Config
 	Tunnel() Tunnel
+	CACerts() []*x509.Certificate
 }
 
 type Kubelet interface {
@@ -195,6 +200,7 @@ type Kube interface {
 	ApiServerOptions() *apiserveroptions.CompletedOptions
 
 	Client() Client
+	Environ() []string
 
 	WithKubelet(kubelet Kubelet) Kube
 	Kubelet() Kubelet
@@ -204,6 +210,8 @@ type Kube interface {
 
 	WithStorageFactory(storagefactory StorageFactory) Kube
 	StorageFactory() StorageFactory
+
+	Args(service ServiceName) []string
 
 	NodeReady() chan *corev1.ObjectReference
 }
@@ -257,4 +265,9 @@ type Host interface {
 	hostutil.HostUtils
 	container.OSInterface
 	volume.VolumePlugin
+	subpath.Interface
+	mount.Interface
+
+	Config() Config
+	VolumePlugins() []volume.VolumePlugin
 }

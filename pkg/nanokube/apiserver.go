@@ -2,6 +2,7 @@ package nanokube
 
 import (
 	"context"
+	"crypto/x509"
 	"sync"
 	"time"
 
@@ -27,6 +28,9 @@ type ApiServerImpl struct {
 	storage   v1.StorageFactory
 
 	client v1.Client
+
+	caCerts     []*x509.Certificate
+	caCertsOnce sync.Once
 
 	runOnce sync.Once
 	ready   chan struct{}
@@ -137,4 +141,12 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 
 	<-h.Ready()
 	return h.client
+}
+
+func (h *ApiServerImpl) CACerts() []*x509.Certificate {
+	h.caCertsOnce.Do(func() {
+		h.caCerts = h.config.Tunnel(v1.APIServerService).CACerts()
+		// TODO(incomplete): add generated apiserver.crt to CA certs
+	})
+	return h.caCerts
 }

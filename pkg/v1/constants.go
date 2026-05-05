@@ -14,8 +14,10 @@ var (
 	PodmanBackend    BackendName   = "podman"
 	AWSLambdaBackend BackendName   = "awslambda"
 
-	APIServerService ServiceName = "apiserver"
-	KubeletService   ServiceName = "kubelet"
+	APIServerService         ServiceName = "apiserver"
+	KubeletService           ServiceName = "kubelet"
+	ControllerManagerService ServiceName = "controller-manager"
+	SchedulerService         ServiceName = "scheduler"
 
 	DataDirLock       DataDir  = "lock"
 	DataDirKubelet    DataDir  = "kubelet"
@@ -24,6 +26,7 @@ var (
 	DataDirEtcd       DataDir  = "etcd"
 	DataDirKube       DataDir  = ".kube"
 	DataDirStaticPods DataDir  = DataDir(filepath.Join(string(DataDirKubelet), "static-pods"))
+	CAFile            FileName = FileName(filepath.Join(string(DataDirCerts), "ca.crt"))
 	CertFile          FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.crt"))
 	KeyFile           FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.key"))
 	KubeconfigFile    FileName = FileName(filepath.Join(string(DataDirKube), "config"))
@@ -33,4 +36,6 @@ var (
 	NetworkSubnetSize              = 28
 	NetworkProtocolTCP             = corev1.ProtocolTCP
 	NetworkProtocolUDP             = corev1.ProtocolUDP
+
+	SandboxExecSentinel = "__sandbox__"
 )

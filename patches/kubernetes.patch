@@ -1,3 +1,31 @@
+diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
+index d8cfd44222c..b2b1c9e71a3 100644
+--- a/pkg/controlplane/controller/kubernetesservice/controller.go
++++ b/pkg/controlplane/controller/kubernetesservice/controller.go
+@@ -85,6 +85,12 @@ func New(config Config, client kubernetes.Interface, serviceInformer v1informers
+ // Start begins the core controller loops that must exist for bootstrapping
+ // a cluster.
+ func (c *Controller) Start(stopCh <-chan struct{}) {
++	// nanokube: skip bootstrap of the default "kubernetes" Service and its
++	// endpoint reconciliation. The controller is left constructed so Stop()
++	// can be called safely, but no work is performed.
++	klog.Info("nanokube: kubernetesservice.Controller.Start is a no-op")
++	return
++
+ 	if !cache.WaitForCacheSync(stopCh, c.serviceSynced) {
+ 		runtime.HandleError(fmt.Errorf("timed out waiting for caches to sync"))
+ 		return
+@@ -111,6 +117,10 @@ func (c *Controller) Start(stopCh <-chan struct{}) {
+ 
+ // Stop cleans up this API Servers endpoint reconciliation leases so another master can take over more quickly.
+ func (c *Controller) Stop() {
++	// nanokube: matched no-op for Start; nothing was started, nothing to stop.
++	klog.Info("nanokube: kubernetesservice.Controller.Stop is a no-op")
++	return
++
+ 	c.lock.Lock()
+ 	defer c.lock.Unlock()
+ 
 diff --git a/pkg/kubelet/client/kubelet_client.go b/pkg/kubelet/client/kubelet_client.go
 index 00d08e6f800..db15b0c3951 100644
 --- a/pkg/kubelet/client/kubelet_client.go

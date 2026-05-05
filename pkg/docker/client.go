@@ -17,7 +17,7 @@ func newClient(config v1.Config, socket string) (*dockerclient.Client, error) {
 		dockerclient.WithHost("unix://" + socket),
 		dockerclient.WithAPIVersionNegotiation(),
 	}
-	if config.Options().Verbosity() >= 2 {
+	if config.Options().Verbosity() >= 3 {
 		httpClient := &http.Client{
 			Transport: newTransport(config, socket),
 		}
@@ -43,7 +43,7 @@ func newTransport(config v1.Config, socket string) http.RoundTripper {
 			return net.Dial("unix", socket)
 		},
 	}
-	verbose := config.Options().Verbosity() >= 3
+	verbose := config.Options().Verbosity() >= 4
 	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		var reqBuf bytes.Buffer
 		if req.Body != nil && verbose {

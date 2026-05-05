@@ -44,9 +44,9 @@ type fsCacheEntry struct {
 }
 
 type BackendImpl struct {
-	name    v1.BackendName
-	driver  v1.Driver
-	options v1.Options
+	name   v1.BackendName
+	driver v1.Driver
+	config v1.Config
 
 	manager     v1.Manager
 	managerOnce sync.Once
@@ -66,11 +66,11 @@ type BackendImpl struct {
 
 var _ v1.Backend = &BackendImpl{}
 
-func NewBackend(name v1.BackendName, driver v1.Driver) v1.Backend {
+func NewBackend(name v1.BackendName, driver v1.Driver, config v1.Config) v1.Backend {
 	return &BackendImpl{
 		name:    name,
 		driver:  driver,
-		options: driver.Options(),
+		config:  config,
 		ready:   make(chan struct{}),
 		fsCache: make(map[string]fsCacheEntry),
 	}
@@ -81,7 +81,7 @@ func (b *BackendImpl) Name() v1.BackendName {
 }
 
 func (b *BackendImpl) Context() context.Context {
-	return b.driver.Context()
+	return b.config.Context()
 }
 
 func (b *BackendImpl) Driver() v1.Driver {
@@ -281,11 +281,6 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 	return c
 }
 
-// SandboxExecSentinel is prepended to rewritten probe commands so that
-// ExecSync can detect them and route execution to the pod sandbox container
-// (which has busybox with wget/nc) instead of the app container.
-const SandboxExecSentinel = "__sandbox__"
-
 func expand(path string) string {
 	orig := fmt.Sprintf("%s", path)
 	path = os.ExpandEnv(path)
@@ -307,15 +302,6 @@ func expand(path string) string {
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attributes.Pod
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
-
-	// DEVNOTE: old impl injected host aliases from Hosts() here:
-	//   if h := p.backend.Hosts(); h != nil {
-	//       network := NetworkBridge
-	//       if pod.Spec.HostNetwork {
-	//           network = NetworkHost
-	//       }
-	//       pod.Spec.HostAliases = append(pod.Spec.HostAliases, h.HostAliases(ctx, network)...)
-	//   }
 
 	// Inject security context as annotation so CreateContainer can apply it on
 	// platforms where kubelet doesn't populate LinuxContainerConfig (e.g. macOS).
@@ -419,7 +405,7 @@ func rewriteProbe(probe *corev1.Probe) {
 		}
 		url := fmt.Sprintf("%s://localhost:%d%s", scheme, port, path)
 
-		cmd := []string{SandboxExecSentinel, "wget", "-q", "-O", "/dev/null", "-S", "--no-check-certificate", fmt.Sprintf("--timeout=%d", timeout)}
+		cmd := []string{v1.SandboxExecSentinel, "wget", "-q", "-O", "/dev/null", "-S", "--no-check-certificate", fmt.Sprintf("--timeout=%d", timeout)}
 		if host := probe.HTTPGet.Host; host != "" {
 			cmd = append(cmd, "--header", fmt.Sprintf("Host: %s", host))
 		}
@@ -435,14 +421,14 @@ func rewriteProbe(probe *corev1.Probe) {
 		port := probe.TCPSocket.Port.IntValue()
 		probe.TCPSocket = nil
 		probe.Exec = &corev1.ExecAction{
-			Command: []string{SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+			Command: []string{v1.SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
 		}
 
 	case probe.GRPC != nil:
 		port := probe.GRPC.Port
 		probe.GRPC = nil
 		probe.Exec = &corev1.ExecAction{
-			Command: []string{SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
+			Command: []string{v1.SandboxExecSentinel, "nc", "-z", fmt.Sprintf("-w%d", timeout), "localhost", fmt.Sprintf("%d", port)},
 		}
 	}
 }

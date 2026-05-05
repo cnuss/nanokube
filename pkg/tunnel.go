@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/breml/rootcerts/embedded"
 	"github.com/cloudflare/cloudflared/client"
 	"github.com/cloudflare/cloudflared/config"
 	"github.com/cloudflare/cloudflared/connection"
@@ -124,6 +126,11 @@ func (t *TunnelImpl) LocalFQDN() string {
 	return hostname
 }
 
+func (t *TunnelImpl) CACerts() []*x509.Certificate {
+	<-t.fqdnReady
+	return t.tunnel.CACerts()
+}
+
 func (t *TunnelImpl) FQDN() string {
 	t.fqdnOnce.Do(func() {
 		// Close both signal channels on any early exit so Ready() consumers
@@ -143,7 +150,7 @@ func (t *TunnelImpl) FQDN() string {
 		}
 
 		t.tunnel = tunnel
-		t.fqdn = tunnel.Hostname
+		t.fqdn = tunnel.Hostname()
 		close(t.fqdnReady)
 		success = true
 
@@ -188,18 +195,18 @@ func (t *TunnelImpl) Ready() <-chan struct{} {
 }
 
 type QuickTunnel struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Hostname   string `json:"hostname"`
-	AccountTag string `json:"account_tag"`
-	Secret     []byte `json:"secret"`
-
 	ctx    context.Context
 	cancel context.CancelFunc
 	tunnel v1.Tunnel
 
 	log          *zerolog.Logger
 	transportLog *zerolog.Logger
+
+	spec     *quickTunnelSpec
+	specOnce sync.Once
+
+	caCerts     []*x509.Certificate
+	caCertsOnce sync.Once
 
 	tunnelConfig     *supervisor.TunnelConfig
 	tunnelConfigOnce sync.Once
@@ -216,82 +223,41 @@ type QuickTunnel struct {
 	reconnected chan supervisor.ReconnectSignal
 }
 
+type quickTunnelSpec struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Hostname   string `json:"hostname"`
+	AccountTag string `json:"account_tag"`
+	Secret     []byte `json:"secret"`
+}
+
 type quickTunnelError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-type quickTunnelResponse struct {
+type quickTunnel struct {
 	Success bool               `json:"success"`
-	Result  QuickTunnel        `json:"result"`
+	Result  quickTunnelSpec    `json:"result"`
 	Errors  []quickTunnelError `json:"errors"`
 }
 
 func newQuickTunnel(tunnel v1.Tunnel, serviceName v1.ServiceName) (*QuickTunnel, error) {
 	log := zerolog.New(io.Discard).With().Str("service", string(serviceName)).Str("component", "quicktunnel").Logger()
-	client := http.Client{
-		Transport: &http.Transport{
-			TLSHandshakeTimeout:   httpTimeout,
-			ResponseHeaderTimeout: httpTimeout,
-		},
-		Timeout: httpTimeout,
-	}
-	req, err := http.NewRequest(http.MethodPost, "https://api.trycloudflare.com/tunnel", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("User-Agent", fmt.Sprintf("cloudflared/%s", cloudflaredVersion))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to request tunnel credentials: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tunnel credentials response: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter := resp.Header.Get("Retry-After")
-		if secs, err := strconv.Atoi(retryAfter); err == nil {
-			now := time.Now()
-			return nil, fmt.Errorf("tunnel rate limit resets in %s", humanize.RelTime(now.Add(time.Duration(secs)*time.Second), now, "", ""))
-		}
-		if retryAfter != "" {
-			return nil, fmt.Errorf("tunnel rate limit hit (HTTP 429): Retry-After=%s", retryAfter)
-		}
-		return nil, fmt.Errorf("tunnel rate limit hit (HTTP 429): no rate-limit headers returned")
-	}
-
-	var data quickTunnelResponse
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, fmt.Errorf("tunnel credentials request failed (status=%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	if !data.Success {
-		var errorMessages []string
-		for _, e := range data.Errors {
-			errorMessages = append(errorMessages, fmt.Sprintf("%d: %s", e.Code, e.Message))
-		}
-		return nil, fmt.Errorf("tunnel credential request failed: %s", strings.Join(errorMessages, "; "))
-	}
 
 	ctx, cancel := context.WithCancel(tunnel.Context())
 
-	q := &data.Result
-	q.ctx = ctx
-	q.cancel = cancel
-
-	q.tunnel = tunnel
-	q.log = &log
-	q.transportLog = &log
-	q.ready = make(chan struct{})
-	q.stopped = make(chan struct{})
-	q.connected = signal.New(make(chan struct{}))
-	q.reconnected = make(chan supervisor.ReconnectSignal, 1)
+	q := &QuickTunnel{
+		ctx:          ctx,
+		cancel:       cancel,
+		tunnel:       tunnel,
+		log:          &log,
+		transportLog: &log,
+		ready:        make(chan struct{}),
+		stopped:      make(chan struct{}),
+		connected:    signal.New(make(chan struct{})),
+		reconnected:  make(chan supervisor.ReconnectSignal, 1),
+	}
 
 	supervisor, err := q.Supervisor()
 	if err != nil {
@@ -337,6 +303,115 @@ func (q *QuickTunnel) Stopped() <-chan struct{} {
 	return q.stopped
 }
 
+func (q *QuickTunnel) Spec() (*quickTunnelSpec, error) {
+	q.specOnce.Do(func() {
+		client := http.Client{
+			Transport: &http.Transport{
+				TLSHandshakeTimeout:   httpTimeout,
+				ResponseHeaderTimeout: httpTimeout,
+			},
+			Timeout: httpTimeout,
+		}
+
+		fetch := func() (*quickTunnelSpec, error) {
+			req, err := http.NewRequest(http.MethodPost, "https://api.trycloudflare.com/tunnel", nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			req.Header.Add("Content-Type", "application/json")
+			req.Header.Add("User-Agent", fmt.Sprintf("cloudflared/%s", cloudflaredVersion))
+
+			resp, err := client.Do(req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to request tunnel credentials: %w", err)
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read tunnel credentials response: %w", err)
+			}
+
+			if resp.StatusCode == http.StatusTooManyRequests {
+				retryAfter := resp.Header.Get("Retry-After")
+				if secs, err := strconv.Atoi(retryAfter); err == nil {
+					now := time.Now()
+					return nil, fmt.Errorf("tunnel rate limit resets in %s", humanize.RelTime(now.Add(time.Duration(secs)*time.Second), now, "", ""))
+				}
+				if retryAfter != "" {
+					return nil, fmt.Errorf("tunnel rate limit hit (HTTP 429): Retry-After=%s", retryAfter)
+				}
+				return nil, fmt.Errorf("tunnel rate limit hit (HTTP 429): no rate-limit headers returned")
+			}
+
+			var data quickTunnel
+			if err := json.Unmarshal(body, &data); err != nil {
+				return nil, fmt.Errorf("tunnel credentials request failed (status=%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			}
+
+			if !data.Success {
+				var errorMessages []string
+				for _, e := range data.Errors {
+					errorMessages = append(errorMessages, fmt.Sprintf("%d: %s", e.Code, e.Message))
+				}
+				return nil, fmt.Errorf("tunnel credential request failed: %s", strings.Join(errorMessages, "; "))
+			}
+
+			return &data.Result, nil
+		}
+
+		sleep := 0 * time.Second
+		for {
+			spec, err := fetch()
+			if err == nil {
+				q.spec = spec
+				return
+			}
+
+			nanokube.Log.Error("failed to fetch tunnel credentials, retrying", "error", err)
+			sleep += 1 * time.Second
+			select {
+			case <-time.After(sleep):
+			case <-q.ctx.Done():
+				return
+			}
+		}
+	})
+	return q.spec, nil
+}
+
+func (q *QuickTunnel) ID() string {
+	spec, err := q.Spec()
+	if err != nil {
+		return ""
+	}
+	return spec.ID
+}
+
+func (q *QuickTunnel) Hostname() string {
+	spec, err := q.Spec()
+	if err != nil {
+		return ""
+	}
+	return spec.Hostname
+}
+
+func (q *QuickTunnel) AccountTag() string {
+	spec, err := q.Spec()
+	if err != nil {
+		return ""
+	}
+	return spec.AccountTag
+}
+
+func (q *QuickTunnel) Secret() []byte {
+	spec, err := q.Spec()
+	if err != nil {
+		return nil
+	}
+	return spec.Secret
+}
+
 func (q *QuickTunnel) Supervisor() (*supervisor.Supervisor, error) {
 	promMu.Lock()
 	defer promMu.Unlock()
@@ -359,19 +434,46 @@ func (q *QuickTunnel) Supervisor() (*supervisor.Supervisor, error) {
 	return supervisor, nil
 }
 
+func (q *QuickTunnel) CACerts() []*x509.Certificate {
+	q.caCertsOnce.Do(func() {
+		certificates := []*x509.Certificate{}
+
+		rest := []byte(embedded.MozillaCACertificatesPEM())
+		for {
+			block, remainder := pem.Decode(rest)
+			if block == nil {
+				break
+			}
+			rest = remainder
+			if block.Type != "CERTIFICATE" {
+				continue
+			}
+			if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+				certificates = append(certificates, cert)
+			}
+		}
+
+		cloudflare, _ := tlsconfig.GetCloudflareRootCA()
+		certificates = append(certificates, cloudflare...)
+
+		q.caCerts = certificates
+	})
+	return q.caCerts
+}
+
 func (q *QuickTunnel) TunnelConfig() *supervisor.TunnelConfig {
 	q.tunnelConfigOnce.Do(func() {
 		tunnelConfig := &supervisor.TunnelConfig{
 			ClientConfig: func() *client.Config {
-				featureSelector, _ := features.NewFeatureSelector(q.ctx, q.AccountTag, nil, false, q.log)
+				featureSelector, _ := features.NewFeatureSelector(q.ctx, q.AccountTag(), nil, false, q.log)
 				cfg, _ := client.NewConfig(cloudflaredVersion, fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH), featureSelector)
 				return cfg
 			}(),
 			GracePeriod:     gracePeriod,
 			Region:          "",
 			EdgeIPVersion:   allregions.Auto,
-			HAConnections:   1,                                     // Quick tunnels use single connection
-			Tags:            []pogs.Tag{{Name: "ID", Value: q.ID}}, // TODO(experimental): reuse tunnel ID as connector ID; cloudflared normally generates a fresh UUID per process
+			HAConnections:   1,                                       // Quick tunnels use single connection
+			Tags:            []pogs.Tag{{Name: "ID", Value: q.ID()}}, // TODO(experimental): reuse tunnel ID as connector ID; cloudflared normally generates a fresh UUID per process
 			Log:             q.log,
 			LogTransport:    q.transportLog,
 			Observer:        connection.NewObserver(q.log, q.log),
@@ -379,30 +481,29 @@ func (q *QuickTunnel) TunnelConfig() *supervisor.TunnelConfig {
 			Retries:         5,
 			RunFromTerminal: false,
 			NamedTunnel: func() *connection.TunnelProperties {
-				tunnelID, _ := uuid.Parse(q.ID)
+				tunnelID, _ := uuid.Parse(q.ID())
 				return &connection.TunnelProperties{
 					Credentials: connection.Credentials{
-						AccountTag:   q.AccountTag,
-						TunnelSecret: q.Secret,
+						AccountTag:   q.AccountTag(),
+						TunnelSecret: q.Secret(),
 						TunnelID:     tunnelID,
 					},
-					QuickTunnelUrl: q.Hostname,
+					QuickTunnelUrl: q.Hostname(),
 				}
 			}(),
 			ProtocolSelector: func() connection.ProtocolSelector {
-				protocolSelector, _ := connection.NewProtocolSelector("auto", q.AccountTag, false, false, edgediscovery.ProtocolPercentage, connection.ResolveTTL, q.log)
+				protocolSelector, _ := connection.NewProtocolSelector("auto", q.AccountTag(), false, false, edgediscovery.ProtocolPercentage, connection.ResolveTTL, q.log)
 				return protocolSelector
 			}(),
 			EdgeTLSConfigs: func() map[connection.Protocol]*tls.Config {
-				rootCAs, _ := x509.SystemCertPool()
-				cfCAs, _ := tlsconfig.GetCloudflareRootCA()
-				for _, c := range cfCAs {
-					rootCAs.AddCert(c)
+				pool := x509.NewCertPool()
+				for _, c := range q.CACerts() {
+					pool.AddCert(c)
 				}
 				out := make(map[connection.Protocol]*tls.Config, len(connection.ProtocolList))
 				for _, p := range connection.ProtocolList {
 					s := p.TLSSettings()
-					out[p] = &tls.Config{ServerName: s.ServerName, NextProtos: s.NextProtos, RootCAs: rootCAs}
+					out[p] = &tls.Config{ServerName: s.ServerName, NextProtos: s.NextProtos, RootCAs: pool}
 				}
 				return out
 			}(),

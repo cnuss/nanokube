@@ -78,7 +78,7 @@ type TagBuilder struct {
 
 func NewTagBuilder(driver v1.Driver) *TagBuilder {
 	b := &TagBuilder{
-		prefix: driver.Options().Name(),
+		prefix: driver.Config().Options().Name(),
 		tags:   make(map[string]string),
 	}
 	b.set(keyManagedBy, driver.Name())

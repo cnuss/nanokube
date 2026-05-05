@@ -6,16 +6,10 @@ metadata:
   namespace: kube-system
 spec:
   containers:
-    - name: httpd
-      image: cnuss/dev:latest
-      command: [busybox, httpd, "-f", "-p", "8080"]
-      ports:
-        - containerPort: 8080
-          protocol: TCP
-    - name: kube-controller-manager
+    - name: controller-manager
       image: registry.k8s.io/kube-controller-manager:v1.35.0 # TODO(incomplete): version
-      command:
-        - kube-controller-manager
+      command: [kube-controller-manager]
+      args:
         - --kubeconfig=/home/nanokube/.kube/config
         - --authentication-kubeconfig=/home/nanokube/.kube/config
         - --authorization-kubeconfig=/home/nanokube/.kube/config
@@ -29,10 +23,10 @@ spec:
       volumeMounts:
         - name: nanokube-home
           mountPath: /home/nanokube
-    - name: kube-scheduler
+    - name: scheduler
       image: registry.k8s.io/kube-scheduler:v1.35.0 # TODO(incomplete): version
-      command:
-        - kube-scheduler
+      command: [kube-scheduler]
+      args:
         - --kubeconfig=/home/nanokube/.kube/config
         - --authentication-kubeconfig=/home/nanokube/.kube/config
         - --authorization-kubeconfig=/home/nanokube/.kube/config

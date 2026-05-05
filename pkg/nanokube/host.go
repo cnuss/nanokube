@@ -1,7 +1,6 @@
 package nanokube
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,21 +11,125 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/configmap"
+	"k8s.io/kubernetes/pkg/volume/csi"
+	"k8s.io/kubernetes/pkg/volume/downwardapi"
+	"k8s.io/kubernetes/pkg/volume/emptydir"
+	"k8s.io/kubernetes/pkg/volume/git_repo"
+	"k8s.io/kubernetes/pkg/volume/projected"
+	"k8s.io/kubernetes/pkg/volume/secret"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
+	"k8s.io/kubernetes/pkg/volume/util/subpath"
+	mount "k8s.io/mount-utils"
 )
 
+var PluginName = "nanokube"
+
 type HostImpl struct {
+	config v1.Config
+
 	volumeHost         volume.VolumeHost
 	volumeHostOnce     sync.Once
 	volumeHostProvided chan struct{}
 
-	mounters sync.Map // map[string]volume.Mounter
+	mounters   sync.Map // map[types.UID]volume.Mounter
+	unmounters sync.Map // map[types.UID]volume.Unmounter
+
+	volumePlugins     []volume.VolumePlugin
+	volumePluginsOnce sync.Once
+}
+
+var _ v1.Host = &HostImpl{}
+
+func NewHost(config v1.Config) v1.Host {
+	return &HostImpl{
+		config:             config,
+		volumeHostProvided: make(chan struct{}),
+	}
+}
+
+func (h *HostImpl) Config() v1.Config {
+	return h.config
+}
+
+func (h *HostImpl) CanSafelySkipMountPointCheck() bool {
+	Log.Error("CanSafelySkipMountPointCheck")
+	panic("unimplemented hostimpl cansafelyskipmountpointcheck")
+}
+
+func (h *HostImpl) CleanSubPaths(podDir string, volumeName string) error {
+	return nil
+}
+
+func (h *HostImpl) GetMountRefs(pathname string) ([]string, error) {
+	Log.Error("GetMountRefs", "pathname", pathname)
+	panic("unimplemented hostimpl getmountrefs")
+}
+
+func (h *HostImpl) IsLikelyNotMountPoint(file string) (bool, error) {
+	if h.Config().Options().InDataDir(file) {
+		return true, nil
+	}
+	Log.Error("IsLikelyNotMountPoint", "file", file)
+	panic("unimplemented hostimpl islikelynotmountpoint")
+}
+
+func (h *HostImpl) IsMountPoint(file string) (bool, error) {
+	Log.Error("IsMountPoint", "file", file)
+	panic("unimplemented hostimpl ismountpoint")
+}
+
+func (h *HostImpl) List() ([]mount.MountPoint, error) {
+	Log.Error("List")
+	panic("unimplemented hostimpl list")
+}
+
+func (h *HostImpl) Mount(source string, target string, fstype string, options []string) error {
+	Log.Error("Mount", "source", source, "target", target, "fstype", fstype, "options", options)
+	panic("unimplemented hostimpl mount")
+}
+
+func (h *HostImpl) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
+	Log.Error("MountSensitive", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions)
+	panic("unimplemented hostimpl mountsensitive")
+}
+
+func (h *HostImpl) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
+	if source == "tmpfs" && fstype == "tmpfs" {
+		return nil
+	}
+	Log.Error("MountSensitiveWithoutSystemd", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions)
+	panic("unimplemented hostimpl mountsensitivewithoutsystemd")
+}
+
+func (h *HostImpl) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
+	Log.Error("MountSensitiveWithoutSystemdWithMountFlags", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions, "mountFlags", mountFlags)
+	panic("unimplemented hostimpl mountsensitivewithoutsystemdwithmountflags")
+}
+
+func (h *HostImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
+	Log.Error("PrepareSafeSubpath", "subPath", subPath)
+	panic("unimplemented hostimpl preparesafesubpath")
+}
+
+func (h *HostImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
+	Log.Error("SafeMakeDir", "subdir", subdir, "base", base, "perm", perm)
+	panic("unimplemented hostimpl safemakedir")
+}
+
+func (h *HostImpl) Unmount(target string) error {
+	Log.Error("Unmount", "target", target)
+	panic("unimplemented hostimpl unmount")
 }
 
 func (h *HostImpl) CanSupport(spec *volume.Spec) bool {
-	<-h.volumeHostProvided
-	// take ownership of all volumes, mounter decides/routes
-	return true
+	if spec.Volume == nil {
+		return false
+	}
+	if spec.Volume.VolumeSource.HostPath != nil {
+		return true
+	}
+	return false
 }
 
 func (h *HostImpl) ConstructVolumeSpec(volumeName string, volumePath string) (volume.ReconstructedVolume, error) {
@@ -34,7 +137,7 @@ func (h *HostImpl) ConstructVolumeSpec(volumeName string, volumePath string) (vo
 }
 
 func (h *HostImpl) GetPluginName() string {
-	return "nanokube-host"
+	return PluginName
 }
 
 func (h *HostImpl) GetVolumeName(spec *volume.Spec) (string, error) {
@@ -50,24 +153,11 @@ func (h *HostImpl) Init(host volume.VolumeHost) error {
 }
 
 func (h *HostImpl) NewMounter(spec *volume.Spec, pod *corev1.Pod) (volume.Mounter, error) {
-	<-h.volumeHostProvided
-	mounter, _ := h.mounters.LoadOrStore(pod.GetUID(), &mounterImpl{
-		host:         h,
-		spec:         spec,
-		pod:          pod,
-		argsProvided: make(chan struct{}),
-		dirProvided:  make(chan struct{}),
-	})
-	return mounter.(*mounterImpl), nil
+	return newMounter(h, spec, pod)
 }
 
 func (h *HostImpl) NewUnmounter(name string, podUID types.UID) (volume.Unmounter, error) {
-	<-h.volumeHostProvided
-	mounter, ok := h.mounters.Load(podUID)
-	if !ok {
-		return nil, fmt.Errorf("no mounter found for pod %s", podUID)
-	}
-	return mounter.(*mounterImpl), nil
+	return newUnmounter(h, name, podUID)
 }
 
 func (h *HostImpl) RequiresRemount(spec *volume.Spec) bool {
@@ -127,11 +217,11 @@ func (h *HostImpl) ReadDir(dirname string) ([]os.DirEntry, error) {
 }
 
 func (h *HostImpl) Remove(path string) error {
-	panic("unimplemented hostimpl remove")
+	return os.Remove(path)
 }
 
 func (h *HostImpl) RemoveAll(path string) error {
-	panic("unimplemented hostimpl removeall")
+	return os.RemoveAll(path)
 }
 
 func (h *HostImpl) Rename(oldpath string, newpath string) error {
@@ -186,14 +276,22 @@ func (h *HostImpl) PathIsDevice(pathname string) (bool, error) {
 	panic("unimplemented hostimpl pathisdevice")
 }
 
-func NewHost() v1.Host {
-	return &HostImpl{
-		volumeHostProvided: make(chan struct{}),
-	}
+func (h *HostImpl) VolumePlugins() []volume.VolumePlugin {
+	h.volumePluginsOnce.Do(func() {
+		h.volumePlugins = []volume.VolumePlugin{h}
+		h.volumePlugins = append(h.volumePlugins, emptydir.ProbeVolumePlugins()...)
+		h.volumePlugins = append(h.volumePlugins, git_repo.ProbeVolumePlugins()...)
+		h.volumePlugins = append(h.volumePlugins, secret.ProbeVolumePlugins()...)
+		h.volumePlugins = append(h.volumePlugins, downwardapi.ProbeVolumePlugins()...)
+		h.volumePlugins = append(h.volumePlugins, configmap.ProbeVolumePlugins()...)
+		h.volumePlugins = append(h.volumePlugins, projected.ProbeVolumePlugins()...)
+		h.volumePlugins = append(h.volumePlugins, csi.ProbeVolumePlugins()...)
+	})
+	return h.volumePlugins
 }
 
 type mounterImpl struct {
-	host v1.Host
+	host *HostImpl
 	spec *volume.Spec
 	pod  *corev1.Pod
 
@@ -206,7 +304,48 @@ type mounterImpl struct {
 	dirProvided chan struct{}
 }
 
+func newMounter(host *HostImpl, spec *volume.Spec, pod *corev1.Pod) (volume.Mounter, error) {
+	m, _ := host.mounters.LoadOrStore(pod.GetUID(), func() volume.Mounter {
+		// their empty dir plugin works ok
+		// if spec.Volume.VolumeSource.EmptyDir != nil {
+		// 	plugin := emptydir.ProbeVolumePlugins()[0]
+		// 	mounter, _ := plugin.NewMounter(spec, pod)
+		// 	return mounter
+		// }
+
+		// Use ours for everything else
+		return &mounterImpl{
+			host:         host,
+			spec:         spec,
+			pod:          pod,
+			argsProvided: make(chan struct{}),
+			dirProvided:  make(chan struct{}),
+		}
+	}())
+	return m.(volume.Mounter), nil
+}
+
+func newUnmounter(host *HostImpl, name string, podUID types.UID) (volume.Unmounter, error) {
+	m, _ := host.unmounters.LoadOrStore(podUID, func() volume.Unmounter {
+		// their empty dir plugin works ok
+		// if spec.Volume.VolumeSource.EmptyDir != nil {
+		// 	plugin := emptydir.ProbeVolumePlugins()[0]
+		// 	mounter, _ := plugin.NewMounter(spec, pod)
+		// 	return mounter
+		// }
+
+		// Use ours for everything else (from mounters map for singletons)
+		mounter, _ := host.mounters.Load(podUID)
+		return mounter.(volume.Unmounter)
+	}())
+	return m.(volume.Unmounter), nil
+}
+
 func (m *mounterImpl) TearDown() error {
+	if m.spec.Volume.VolumeSource.HostPath != nil {
+		return nil
+	}
+	Log.Error("TearDown", "spec", m.spec, "args", m.args)
 	panic("unimplemented mounterimpl teardown")
 }
 
@@ -215,15 +354,14 @@ func (m *mounterImpl) TearDownAt(dir string) error {
 }
 
 func (m *mounterImpl) GetAttributes() volume.Attributes {
-	<-m.argsProvided
 	if m.spec.Volume.VolumeSource.HostPath != nil {
 		return volume.Attributes{
-			ReadOnly:       false,
-			Managed:        false,
+			ReadOnly:       m.spec.ReadOnly,
+			Managed:        true,
 			SELinuxRelabel: false,
 		}
 	}
-	Log.Error("GetAttributes", "spec", m.spec, "pod", m.pod, "args", m.args)
+	Log.Error("GetAttributes", "spec", m.spec, "args", m.args)
 	panic("unimplemented mounterimpl getattributes")
 }
 
@@ -234,15 +372,15 @@ func (m *mounterImpl) GetMetrics() (*volume.Metrics, error) {
 			// TODO(partial): get real metrics
 		}, nil
 	}
+	Log.Error("GetMetrics", "spec", m.spec, "args", m.args)
 	panic("unimplemented mounterimpl getmetrics")
 }
 
 func (m *mounterImpl) GetPath() string {
-	<-m.argsProvided
 	if m.spec.Volume.VolumeSource.HostPath != nil {
 		return m.spec.Volume.VolumeSource.HostPath.Path
 	}
-	Log.Error("GetPath", "spec", m.spec, "pod", m.pod, "args", m.args)
+	Log.Error("GetPath", "spec", m.spec, "args", m.args)
 	panic("unimplemented mounterimpl getpath")
 }
 
@@ -263,7 +401,6 @@ func (m *mounterImpl) SetUpAt(dir string, args volume.MounterArgs) error {
 }
 
 var (
-	_ v1.Host          = &HostImpl{}
 	_ volume.Mounter   = &mounterImpl{}
 	_ volume.Unmounter = &mounterImpl{}
 )

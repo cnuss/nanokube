@@ -3,6 +3,7 @@ module github.com/cnuss/nanokube
 go 1.26
 
 require (
+	github.com/breml/rootcerts v0.3.5
 	github.com/cloudflare/cloudflared v0.0.0-20260415224023-df54d2771019
 	github.com/container-storage-interface/spec v1.9.0
 	github.com/containerd/errdefs v1.0.0

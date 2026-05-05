@@ -200,7 +200,7 @@ func (c *ConfigImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
 
 func (c *ConfigImpl) Host() v1.Host {
 	c.hostOnce.Do(func() {
-		c.host = nanokube.NewHost()
+		c.host = nanokube.NewHost(c)
 	})
 	return c.host
 }

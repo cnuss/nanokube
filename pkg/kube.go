@@ -1,8 +1,11 @@
 package pkg
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,9 +28,6 @@ import (
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	"k8s.io/kubernetes/pkg/features"
 )
-
-//go:embed kube-system.yaml
-var kubeSystemManifest string
 
 //go:linkname nodeReadyGracePeriod k8s.io/kubernetes/pkg/kubelet.nodeReadyGracePeriod
 var nodeReadyGracePeriod time.Duration
@@ -145,8 +145,29 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	return k.apiServerOptions
 }
 
+//go:embed kube-system.yaml
+var kubeSystem string
+
 func (k *KubeImpl) WithKubelet(kubelet v1.Kubelet) v1.Kube {
-	if err := os.WriteFile(filepath.Join(kubelet.Configuration().StaticPodPath, "static-pods.yaml"), []byte(kubeSystemManifest), 0o644); err != nil {
+	// convert kubeSystemManifest into v1.Pod
+	pod := &corev1.Pod{}
+	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), []byte(kubeSystem), pod); err != nil {
+		klog.Fatalf("Failed to decode kube-system manifest: %v", err)
+	}
+
+	for i := range pod.Spec.Containers {
+		container := &pod.Spec.Containers[i]
+		if container.Args == nil {
+			container.Args = []string{}
+		}
+		container.Args = append(container.Args, k.Args(v1.ServiceName(container.Name))...)
+	}
+
+	json, err := json.Marshal(pod)
+	if err != nil {
+		klog.Fatalf("Failed to marshal kube-system pod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(kubelet.Configuration().StaticPodPath, "kube-system.yaml"), json, 0o644); err != nil {
 		klog.Fatalf("Failed to write static pod manifest: %v", err)
 	}
 
@@ -188,8 +209,39 @@ func (k *KubeImpl) StorageFactory() v1.StorageFactory {
 	return k.storagefactory
 }
 
+func (k *KubeImpl) Args(service v1.ServiceName) []string {
+	rootCaFile := func() string {
+		var buf bytes.Buffer
+		for _, cert := range k.ApiServer().CACerts() {
+			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
+				klog.Fatalf("Failed to PEM-encode CA cert: %v", err)
+			}
+		}
+		path := filepath.Join(string(k.Config().Options().DataDir()), string(v1.CAFile))
+		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+			klog.Fatalf("Failed to write CA file %s: %v", path, err)
+		}
+		return string(v1.CAFile)
+	}
+
+	switch service {
+	case v1.ControllerManagerService:
+		return []string{
+			"--root-ca-file=/home/nanokube/" + rootCaFile(),
+		}
+	}
+	return []string{}
+}
+
 func (k *KubeImpl) Client() v1.Client {
 	return k.ApiServer().Client(k.ctx)
+}
+
+func (k *KubeImpl) Environ() []string {
+	return []string{
+		"KUBERNETES_SERVICE_HOST=" + k.ApiServer().Tunnel().FQDN(),
+		"KUBERNETES_SERVICE_PORT=443",
+	}
 }
 
 func (k *KubeImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {

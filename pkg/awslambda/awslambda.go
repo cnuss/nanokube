@@ -25,7 +25,7 @@ func NewBackend(config v1.Config) (v1.Backend, error) {
 
 	driver := &driver{config: config}
 
-	return pkg.NewBackend(v1.AWSLambdaBackend, driver), nil
+	return pkg.NewBackend(v1.AWSLambdaBackend, driver, config), nil
 }
 
 type driver struct {
@@ -42,8 +42,8 @@ func (d *driver) Context() context.Context {
 	return d.config.Context()
 }
 
-func (d *driver) Options() v1.Options {
-	return d.config.Options()
+func (d *driver) Config() v1.Config {
+	return d.config
 }
 
 func (d *driver) Service() *restful.WebService {

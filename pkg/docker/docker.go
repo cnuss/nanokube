@@ -31,6 +31,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	tools "k8s.io/client-go/tools/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	utilexec "k8s.io/utils/exec"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
@@ -91,7 +92,7 @@ func NewBackend(config v1.Config, socket string) (v1.Backend, error) {
 		baseURLProvided: make(chan struct{}),
 		streamsProvided: make(chan struct{}),
 		networkProvided: make(chan struct{}),
-	}), nil
+	}, config), nil
 }
 
 type driver struct {
@@ -135,8 +136,8 @@ func (d *driver) Context() context.Context {
 	return d.config.Context()
 }
 
-func (d *driver) Options() v1.Options {
-	return d.config.Options()
+func (d *driver) Config() v1.Config {
+	return d.config
 }
 
 func (d *driver) Service() *restful.WebService {
@@ -333,7 +334,8 @@ func (d *driver) ContainerStatus(ctx context.Context, containerID string, verbos
 	resp := &criv1.ContainerStatusResponse{Status: status}
 	if verbose {
 		resp.Info = map[string]string{
-			"pid": fmt.Sprintf("%d", inspect.State.Pid),
+			"sandboxID": tb.SandboxUID(),
+			"pid":       fmt.Sprintf("%d", inspect.State.Pid),
 		}
 	}
 	return resp, nil
@@ -382,7 +384,6 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 	dockerConfig.ExposedPorts = nil
 
 	// Environment variables
-	dockerConfig.Env = make([]string, 0, len(config.GetEnvs()))
 	for _, kv := range config.GetEnvs() {
 		dockerConfig.Env = append(dockerConfig.Env, kv.GetKey()+"="+kv.GetValue())
 	}
@@ -554,8 +555,59 @@ func (d *driver) Exec(ctx context.Context, request *criv1.ExecRequest) (*criv1.E
 	}, nil
 }
 
-func (d *driver) ExecSync(ctx context.Context, containerID string, cmd []string, timeout time.Duration) (stdout []byte, stderr []byte, err error) {
-	return nil, nil, nanokube.Unimplemented()
+func (d *driver) ExecSync(ctx context.Context, containerID string, cmd []string, timeout time.Duration) ([]byte, []byte, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	if len(cmd) > 0 && cmd[0] == v1.SandboxExecSentinel {
+		cmd = cmd[1:]
+		status, err := d.ContainerStatus(ctx, containerID, true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lookup container status: %w", err)
+		}
+		sandboxID := status.GetInfo()["sandboxID"]
+		if sandboxID == "" {
+			return nil, nil, fmt.Errorf("no sandbox for container %s", containerID)
+		}
+		containerID = sandboxID
+	}
+
+	exec, err := d.client.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd: cmd, AttachStdout: true, AttachStderr: true,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	attach, err := d.client.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer attach.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attach.Reader); err != nil && ctx.Err() == nil {
+		return stdout.Bytes(), stderr.Bytes(), err
+	}
+	if ctx.Err() != nil {
+		return stdout.Bytes(), stderr.Bytes(), fmt.Errorf("%w: %q timed out after %s", context.DeadlineExceeded, strings.Join(cmd, " "), timeout)
+	}
+
+	inspect, err := d.client.ContainerExecInspect(ctx, exec.ID)
+	if err != nil {
+		return stdout.Bytes(), stderr.Bytes(), err
+	}
+	if inspect.ExitCode != 0 {
+		return stdout.Bytes(), stderr.Bytes(),
+			utilexec.CodeExitError{
+				Err:  fmt.Errorf("command %q exited with %d: %s", strings.Join(cmd, " "), inspect.ExitCode, stderr.String()),
+				Code: inspect.ExitCode,
+			}
+	}
+	return stdout.Bytes(), stderr.Bytes(), nil
 }
 
 func (d *driver) GetContainerEvents(ctx context.Context, containerEventsCh chan *criv1.ContainerEventResponse, connectionEstablishedCallback func(criv1.RuntimeService_GetContainerEventsClient)) error {
@@ -1077,6 +1129,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConf
 			Hostname:   config.GetHostname(),
 			Domainname: meta.GetNamespace() + ".svc.cluster.local",
 			Labels:     labels,
+			Env:        d.Config().Kube().Environ(),
 		}
 
 		networkMode := container.NetworkMode("bridge")
