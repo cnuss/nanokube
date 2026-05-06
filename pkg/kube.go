@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -68,6 +69,9 @@ type KubeImpl struct {
 
 	nodeReady     chan *corev1.ObjectReference
 	nodeReadyOnce sync.Once
+
+	informerFactory     informers.SharedInformerFactory
+	informerFactoryOnce sync.Once
 }
 
 var _ v1.Kube = &KubeImpl{}
@@ -104,6 +108,13 @@ func newKube(config v1.Config) v1.Kube {
 
 func (k *KubeImpl) Config() v1.Config {
 	return k.config
+}
+
+func (k *KubeImpl) InformerFactory() informers.SharedInformerFactory {
+	k.informerFactoryOnce.Do(func() {
+		k.informerFactory = informers.NewSharedInformerFactory(k.Client(), 0)
+	})
+	return k.informerFactory
 }
 
 func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {

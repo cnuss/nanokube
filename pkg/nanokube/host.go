@@ -1,6 +1,7 @@
 package nanokube
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -123,10 +124,10 @@ func (h *HostImpl) Unmount(target string) error {
 }
 
 func (h *HostImpl) CanSupport(spec *volume.Spec) bool {
-	if spec.Volume == nil {
-		return false
+	if spec.Volume != nil && spec.Volume.HostPath != nil {
+		return true
 	}
-	if spec.Volume.VolumeSource.HostPath != nil {
+	if spec.PersistentVolume != nil && spec.PersistentVolume.Spec.Local != nil {
 		return true
 	}
 	return false
@@ -294,110 +295,113 @@ type mounterImpl struct {
 	host *HostImpl
 	spec *volume.Spec
 	pod  *corev1.Pod
-
-	args         *volume.MounterArgs
-	argsOnce     sync.Once
-	argsProvided chan struct{}
-
-	dir         *string
-	dirOnce     sync.Once
-	dirProvided chan struct{}
 }
 
 func newMounter(host *HostImpl, spec *volume.Spec, pod *corev1.Pod) (volume.Mounter, error) {
-	m, _ := host.mounters.LoadOrStore(pod.GetUID(), func() volume.Mounter {
-		// their empty dir plugin works ok
-		// if spec.Volume.VolumeSource.EmptyDir != nil {
-		// 	plugin := emptydir.ProbeVolumePlugins()[0]
-		// 	mounter, _ := plugin.NewMounter(spec, pod)
-		// 	return mounter
-		// }
-
-		// Use ours for everything else
+	m, _ := host.mounters.LoadOrStore(fmt.Sprintf("%s-%s", spec.Name(), pod.GetUID()), func() volume.Mounter {
 		return &mounterImpl{
-			host:         host,
-			spec:         spec,
-			pod:          pod,
-			argsProvided: make(chan struct{}),
-			dirProvided:  make(chan struct{}),
+			host: host,
+			spec: spec,
+			pod:  pod,
 		}
 	}())
 	return m.(volume.Mounter), nil
 }
 
 func newUnmounter(host *HostImpl, name string, podUID types.UID) (volume.Unmounter, error) {
-	m, _ := host.unmounters.LoadOrStore(podUID, func() volume.Unmounter {
-		// their empty dir plugin works ok
-		// if spec.Volume.VolumeSource.EmptyDir != nil {
-		// 	plugin := emptydir.ProbeVolumePlugins()[0]
-		// 	mounter, _ := plugin.NewMounter(spec, pod)
-		// 	return mounter
-		// }
-
-		// Use ours for everything else (from mounters map for singletons)
-		mounter, _ := host.mounters.Load(podUID)
+	m, _ := host.unmounters.LoadOrStore(fmt.Sprintf("%s-%s", name, podUID), func() volume.Unmounter {
+		mounter, _ := host.mounters.Load(fmt.Sprintf("%s-%s", name, podUID))
 		return mounter.(volume.Unmounter)
 	}())
 	return m.(volume.Unmounter), nil
 }
 
 func (m *mounterImpl) TearDown() error {
-	if m.spec.Volume.VolumeSource.HostPath != nil {
+	if m.spec.Volume != nil && m.spec.Volume.VolumeSource.HostPath != nil {
 		return nil
 	}
-	Log.Error("TearDown", "spec", m.spec, "args", m.args)
+	// if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
+	// 	return nil
+	// }
+	Log.Error("TearDown", "spec", m.spec)
 	panic("unimplemented mounterimpl teardown")
 }
 
 func (m *mounterImpl) TearDownAt(dir string) error {
+	Log.Error("TearDownAt", "dir", dir)
 	panic("unimplemented mounterimpl teardownat")
 }
 
 func (m *mounterImpl) GetAttributes() volume.Attributes {
-	if m.spec.Volume.VolumeSource.HostPath != nil {
+	if m.spec.Volume != nil && m.spec.Volume.VolumeSource.HostPath != nil {
 		return volume.Attributes{
 			ReadOnly:       m.spec.ReadOnly,
 			Managed:        true,
 			SELinuxRelabel: false,
 		}
 	}
-	Log.Error("GetAttributes", "spec", m.spec, "args", m.args)
+	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
+		return volume.Attributes{
+			ReadOnly:       m.spec.ReadOnly,
+			Managed:        true,
+			SELinuxRelabel: false,
+		}
+	}
+	Log.Error("GetAttributes", "spec", m.spec)
 	panic("unimplemented mounterimpl getattributes")
 }
 
 func (m *mounterImpl) GetMetrics() (*volume.Metrics, error) {
-	if m.spec.Volume.VolumeSource.HostPath != nil {
+	if m.spec.Volume != nil && m.spec.Volume.VolumeSource.HostPath != nil {
 		return &volume.Metrics{
 			Time: metav1.Now(),
 			// TODO(partial): get real metrics
 		}, nil
 	}
-	Log.Error("GetMetrics", "spec", m.spec, "args", m.args)
+	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
+		return &volume.Metrics{
+			Time: metav1.Now(),
+			// TODO(partial): get real metrics
+		}, nil
+	}
+	Log.Error("GetMetrics", "spec", m.spec)
 	panic("unimplemented mounterimpl getmetrics")
 }
 
 func (m *mounterImpl) GetPath() string {
-	if m.spec.Volume.VolumeSource.HostPath != nil {
+	if m.spec.Volume != nil && m.spec.Volume.VolumeSource.HostPath != nil {
 		return m.spec.Volume.VolumeSource.HostPath.Path
 	}
-	Log.Error("GetPath", "spec", m.spec, "args", m.args)
+	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
+		return m.spec.PersistentVolume.Spec.Local.Path
+	}
+	Log.Error("GetPath", "spec", m.spec)
 	panic("unimplemented mounterimpl getpath")
 }
 
 func (m *mounterImpl) SetUp(args volume.MounterArgs) error {
-	m.argsOnce.Do(func() {
-		m.args = &args
-		close(m.argsProvided)
-	})
-	return nil
+	if m.spec.Volume != nil && m.spec.Volume.VolumeSource.HostPath != nil {
+		return nil
+	}
+	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
+		Log.Info("SetUp", "spec", m.spec, "args", args, "local", m.spec.PersistentVolume.Spec.Local)
+		backend := m.host.Config().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
+		if backend == nil {
+			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)
+		}
+		err := backend.Driver().CreateVolume(m.spec.PersistentVolume.Spec.Local)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	Log.Error("SetUp", "spec", m.spec, "args", args)
+	panic("unimplemented mounterimpl setup")
 }
 
 func (m *mounterImpl) SetUpAt(dir string, args volume.MounterArgs) error {
-	m.dirOnce.Do(func() {
-		m.dir = &dir
-		close(m.dirProvided)
-	})
-	return m.SetUp(args)
+	Log.Error("SetupAt", "dir", dir, "args", args)
+	panic("unimplemented mounterimpl setupat")
 }
 
 var (

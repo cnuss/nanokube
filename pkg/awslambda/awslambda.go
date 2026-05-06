@@ -10,6 +10,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
+	corev1 "k8s.io/api/core/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -241,6 +243,20 @@ func (d *driver) WithNetwork(network v1.Network) v1.Driver {
 }
 
 func (d *driver) Network() v1.Network {
+	nanokube.Unimplemented()
+	return nil
+}
+
+func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) *corev1ac.PersistentVolumeClaimApplyConfiguration {
+	nanokube.Unimplemented()
+	return nil
+}
+
+func (d *driver) CreateVolume(lvs *corev1.LocalVolumeSource) error {
+	return nanokube.Unimplemented()
+}
+
+func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) error {
 	nanokube.Unimplemented()
 	return nil
 }

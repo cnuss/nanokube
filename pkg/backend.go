@@ -18,12 +18,14 @@ import (
 	"github.com/emicklei/go-restful/v3"
 	cadvisorv1 "github.com/google/cadvisor/info/v1"
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
-	homedir "github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/go-homedir"
 	"github.com/pbnjay/memory"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server/healthz"
+	clientcache "k8s.io/client-go/tools/cache"
 	cri "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
@@ -200,7 +202,7 @@ func (b *BackendImpl) MachineInfo() (*cadvisorv1.MachineInfo, error) {
 		MemoryCapacity: memory.TotalMemory(),
 		// TODO(partial): fill in more fields as needed
 		// DEVNOTE: old impl also set InstanceID, BootID, SystemUUID, MachineID from HostInfo
-		// (probed via docker container with host namespaces)
+		// (probed via dockerf container with host namespaces)
 	}, nil
 }
 
@@ -214,12 +216,43 @@ func (b *BackendImpl) Ready() <-chan struct{} {
 
 func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
-		// TODO(partial): add any initialization logic as needed
+		factory := b.config.Kube().InformerFactory()
+		factory.Core().V1().PersistentVolumeClaims().Informer().AddEventHandler(clientcache.ResourceEventHandlerFuncs{
+			AddFunc:    func(obj interface{}) { b.Reconcile(obj, false) },
+			UpdateFunc: func(_, obj interface{}) { b.Reconcile(obj, false) },
+			DeleteFunc: func(obj interface{}) { b.Reconcile(obj, true) },
+		})
+		factory.Start(b.Context().Done())
 		// DEVNOTE: old cadvisor Start() was a no-op; real init happened in MachineInfo
 		nanokube.Log.Info("backend is ready", "driver", b.Driver().Name())
 		close(b.ready)
 	})
 	return nil
+}
+
+func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
+	nanokube.Log.Info("reconcile triggered", "obj", obj, "deleted", deleted)
+	if tomb, ok := obj.(clientcache.DeletedFinalStateUnknown); ok {
+		obj = tomb.Obj
+	}
+	switch v := obj.(type) {
+	case *corev1.PersistentVolumeClaim:
+		client := b.config.Kube().Client()
+		if deleted || v.DeletionTimestamp != nil {
+			b.Driver().ReleaseVolume(b, client, v)
+			return
+		}
+
+		pvc := b.Driver().ClaimVolume(b, client, v)
+
+		if pvc != nil {
+			pvcs := client.CoreV1().PersistentVolumeClaims(v.Namespace)
+			_, err := pvcs.Apply(b.Context(), pvc, metav1.ApplyOptions{FieldManager: string(b.Name())})
+			if err != nil {
+				nanokube.Log.Error("failed to apply PVC claim", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
+			}
+		}
+	}
 }
 
 func (b *BackendImpl) VersionInfo() (*cadvisorv1.VersionInfo, error) {
@@ -281,24 +314,6 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 	return c
 }
 
-func expand(path string) string {
-	orig := fmt.Sprintf("%s", path)
-	path = os.ExpandEnv(path)
-	path, err := homedir.Expand(path)
-	if err != nil {
-		return orig
-	}
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return orig
-	}
-	if orig == path {
-		return orig
-	}
-	klog.V(2).Info("expanding path", "original", orig, "expanded", path)
-	return path
-}
-
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	pod := attributes.Pod
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
@@ -353,16 +368,27 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 	}
 
 	// BONUS FEATURE: hostPath.path/volumeMount.mountPath expansion for "~", ".", ".." and env vars
-	for i := range pod.Spec.Volumes {
-		v := &pod.Spec.Volumes[i]
-		if v.HostPath == nil {
-			continue
+	expand := func(path string) string {
+		orig := fmt.Sprintf("%s", path)
+		path = os.ExpandEnv(path)
+		path, err := homedir.Expand(path)
+		if err != nil {
+			return orig
 		}
-		path := v.HostPath.Path
-		if path == "" {
-			continue
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return orig
 		}
-		v.HostPath.Path = expand(path)
+		if orig == path {
+			return orig
+		}
+		return path
+	}
+
+	for _, v := range pod.Spec.Volumes {
+		if v.HostPath != nil && v.HostPath.Path != "" {
+			v.HostPath.Path = expand(v.HostPath.Path)
+		}
 	}
 
 	for i := range pod.Spec.Containers {

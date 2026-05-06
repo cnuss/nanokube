@@ -12,6 +12,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	storage "k8s.io/apiserver/pkg/server/storage"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
@@ -93,6 +95,12 @@ type NetworkService interface {
 	RemoveNetwork(ctx context.Context, id string) error
 }
 
+type VolumeService interface {
+	ClaimVolume(backend Backend, client Client, pvc *corev1.PersistentVolumeClaim) *corev1ac.PersistentVolumeClaimApplyConfiguration
+	CreateVolume(pv *corev1.LocalVolumeSource) error
+	ReleaseVolume(backend Backend, client Client, pvc *corev1.PersistentVolumeClaim) error
+}
+
 type Network interface {
 	Networks() []AllocatedNetwork
 	FromID(ctx context.Context, id string) (AllocatedNetwork, error)
@@ -107,6 +115,7 @@ type Driver interface {
 	cri.ImageManagerService
 	cri.RuntimeService
 	NetworkService
+	VolumeService
 
 	Context() context.Context
 	Config() Config
@@ -191,6 +200,8 @@ type Backend interface {
 	Services() []*restful.WebService
 
 	WithBaseURL(baseURL *url.URL) Backend
+
+	Reconcile(obj interface{}, deleted bool)
 }
 
 type Kube interface {
@@ -201,6 +212,7 @@ type Kube interface {
 
 	Client() Client
 	Environ() []string
+	InformerFactory() informers.SharedInformerFactory
 
 	WithKubelet(kubelet Kubelet) Kube
 	Kubelet() Kubelet

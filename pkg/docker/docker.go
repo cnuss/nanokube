@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -34,6 +35,9 @@ import (
 	utilexec "k8s.io/utils/exec"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 // streamIdleTimeout matches upstream cri/streaming server's default.
@@ -1660,3 +1664,114 @@ func (d *driver) Network() v1.Network {
 	<-d.networkProvided
 	return d.network
 }
+
+func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) *corev1ac.PersistentVolumeClaimApplyConfiguration {
+	name, labels, err := nanokube.NewTagBuilder(backend.Driver()).
+		WithType(nanokube.ResourceVolume).
+		WithName(fmt.Sprintf("pvc-%s-%s", pvc.Namespace, pvc.Name)).
+		WithUID(string(pvc.UID)).
+		Build()
+	if err != nil {
+		return nil
+	}
+
+	if pvc.Spec.StorageClassName == nil && pvc.Spec.VolumeName == "" {
+		pv, err := client.CoreV1().PersistentVolumes().Apply(d.Context(), corev1ac.PersistentVolume(name).
+			WithLabels(labels).
+			WithSpec(corev1ac.PersistentVolumeSpec().
+				WithStorageClassName("").
+				WithCapacity(corev1.ResourceList{
+					"storage": *pvc.Spec.Resources.Requests.Storage(),
+				}).
+				WithAccessModes(pvc.Spec.AccessModes...).
+				WithPersistentVolumeReclaimPolicy(corev1.PersistentVolumeReclaimDelete). // TODO(premium): retain if paid
+				WithLocal(corev1ac.LocalVolumeSource().
+					WithFSType(string(backend.Name())). // So we can look up the backend in host.go's mounter setup/teardown
+					WithPath(name)).                    // So we can look set a determinstic name in createvolume below
+				WithNodeAffinity(corev1ac.VolumeNodeAffinity().
+					WithRequired(corev1ac.NodeSelector().
+						WithNodeSelectorTerms(corev1ac.NodeSelectorTerm().
+							WithMatchExpressions(
+								corev1ac.NodeSelectorRequirement().
+									WithKey("kubernetes.io/hostname").
+									WithOperator(corev1.NodeSelectorOpIn).
+									WithValues(backend.Driver().Config().Tunnel(v1.KubeletService).Hostname()),
+							))))),
+			metav1.ApplyOptions{FieldManager: string(backend.Name())})
+		if err != nil {
+			nanokube.Log.Error("failed to apply volume", "error", err)
+			return nil
+		}
+
+		return corev1ac.
+			PersistentVolumeClaim(pvc.Name, pvc.Namespace).
+			WithLabels(labels).
+			WithSpec(corev1ac.PersistentVolumeClaimSpec().
+				WithStorageClassName("").
+				WithVolumeName(pv.Name))
+	}
+
+	return nil
+}
+
+func (d *driver) CreateVolume(lvs *corev1.LocalVolumeSource) error {
+	if lvs == nil {
+		return fmt.Errorf("local volume source is nil")
+	}
+
+	_, labels, err := nanokube.NewTagBuilder(d).
+		WithType(nanokube.ResourceVolume).
+		WithName(lvs.Path).
+		Build()
+	if err != nil {
+		return err
+	}
+
+	_, err = d.client.VolumeCreate(d.Context(), volume.CreateOptions{
+		Name:   lvs.Path,
+		Labels: labels,
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) error {
+	nanokube.Unimplemented()
+	return nil
+}
+
+// func (d *driver) ClaimVolume(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (*corev1ac.PersistentVolumeApplyConfiguration, *corev1ac.PersistentVolumeClaimApplyConfiguration, error) {
+// 	nanokube.Log.Info("!!! claim volume", "pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name))
+// 	size := pvc.Spec.Resources.Requests.Storage().String()
+
+// 	name, labels, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceVolume).
+// 		WithName(fmt.Sprintf("pvc-%s", pvc.UID)).
+// 		Build()
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
+
+// 	volume, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
+// 		Name:   name,
+// 		Labels: labels,
+// 		Driver: "local",
+// 		DriverOpts: map[string]string{
+// 			"size": size,
+// 		},
+// 	})
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
+
+// 	v := corev1ac.PersistentVolume(fmt.Sprintf("%s-%s", pvc.Namespace, pvc.Name)).WithSpec(corev1ac.PersistentVolumeSpec().
+// 		WithLocal(corev1ac.LocalVolumeSource().
+// 			WithPath(volume.Mountpoint)))
+// 	vc := corev1ac.PersistentVolumeClaim(pvc.Name, pvc.Namespace).WithSpec(corev1ac.PersistentVolumeClaimSpec().
+// 		WithVolumeName(name).
+// 		WithResources(corev1ac.VolumeResourceRequirements()))
+
+// 	return v, vc, nil
+// }

@@ -262,12 +262,14 @@ func stopSandboxes(config v1.Config) func(ctx context.Context) {
 
 func snapshotStorage(config v1.Config) func(ctx context.Context) {
 	return func(ctx context.Context) {
+		// TODO(premium): snapshot storage with podman/docker checkpoint or AWS Lambda snapshots
 		nanokube.Log.Warn("please visit nanokube.cloud to enable storage snapshots")
 	}
 }
 
 func snapshotPods() func(ctx context.Context) {
 	return func(ctx context.Context) {
+		// TODO(premium): snapshot pods with podman/docker checkpoint or AWS Lambda snapshots
 		nanokube.Log.Warn("please visit nanokube.cloud to enable pod snapshots")
 	}
 }
