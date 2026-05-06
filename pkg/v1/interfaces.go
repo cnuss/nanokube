@@ -98,6 +98,7 @@ type NetworkService interface {
 type VolumeService interface {
 	ClaimVolume(backend Backend, client Client, pvc *corev1.PersistentVolumeClaim) *corev1ac.PersistentVolumeClaimApplyConfiguration
 	CreateVolume(pv *corev1.LocalVolumeSource) error
+	DeleteVolume(pv *corev1.LocalVolumeSource) error
 	ReleaseVolume(backend Backend, client Client, pvc *corev1.PersistentVolumeClaim) error
 }
 

@@ -231,7 +231,6 @@ func (b *BackendImpl) Start() error {
 }
 
 func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
-	nanokube.Log.Info("reconcile triggered", "obj", obj, "deleted", deleted)
 	if tomb, ok := obj.(clientcache.DeletedFinalStateUnknown); ok {
 		obj = tomb.Obj
 	}
@@ -239,18 +238,18 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 	case *corev1.PersistentVolumeClaim:
 		client := b.config.Kube().Client()
 		if deleted || v.DeletionTimestamp != nil {
-			b.Driver().ReleaseVolume(b, client, v)
-			return
-		}
-
-		pvc := b.Driver().ClaimVolume(b, client, v)
-
-		if pvc != nil {
-			pvcs := client.CoreV1().PersistentVolumeClaims(v.Namespace)
-			_, err := pvcs.Apply(b.Context(), pvc, metav1.ApplyOptions{FieldManager: string(b.Name())})
-			if err != nil {
-				nanokube.Log.Error("failed to apply PVC claim", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
+			if err := b.Driver().ReleaseVolume(b, client, v); err != nil {
+				nanokube.Log.Error("failed to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
+				return
 			}
+			nanokube.Log.Info("released PVC", "name", v.Name, "namespace", v.Namespace)
+		} else if pvc := b.Driver().ClaimVolume(b, client, v); pvc != nil {
+			pvcs := client.CoreV1().PersistentVolumeClaims(v.Namespace)
+			if _, err := pvcs.Apply(b.Context(), pvc, metav1.ApplyOptions{FieldManager: string(b.Name())}); err != nil {
+				nanokube.Log.Warn("unable to claim PVC", "name", v.Name, "namespace", v.Namespace, "error", err)
+				return
+			}
+			nanokube.Log.Info("claimed PVC", "name", v.Name, "namespace", v.Namespace)
 		}
 	}
 }

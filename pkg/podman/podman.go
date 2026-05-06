@@ -269,6 +269,11 @@ func (d *driver) CreateVolume(lvs *corev1.LocalVolumeSource) error {
 	return nanokube.Unimplemented()
 }
 
+func (d *driver) DeleteVolume(lvs *corev1.LocalVolumeSource) error {
+	nanokube.Unimplemented()
+	return nil
+}
+
 func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) error {
 	nanokube.Unimplemented()
 	return nil

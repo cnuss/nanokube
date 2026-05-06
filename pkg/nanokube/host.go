@@ -299,6 +299,7 @@ type mounterImpl struct {
 
 func newMounter(host *HostImpl, spec *volume.Spec, pod *corev1.Pod) (volume.Mounter, error) {
 	m, _ := host.mounters.LoadOrStore(fmt.Sprintf("%s-%s", spec.Name(), pod.GetUID()), func() volume.Mounter {
+		// TODO(partial): move volume plugins here
 		return &mounterImpl{
 			host: host,
 			spec: spec,
@@ -320,9 +321,21 @@ func (m *mounterImpl) TearDown() error {
 	if m.spec.Volume != nil && m.spec.Volume.VolumeSource.HostPath != nil {
 		return nil
 	}
-	// if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
-	// 	return nil
-	// }
+	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
+		// TODO(incomplete): emit events to args.GetEventRecorder() about volume creation
+		backend := m.host.Config().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
+		if backend == nil {
+			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)
+		}
+		if m.spec.PersistentVolume.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimRetain {
+			return nil
+		}
+		err := backend.Driver().DeleteVolume(m.spec.PersistentVolume.Spec.Local)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	Log.Error("TearDown", "spec", m.spec)
 	panic("unimplemented mounterimpl teardown")
 }
@@ -384,7 +397,7 @@ func (m *mounterImpl) SetUp(args volume.MounterArgs) error {
 		return nil
 	}
 	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
-		Log.Info("SetUp", "spec", m.spec, "args", args, "local", m.spec.PersistentVolume.Spec.Local)
+		// TODO(incomplete): emit events to args.GetEventRecorder() about volume creation
 		backend := m.host.Config().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
 		if backend == nil {
 			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)

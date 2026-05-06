@@ -36,6 +36,7 @@ import (
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
@@ -1675,6 +1676,7 @@ func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.P
 		return nil
 	}
 
+	// TODO(incomplete): make sure there's enough space on the system for the requested volume size
 	if pvc.Spec.StorageClassName == nil && pvc.Spec.VolumeName == "" {
 		pv, err := client.CoreV1().PersistentVolumes().Apply(d.Context(), corev1ac.PersistentVolume(name).
 			WithLabels(labels).
@@ -1695,6 +1697,7 @@ func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.P
 								corev1ac.NodeSelectorRequirement().
 									WithKey("kubernetes.io/hostname").
 									WithOperator(corev1.NodeSelectorOpIn).
+									// TODO(incomplete): kublet hostname getter
 									WithValues(backend.Driver().Config().Tunnel(v1.KubeletService).Hostname()),
 							))))),
 			metav1.ApplyOptions{FieldManager: string(backend.Name())})
@@ -1738,40 +1741,81 @@ func (d *driver) CreateVolume(lvs *corev1.LocalVolumeSource) error {
 	return nil
 }
 
-func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) error {
-	nanokube.Unimplemented()
+func (d *driver) DeleteVolume(lvs *corev1.LocalVolumeSource) error {
+	if lvs == nil {
+		return fmt.Errorf("local volume source is nil")
+	}
+
+	err := d.client.VolumeRemove(d.Context(), lvs.Path, true)
+	if err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+
 	return nil
 }
 
-// func (d *driver) ClaimVolume(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (*corev1ac.PersistentVolumeApplyConfiguration, *corev1ac.PersistentVolumeClaimApplyConfiguration, error) {
-// 	nanokube.Log.Info("!!! claim volume", "pvc", fmt.Sprintf("%s/%s", pvc.Namespace, pvc.Name))
-// 	size := pvc.Spec.Resources.Requests.Storage().String()
+func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1.PersistentVolumeClaim) error {
+	name, _, err := nanokube.NewTagBuilder(backend.Driver()).
+		WithType(nanokube.ResourceVolume).
+		WithName(fmt.Sprintf("pvc-%s-%s", pvc.Namespace, pvc.Name)).
+		WithUID(string(pvc.UID)).
+		Build()
+	if err != nil {
+		return err
+	}
 
-// 	name, labels, err := nanokube.NewTagBuilder(d).WithType(nanokube.ResourceVolume).
-// 		WithName(fmt.Sprintf("pvc-%s", pvc.UID)).
-// 		Build()
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
+	if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "" || pvc.Spec.VolumeName != name {
+		// not ours
+		return nil
+	}
 
-// 	volume, err := d.client.VolumeCreate(ctx, volume.CreateOptions{
-// 		Name:   name,
-// 		Labels: labels,
-// 		Driver: "local",
-// 		DriverOpts: map[string]string{
-// 			"size": size,
-// 		},
-// 	})
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
+	pvs := client.CoreV1().PersistentVolumes()
+	pv, err := func() (*corev1.PersistentVolume, error) {
+		pv, err := pvs.Get(d.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
 
-// 	v := corev1ac.PersistentVolume(fmt.Sprintf("%s-%s", pvc.Namespace, pvc.Name)).WithSpec(corev1ac.PersistentVolumeSpec().
-// 		WithLocal(corev1ac.LocalVolumeSource().
-// 			WithPath(volume.Mountpoint)))
-// 	vc := corev1ac.PersistentVolumeClaim(pvc.Name, pvc.Namespace).WithSpec(corev1ac.PersistentVolumeClaimSpec().
-// 		WithVolumeName(name).
-// 		WithResources(corev1ac.VolumeResourceRequirements()))
+		if pv == nil {
+			return nil, nil
+		}
 
-// 	return v, vc, nil
-// }
+		if pv.Spec.Local != nil && pv.Spec.NodeAffinity != nil && pv.Spec.NodeAffinity.Required != nil {
+			for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+				for _, expr := range term.MatchExpressions {
+					if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn {
+						for _, v := range expr.Values {
+							// TODO(incomplete): kublet hostname getter
+							if v == backend.Driver().Config().Tunnel(v1.KubeletService).Hostname() {
+								return pv, nil
+							}
+						}
+					}
+				}
+			}
+		}
+
+		return nil, nil
+	}()
+	if err != nil {
+		return err
+	}
+	if pv == nil {
+		return nil
+	}
+
+	if pv.Spec.PersistentVolumeReclaimPolicy != corev1.PersistentVolumeReclaimRetain && pv.Spec.Local != nil {
+		if err := d.DeleteVolume(pv.Spec.Local); err != nil {
+			return err
+		}
+	}
+
+	if err := pvs.Delete(d.Context(), name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	return nil
+}
