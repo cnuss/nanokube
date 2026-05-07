@@ -143,7 +143,7 @@ func deleteNode(config v1.Config) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		// TODO(incomplete): cordon and drain node before deleting
 		nodes := config.Kube().Client().CoreV1().Nodes()
-		nodes.Delete(ctx, config.KubeletFlags().HostnameOverride, metav1.DeleteOptions{})
+		nodes.Delete(ctx, config.KubeletHostname(), metav1.DeleteOptions{})
 	}
 }
 

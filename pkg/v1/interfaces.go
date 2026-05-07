@@ -21,9 +21,6 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
-	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
-	"k8s.io/kubernetes/pkg/kubelet"
-	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
@@ -242,9 +239,7 @@ type Config interface {
 
 	KubeletReady() <-chan struct{}
 	KubeletRun(ctx context.Context)
-	KubeletFlags() *kubeletoptions.KubeletFlags
-	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
-	KubeletDependencies() *kubelet.Dependencies
+	KubeletHostname() string
 
 	Services(baseURL *url.URL) []*restful.WebService
 }

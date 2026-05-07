@@ -423,19 +423,9 @@ func (c *ConfigImpl) KubeletReady() <-chan struct{} {
 	return c.kubeletReady
 }
 
-func (c *ConfigImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
+func (c *ConfigImpl) KubeletHostname() string {
 	c.ensureKubelet()
-	return c.kubeletFlags
-}
-
-func (c *ConfigImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
-	c.ensureKubelet()
-	return c.kubeletConfiguration
-}
-
-func (c *ConfigImpl) KubeletDependencies() *kubelet.Dependencies {
-	c.ensureKubelet()
-	return c.kubeletDependencies
+	return c.kubeletFlags.HostnameOverride
 }
 
 func (c *ConfigImpl) KubeletRun(ctx context.Context) {
