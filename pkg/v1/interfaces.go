@@ -237,7 +237,6 @@ type Config interface {
 	Kube() Kube
 	Tunnel(name ServiceName) Tunnel
 
-	KubeletReady() <-chan struct{}
 	KubeletRun(ctx context.Context)
 	KubeletHostname() string
 

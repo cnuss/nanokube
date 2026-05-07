@@ -74,7 +74,6 @@ type ConfigImpl struct {
 	kubeOnce sync.Once
 
 	kubeletOnce          sync.Once
-	kubeletReady         chan struct{}
 	kubeletFlags         *kubeletoptions.KubeletFlags
 	kubeletConfiguration *kubeletconfig.KubeletConfiguration
 	kubeletDependencies  *kubelet.Dependencies
@@ -319,7 +318,6 @@ func (c *ConfigImpl) WithBackend(name v1.BackendName, backend v1.Backend) v1.Con
 
 func (c *ConfigImpl) ensureKubelet() {
 	c.kubeletOnce.Do(func() {
-		c.kubeletReady = make(chan struct{})
 		tunnel := c.Tunnel(v1.KubeletService)
 
 		c.kubeletFlags = kubeletoptions.NewKubeletFlags()
@@ -418,11 +416,6 @@ func (c *ConfigImpl) ensureKubelet() {
 	})
 }
 
-func (c *ConfigImpl) KubeletReady() <-chan struct{} {
-	c.ensureKubelet()
-	return c.kubeletReady
-}
-
 func (c *ConfigImpl) KubeletHostname() string {
 	c.ensureKubelet()
 	return c.kubeletFlags.HostnameOverride
@@ -436,7 +429,6 @@ func (c *ConfigImpl) KubeletRun(ctx context.Context) {
 	}, c.kubeletDependencies); err != nil {
 		klog.Fatalf("Failed to run Kubelet: %v. Exiting.", err)
 	}
-	close(c.kubeletReady)
 	<-ctx.Done()
 }
 
