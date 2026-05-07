@@ -2,7 +2,7 @@ package pkg
 
 import (
 	"context"
-	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -20,23 +20,11 @@ import (
 	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
-	"k8s.io/client-go/tools/record"
-	cliflag "k8s.io/component-base/cli/flag"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/component-base/version"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
-	"k8s.io/kubernetes/pkg/kubelet"
-	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
-	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
-	"k8s.io/kubernetes/pkg/kubelet/server"
-	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
-	"k8s.io/kubernetes/pkg/util/oom"
-	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util/hostutil"
-	"k8s.io/kubernetes/pkg/volume/util/subpath"
-	"k8s.io/mount-utils"
 )
 
 const shutdownTimeout = 30 * time.Second
@@ -61,16 +49,14 @@ type ConfigImpl struct {
 	kube     *KubeImpl
 	kubeOnce sync.Once
 
-	kubeletOnce          sync.Once
-	kubeletFlags         *kubeletoptions.KubeletFlags
-	kubeletConfiguration *kubeletconfig.KubeletConfiguration
-	kubeletDependencies  *kubelet.Dependencies
-
 	backends     sync.Map // map[v1.BackendName]v1.Backend
 	backendsOnce sync.Once
 
 	services     []*restful.WebService
 	servicesOnce sync.Once
+
+	staticPods     []*corev1.Pod
+	staticPodsOnce sync.Once
 
 	dirs    sync.Map
 	files   sync.Map
@@ -304,129 +290,71 @@ func (c *ConfigImpl) WithBackend(name v1.BackendName, backend v1.Backend) v1.Con
 	return c
 }
 
-func (c *ConfigImpl) ensureKubelet() {
-	c.kubeletOnce.Do(func() {
-		tunnel := c.Tunnel(v1.KubeletService)
+func (c *ConfigImpl) StaticPods() []*corev1.Pod {
+	c.staticPodsOnce.Do(func() {
+		c.staticPods = []*corev1.Pod{}
+		mountPath := string(c.Options().DataDir())
+		volumes := []corev1.Volume{
+			{Name: "nanokube-home", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: string(mountPath),
+				},
+			}},
+		}
+		volumeMounts := []corev1.VolumeMount{
+			{Name: "nanokube-home", MountPath: string(mountPath)},
+		}
 
-		c.kubeletFlags = kubeletoptions.NewKubeletFlags()
-		c.kubeletFlags.CloudProvider = "external"
-		c.kubeletFlags.HostnameOverride = tunnel.Hostname()
-		c.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
-		c.kubeletFlags.NodeIP = tunnel.LocalIP().String()
-		c.kubeletFlags.RootDirectory = c.Options().DataDirAt(v1.DataDirKubelet)
-
-		if cfg, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
-			c.kubeletConfiguration = cfg
-		} else {
-			c.kubeletConfiguration = &kubeletconfig.KubeletConfiguration{}
-		}
-		if c.Options().Standalone() {
-			c.kubeletConfiguration.RegisterNode = false
-		}
-		c.kubeletConfiguration.Address = tunnel.LocalIP().String()
-		c.kubeletConfiguration.ClusterDomain = tunnel.Domain()
-		// TODO(incomplete): probe a container to get resolv.conf
-		c.kubeletConfiguration.ClusterDNS = []string{"1.1.1.1"}
-		c.kubeletConfiguration.PodLogsDir = c.Options().DataDirAt(v1.DataDirLogs)
-		c.kubeletConfiguration.Port = tunnel.LocalPort()
-		c.kubeletConfiguration.ReadOnlyPort = 0
-		c.kubeletConfiguration.StaticPodPath = c.Options().DataDirAt(v1.DataDirStaticPods)
-
-		c.kubeletDependencies = &kubelet.Dependencies{
-			// These dependencies are required by the kubelet
-			RemoteRuntimeService: nil,
-			RemoteImageService:   nil,
-			CAdvisorInterface:    nil,
-			ContainerManager:     nil,
-			TLSOptions:           nil,
-			// These are needed for non-standalone mode
-			KubeClient:      nil,
-			HeartbeatClient: nil,
-			// Use fake implementations for the rest of the dependencies
-			ProbeManager:              probetest.FakeManager{},
-			OSInterface:               &containertest.FakeOS{},
-			VolumePlugins:             []volume.VolumePlugin{},
-			OOMAdjuster:               oom.NewFakeOOMAdjuster(),
-			Mounter:                   &mount.FakeMounter{},
-			Subpather:                 &subpath.FakeSubpath{},
-			HostUtil:                  hostutil.NewFakeHostUtil(nil),
-			PodStartupLatencyTracker:  kubeletutil.NewPodStartupLatencyTracker(),
-			NodeStartupLatencyTracker: kubeletutil.NewNodeStartupLatencyTracker(),
-			TracerProvider:            noopoteltrace.NewTracerProvider(),
-			Recorder:                  &record.FakeRecorder{},
-		}
-		if !c.Options().Standalone() {
-			c.kubeletDependencies.KubeClient = c.Kube().Client()
-			c.kubeletDependencies.HeartbeatClient = c.Kube().Client()
-		} else {
-			c.kubeletDependencies.KubeClient = nil
-			c.kubeletDependencies.HeartbeatClient = nil
-			c.kubeletDependencies.EventClient = nil
-		}
-		c.kubeletDependencies.RemoteRuntimeService = c.DefaultBackend().Driver()
-		c.kubeletDependencies.RemoteImageService = c.DefaultBackend().Driver()
-		c.kubeletDependencies.CAdvisorInterface = c.DefaultBackend()
-		c.kubeletDependencies.ContainerManager = c.DefaultBackend().Manager()
-		c.kubeletDependencies.TLSOptions = &server.TLSOptions{
-			Config: &tls.Config{
-				NextProtos: func() []string {
-					if !v1.HTTP2 {
-						return []string{"http/1.1"}
-					}
-					return []string{"h2", "http/1.1"}
-				}(),
-				MinVersion: func() uint16 {
-					if v, err := cliflag.TLSVersion(c.kubeletConfiguration.TLSMinVersion); err == nil {
-						return v
-					}
-					return cliflag.DefaultTLSVersion()
-				}(),
-				CipherSuites: func() []uint16 {
-					if v, err := cliflag.TLSCipherSuites(c.kubeletConfiguration.TLSCipherSuites); err == nil {
-						return v
-					}
-					return nil
-				}(),
+		c.staticPods = append(c.staticPods, &corev1.Pod{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Pod",
+				APIVersion: "v1",
 			},
-			CertFile: filepath.Join(string(c.Options().DataDir()), string(v1.CertFile)),
-			KeyFile:  filepath.Join(string(c.Options().DataDir()), string(v1.KeyFile)),
-		}
-		c.kubeletDependencies.ProbeManager = nil
-		c.kubeletDependencies.Services = c.Services(tunnel.URL())
-		c.kubeletDependencies.VolumePlugins = c.Host().VolumePlugins()
-		c.kubeletDependencies.OSInterface = c.Host()
-		c.kubeletDependencies.Mounter = c.Host()
-		c.kubeletDependencies.Subpather = c.Host()
-		c.kubeletDependencies.HostUtil = c.Host()
-
-		c.Kube()
-		c.kube.bindKubelet(c)
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      c.Options().Name(),
+				Namespace: "kube-system",
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:         "controller-manager",
+						Image:        "registry.k8s.io/kube-controller-manager:v1.35.0", // TODO(incomplete): add version
+						Command:      []string{"kube-controller-manager"},
+						Args:         c.Kube().Args(v1.ControllerManagerService, mountPath),
+						VolumeMounts: volumeMounts,
+					},
+					{
+						Name:         "scheduler",
+						Image:        "registry.k8s.io/kube-scheduler:v1.35.0", // TODO(incomplete): add version
+						Command:      []string{"kube-scheduler"},
+						Args:         c.Kube().Args(v1.SchedulerService, mountPath),
+						VolumeMounts: volumeMounts,
+					},
+				},
+				Volumes: volumes,
+			},
+		})
 	})
+	return c.staticPods
 }
-
-func (c *ConfigImpl) KubeletHostname() string {
-	c.ensureKubelet()
-	return c.kubeletFlags.HostnameOverride
-}
-
-// func (c *ConfigImpl) KubeletRun(ctx context.Context) {
-// 	c.ensureKubelet()
-// 	if err := kubeletapp.RunKubelet(ctx, &kubeletoptions.KubeletServer{
-// 		KubeletFlags:         *c.kubeletFlags,
-// 		KubeletConfiguration: *c.kubeletConfiguration,
-// 	}, c.kubeletDependencies); err != nil {
-// 		klog.Fatalf("Failed to run Kubelet: %v. Exiting.", err)
-// 	}
-// 	<-ctx.Done()
-// }
 
 func (c *ConfigImpl) Run() v1.Config {
 	c.runOnce.Do(func() {
-		c.ensureKubelet()
+		for _, pod := range c.StaticPods() {
+			data, err := json.Marshal(pod)
+			if err != nil {
+				c.Cancel(nanokube.NewError(fmt.Errorf("Failed to marshal static pod %s: %v", pod.Name, err)))
+				return
+			}
+			if err := os.WriteFile(filepath.Join(c.Kube().KubeletConfiguration().StaticPodPath, pod.Name+".json"), data, 0o644); err != nil {
+				c.Cancel(nanokube.NewError(fmt.Errorf("Failed to write static pod manifest %s: %v", pod.Name, err)))
+				return
+			}
+		}
 		if err := kubeletapp.RunKubelet(c.ctx, &kubeletoptions.KubeletServer{
-			KubeletFlags:         *c.kubeletFlags,
-			KubeletConfiguration: *c.kubeletConfiguration,
-		}, c.kubeletDependencies); err != nil {
+			KubeletFlags:         *c.Kube().KubeletFlags(),
+			KubeletConfiguration: *c.Kube().KubeletConfiguration(),
+		}, c.Kube().KubeletDependencies()); err != nil {
 			c.Cancel(nanokube.NewError(err).WithCode(1))
 		}
 	})

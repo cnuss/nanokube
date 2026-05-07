@@ -3,8 +3,8 @@ package pkg
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	_ "embed"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -25,9 +26,22 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
+	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/features"
+	"k8s.io/kubernetes/pkg/kubelet"
+	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
+	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
+	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
+	"k8s.io/kubernetes/pkg/kubelet/server"
+	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
+	"k8s.io/kubernetes/pkg/util/oom"
+	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
+	"k8s.io/kubernetes/pkg/volume/util/subpath"
+	"k8s.io/mount-utils"
 )
 
 //go:linkname nodeReadyGracePeriod k8s.io/kubernetes/pkg/kubelet.nodeReadyGracePeriod
@@ -47,6 +61,15 @@ type KubeImpl struct {
 	ctx    context.Context
 	config v1.Config
 
+	kubeletFlags     *kubeletoptions.KubeletFlags
+	kubeletFlagsOnce sync.Once
+
+	kubeletConfiguration     *kubeletconfig.KubeletConfiguration
+	kubeletConfigurationOnce sync.Once
+
+	kubeletDependencies     *kubelet.Dependencies
+	kubeletDependenciesOnce sync.Once
+
 	apiServerOptions     *apiserveroptions.CompletedOptions
 	apiServerOptionsOnce sync.Once
 
@@ -59,16 +82,22 @@ type KubeImpl struct {
 	storage         v1.Storage
 	storageProvided chan struct{}
 
-	broadcaster      record.EventBroadcaster
-	recorder         record.EventRecorder
-	recorderProvided chan struct{}
-	eventsOnce       sync.Once
+	broadcaster     record.EventBroadcaster
+	broadcasterOnce sync.Once
+
+	eventsOnce sync.Once
 
 	nodeReady     chan *corev1.ObjectReference
 	nodeReadyOnce sync.Once
 
 	informerFactory     informers.SharedInformerFactory
 	informerFactoryOnce sync.Once
+
+	staticPods     []*corev1.Pod
+	staticPodsOnce sync.Once
+
+	proxiedRecorder     record.EventRecorder
+	proxiedRecorderOnce sync.Once
 }
 
 var _ v1.Kube = &KubeImpl{}
@@ -94,8 +123,6 @@ func newKube(config v1.Config) *KubeImpl {
 		config:            config,
 		apiserverProvided: make(chan struct{}),
 		storageProvided:   make(chan struct{}),
-		recorderProvided:  make(chan struct{}),
-		broadcaster:       record.NewBroadcaster(record.WithContext(config.Context())),
 		nodeReady:         make(chan *corev1.ObjectReference, 1),
 	}
 
@@ -104,6 +131,13 @@ func newKube(config v1.Config) *KubeImpl {
 
 func (k *KubeImpl) Config() v1.Config {
 	return k.config
+}
+
+func (k *KubeImpl) Broadcaster() record.EventBroadcaster {
+	k.broadcasterOnce.Do(func() {
+		k.broadcaster = record.NewBroadcaster(record.WithContext(k.Config().Context()))
+	})
+	return k.broadcaster
 }
 
 func (k *KubeImpl) InformerFactory() informers.SharedInformerFactory {
@@ -152,36 +186,119 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	return k.apiServerOptions
 }
 
-//go:embed kube-system.yaml
-var kubeSystem string
+func (k *KubeImpl) KubeletHostname() string {
+	tunnel := k.Config().Tunnel(v1.KubeletService)
+	return tunnel.Hostname()
+}
 
-func (k *KubeImpl) bindKubelet(c *ConfigImpl) {
-	// convert kubeSystemManifest into v1.Pod
-	pod := &corev1.Pod{}
-	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), []byte(kubeSystem), pod); err != nil {
-		klog.Fatalf("Failed to decode kube-system manifest: %v", err)
-	}
+func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
+	k.kubeletFlagsOnce.Do(func() {
+		tunnel := k.Config().Tunnel(v1.KubeletService)
+		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
+		k.kubeletFlags.CloudProvider = "external"
+		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
+		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
+		k.kubeletFlags.NodeIP = tunnel.LocalIP().String()
+		k.kubeletFlags.RootDirectory = k.Config().Options().DataDirAt(v1.DataDirKubelet)
+	})
+	return k.kubeletFlags
+}
 
-	for i := range pod.Spec.Containers {
-		container := &pod.Spec.Containers[i]
-		if container.Args == nil {
-			container.Args = []string{}
+func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
+	k.kubeletConfigurationOnce.Do(func() {
+		tunnel := k.Config().Tunnel(v1.KubeletService)
+		if cfg, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
+			k.kubeletConfiguration = cfg
+		} else {
+			k.kubeletConfiguration = &kubeletconfig.KubeletConfiguration{}
 		}
-		container.Args = append(container.Args, k.Args(v1.ServiceName(container.Name))...)
-	}
+		if k.Config().Options().Standalone() {
+			k.kubeletConfiguration.RegisterNode = false
+		}
+		k.kubeletConfiguration.Address = tunnel.LocalIP().String()
+		k.kubeletConfiguration.ClusterDomain = tunnel.Domain()
+		// TODO(incomplete): probe a container to get resolv.conf
+		k.kubeletConfiguration.ClusterDNS = []string{"1.1.1.1"}
+		k.kubeletConfiguration.PodLogsDir = k.Config().Options().DataDirAt(v1.DataDirLogs)
+		k.kubeletConfiguration.Port = tunnel.LocalPort()
+		k.kubeletConfiguration.ReadOnlyPort = 0
+		k.kubeletConfiguration.StaticPodPath = k.Config().Options().DataDirAt(v1.DataDirStaticPods)
+	})
+	return k.kubeletConfiguration
+}
 
-	json, err := json.Marshal(pod)
-	if err != nil {
-		klog.Fatalf("Failed to marshal kube-system pod: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(c.kubeletConfiguration.StaticPodPath, "kube-system.yaml"), json, 0o644); err != nil {
-		klog.Fatalf("Failed to write static pod manifest: %v", err)
-	}
-
-	k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Config().Options().Name(), Host: c.Tunnel(v1.KubeletService).FQDN()})
-	close(k.recorderProvided)
-
-	c.kubeletDependencies.Recorder = k
+func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
+	k.kubeletDependenciesOnce.Do(func() {
+		tunnel := k.Config().Tunnel(v1.KubeletService)
+		k.kubeletDependencies = &kubelet.Dependencies{
+			// These dependencies are required by the kubelet
+			RemoteRuntimeService: nil,
+			RemoteImageService:   nil,
+			CAdvisorInterface:    nil,
+			ContainerManager:     nil,
+			TLSOptions:           nil,
+			// These are needed for non-standalone mode
+			KubeClient:      nil,
+			HeartbeatClient: nil,
+			// Use fake implementations for the rest of the dependencies
+			ProbeManager:              probetest.FakeManager{},
+			OSInterface:               &containertest.FakeOS{},
+			VolumePlugins:             []volume.VolumePlugin{},
+			OOMAdjuster:               oom.NewFakeOOMAdjuster(),
+			Mounter:                   &mount.FakeMounter{},
+			Subpather:                 &subpath.FakeSubpath{},
+			HostUtil:                  hostutil.NewFakeHostUtil(nil),
+			PodStartupLatencyTracker:  kubeletutil.NewPodStartupLatencyTracker(),
+			NodeStartupLatencyTracker: kubeletutil.NewNodeStartupLatencyTracker(),
+			TracerProvider:            noopoteltrace.NewTracerProvider(),
+			Recorder:                  &record.FakeRecorder{},
+		}
+		if !k.Config().Options().Standalone() {
+			k.kubeletDependencies.KubeClient = k.Client()
+			k.kubeletDependencies.HeartbeatClient = k.Client()
+		} else {
+			k.kubeletDependencies.KubeClient = nil
+			k.kubeletDependencies.HeartbeatClient = nil
+			k.kubeletDependencies.EventClient = nil
+		}
+		k.kubeletDependencies.RemoteRuntimeService = k.Config().DefaultBackend().Driver()
+		k.kubeletDependencies.RemoteImageService = k.Config().DefaultBackend().Driver()
+		k.kubeletDependencies.CAdvisorInterface = k.Config().DefaultBackend()
+		k.kubeletDependencies.ContainerManager = k.Config().DefaultBackend().Manager()
+		k.kubeletDependencies.TLSOptions = &server.TLSOptions{
+			Config: &tls.Config{
+				NextProtos: func() []string {
+					if !v1.HTTP2 {
+						return []string{"http/1.1"}
+					}
+					return []string{"h2", "http/1.1"}
+				}(),
+				MinVersion: func() uint16 {
+					if v, err := cliflag.TLSVersion(k.KubeletConfiguration().TLSMinVersion); err == nil {
+						return v
+					}
+					return cliflag.DefaultTLSVersion()
+				}(),
+				CipherSuites: func() []uint16 {
+					if v, err := cliflag.TLSCipherSuites(k.KubeletConfiguration().TLSCipherSuites); err == nil {
+						return v
+					}
+					return nil
+				}(),
+			},
+			CertFile: filepath.Join(string(k.Config().Options().DataDir()), string(v1.CertFile)),
+			KeyFile:  filepath.Join(string(k.Config().Options().DataDir()), string(v1.KeyFile)),
+		}
+		k.kubeletDependencies.ProbeManager = nil
+		k.kubeletDependencies.Services = k.Config().Services(tunnel.URL())
+		k.kubeletDependencies.VolumePlugins = k.Config().Host().VolumePlugins()
+		k.kubeletDependencies.OSInterface = k.Config().Host()
+		k.kubeletDependencies.Mounter = k.Config().Host()
+		k.kubeletDependencies.Subpather = k.Config().Host()
+		k.kubeletDependencies.HostUtil = k.Config().Host()
+		k.kubeletDependencies.Recorder = k
+	})
+	return k.kubeletDependencies
 }
 
 func (k *KubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Kube {
@@ -207,7 +324,7 @@ func (k *KubeImpl) Storage() v1.Storage {
 	return k.storage
 }
 
-func (k *KubeImpl) Args(service v1.ServiceName) []string {
+func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 	rootCaFile := func() string {
 		var buf bytes.Buffer
 		for _, cert := range k.ApiServer().CACerts() {
@@ -225,7 +342,26 @@ func (k *KubeImpl) Args(service v1.ServiceName) []string {
 	switch service {
 	case v1.ControllerManagerService:
 		return []string{
-			"--root-ca-file=/home/nanokube/" + rootCaFile(),
+			"--kubeconfig=" + mountPath + "/.kube/config",
+			"--authentication-kubeconfig=" + mountPath + "/.kube/config",
+			"--authorization-kubeconfig=" + mountPath + "/.kube/config",
+			"--leader-elect=true",
+			"--controller-shutdown-timeout=0",
+			"--use-service-account-credentials=false",
+			"--tls-cert-file=" + mountPath + "/certs/apiserver.crt",
+			"--tls-private-key-file=" + mountPath + "/certs/apiserver.key",
+			"--service-account-private-key-file=" + mountPath + "/certs/apiserver.key",
+			"--root-ca-file=" + mountPath + "/" + rootCaFile(),
+		}
+	case v1.SchedulerService:
+		return []string{
+			"--kubeconfig=" + mountPath + "/.kube/config",
+			"--authentication-kubeconfig=" + mountPath + "/.kube/config",
+			"--authorization-kubeconfig=" + mountPath + "/.kube/config",
+			"--authentication-skip-lookup=true",
+			"--leader-elect=true",
+			"--tls-cert-file=" + mountPath + "/certs/apiserver.crt",
+			"--tls-private-key-file=" + mountPath + "/certs/apiserver.key",
 		}
 	}
 	return []string{}
@@ -242,22 +378,27 @@ func (k *KubeImpl) Environ() []string {
 	}
 }
 
+func (k *KubeImpl) recorder() record.EventRecorder {
+	k.proxiedRecorderOnce.Do(func() {
+		tunnel := k.Config().Tunnel(v1.KubeletService)
+		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Config().Options().Name(), Host: tunnel.FQDN()})
+	})
+	return k.proxiedRecorder
+}
+
 func (k *KubeImpl) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	<-k.recorderProvided
 	k.Logf(object, eventtype, reason, messageFmt, args...)
-	k.recorder.AnnotatedEventf(object, annotations, eventtype, reason, messageFmt, args...)
+	k.recorder().AnnotatedEventf(object, annotations, eventtype, reason, messageFmt, args...)
 }
 
 func (k *KubeImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
-	<-k.recorderProvided
 	k.Logf(object, eventtype, reason, "%s", message)
-	k.recorder.Event(object, eventtype, reason, message)
+	k.recorder().Event(object, eventtype, reason, message)
 }
 
 func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	<-k.recorderProvided
 	k.Logf(object, eventtype, reason, messageFmt, args...)
-	k.recorder.Eventf(object, eventtype, reason, messageFmt, args...)
+	k.recorder().Eventf(object, eventtype, reason, messageFmt, args...)
 
 	// 14:01:42 INF Eventf group="" version=v1 kind=Node type=Normal reason=NodeReady message="Node depends-location-assessments-silence.trycloudflare.com status is now: NodeReady"
 	if object.GetObjectKind().GroupVersionKind().Group == "" &&
@@ -266,7 +407,7 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
-			tunnel := k.config.Tunnel(v1.KubeletService)
+			tunnel := k.Config().Tunnel(v1.KubeletService)
 			filterNames := []string{
 				tunnel.Hostname(),
 				tunnel.FQDN(),
@@ -298,7 +439,7 @@ func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, 
 	if ref, ok := object.(*corev1.ObjectReference); ok {
 		kv = append(kv, "namespace", ref.Namespace, "name", ref.Name)
 	}
-	if eventtype == corev1.EventTypeWarning && k.config.Options().Verbosity() >= 2 {
+	if eventtype == corev1.EventTypeWarning && k.Config().Options().Verbosity() >= 2 {
 		kv = append(kv, "stack", string(debug.Stack()))
 	}
 	logFunc(fmt.Sprintf(messageFmt, args...), kv...)

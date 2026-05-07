@@ -21,6 +21,9 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
+	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
+	"k8s.io/kubernetes/pkg/kubelet"
+	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
@@ -196,11 +199,17 @@ type Kube interface {
 	Config() Config
 
 	ApiServerOptions() *apiserveroptions.CompletedOptions
-	Args(service ServiceName) []string
+	Args(service ServiceName, mountPath string) []string
 
 	Client() Client
 	Environ() []string
+	Broadcaster() record.EventBroadcaster
 	InformerFactory() informers.SharedInformerFactory
+
+	KubeletFlags() *kubeletoptions.KubeletFlags
+	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
+	KubeletDependencies() *kubelet.Dependencies
+	KubeletHostname() string // TODO: Remove
 
 	WithApiServer(apiserver ApiServer) Kube
 	ApiServer() ApiServer
@@ -236,8 +245,7 @@ type Config interface {
 	Host() Host
 	Kube() Kube
 	Tunnel(name ServiceName) Tunnel
-
-	KubeletHostname() string // TODO: Remove
+	StaticPods() []*corev1.Pod
 
 	Services(baseURL *url.URL) []*restful.WebService
 
