@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cnuss/nanokube/pkg/component"
-	"github.com/cnuss/nanokube/pkg/crid/labels"
+	"github.com/cnuss/nanokube/_old/component"
+	"github.com/cnuss/nanokube/_old/crid/labels"
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	tp "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"

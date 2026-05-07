@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cnuss/nanokube/pkg/crid/labels"
+	"github.com/cnuss/nanokube/_old/crid/labels"
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	storagev1ac "k8s.io/client-go/applyconfigurations/storage/v1"
 	clientset "k8s.io/client-go/kubernetes"

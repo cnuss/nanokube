@@ -3,9 +3,9 @@ package docker
 import (
 	"time"
 
-	"github.com/cnuss/nanokube/pkg/component"
-	"github.com/cnuss/nanokube/pkg/crid/backend"
-	"github.com/cnuss/nanokube/pkg/crid/labels"
+	"github.com/cnuss/nanokube/_old/component"
+	"github.com/cnuss/nanokube/_old/crid/backend"
+	"github.com/cnuss/nanokube/_old/crid/labels"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"

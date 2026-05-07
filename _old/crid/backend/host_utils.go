@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/_old/component"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 )
 

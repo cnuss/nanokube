@@ -3,7 +3,7 @@ package podman
 import (
 	"context"
 
-	"github.com/cnuss/nanokube/pkg/crid/backend"
+	"github.com/cnuss/nanokube/_old/crid/backend"
 )
 
 func init() {

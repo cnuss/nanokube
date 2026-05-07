@@ -5,13 +5,11 @@ go 1.26
 require (
 	github.com/breml/rootcerts v0.3.5
 	github.com/cloudflare/cloudflared v0.0.0-20260415224023-df54d2771019
-	github.com/container-storage-interface/spec v1.9.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/emicklei/go-restful/v3 v3.12.2
-	github.com/go-logr/logr v1.4.3
 	github.com/google/cadvisor v0.53.0
 	github.com/google/uuid v1.6.0
 	github.com/lmittmann/tint v1.1.3
@@ -25,7 +23,6 @@ require (
 	go.etcd.io/etcd/server/v3 v3.6.8
 	go.opentelemetry.io/otel/trace v1.40.0
 	go.uber.org/zap v1.27.0
-	google.golang.org/grpc v1.72.2
 	k8s.io/api v0.35.0
 	k8s.io/apiextensions-apiserver v0.35.0
 	k8s.io/apimachinery v0.35.0
@@ -34,14 +31,12 @@ require (
 	k8s.io/cloud-provider v0.35.0
 	k8s.io/component-base v0.35.0
 	k8s.io/cri-api v0.35.0
-	k8s.io/cri-client v0.0.0
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/kube-aggregator v0.0.0
 	k8s.io/kubelet v0.35.0
 	k8s.io/kubernetes v1.35.0
 	k8s.io/mount-utils v0.35.0
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
-	sigs.k8s.io/sig-storage-lib-external-provisioner/v10 v10.0.1
 )
 
 require (
@@ -61,6 +56,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/container-storage-interface/spec v1.9.0 // indirect
 	github.com/containerd/containerd/api v1.9.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
@@ -84,6 +80,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.2 // indirect
 	github.com/go-chi/cors v1.2.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
@@ -119,7 +116,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/miekg/dns v1.1.29 // indirect
 	github.com/mistifyio/go-zfs v2.1.2-0.20190413222219-f784269be439+incompatible // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/spdystream v0.5.0 // indirect
@@ -191,6 +187,7 @@ require (
 	golang.org/x/tools v0.40.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250505200425-f936aa4a68b2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a // indirect
+	google.golang.org/grpc v1.72.2 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
@@ -200,6 +197,7 @@ require (
 	k8s.io/cluster-bootstrap v0.0.0 // indirect
 	k8s.io/component-helpers v0.35.0 // indirect
 	k8s.io/controller-manager v0.35.0 // indirect
+	k8s.io/cri-client v0.0.0 // indirect
 	k8s.io/csi-translation-lib v0.0.0 // indirect
 	k8s.io/dynamic-resource-allocation v0.35.0 // indirect
 	k8s.io/endpointslice v0.0.0 // indirect

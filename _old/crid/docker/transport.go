@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/_old/component"
 	"github.com/rs/zerolog"
 )
 

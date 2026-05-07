@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/_old/component"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 

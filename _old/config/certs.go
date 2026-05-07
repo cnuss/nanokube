@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/_old/component"
 )
 
 type Certs struct {

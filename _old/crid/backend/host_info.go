@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/_old/component"
 	"github.com/dustin/go-humanize"
 )
 

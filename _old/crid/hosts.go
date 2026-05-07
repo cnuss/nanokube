@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cnuss/nanokube/pkg/component"
-	"github.com/cnuss/nanokube/pkg/crid/backend"
+	"github.com/cnuss/nanokube/_old/component"
+	"github.com/cnuss/nanokube/_old/crid/backend"
 	v1 "k8s.io/api/core/v1"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 )

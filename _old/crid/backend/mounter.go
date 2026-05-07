@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cnuss/nanokube/pkg/component"
+	"github.com/cnuss/nanokube/_old/component"
 	"k8s.io/mount-utils"
 )
 
@@ -152,5 +152,7 @@ func (m *MounterImpl) GetVolume(path string) (string, bool) {
 	return v.(string), true
 }
 
-var _ mount.Interface = &MounterImpl{}
-var _ MountLookup = &MounterImpl{}
+var (
+	_ mount.Interface = &MounterImpl{}
+	_ MountLookup     = &MounterImpl{}
+)
