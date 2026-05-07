@@ -200,6 +200,7 @@ type Kube interface {
 	Config() Config
 
 	ApiServerOptions() *apiserveroptions.CompletedOptions
+	Args(service ServiceName) []string
 
 	Client() Client
 	Environ() []string
@@ -210,8 +211,6 @@ type Kube interface {
 
 	WithStorageFactory(storagefactory StorageFactory) Kube
 	StorageFactory() StorageFactory
-
-	Args(service ServiceName) []string
 
 	NodeReady() chan *corev1.ObjectReference
 }
@@ -225,16 +224,21 @@ type Config interface {
 	OnCancel(fns ...func(ctx context.Context)) Config
 
 	Canceled() <-chan struct{}
-	Finished() <-chan struct{}
+	Done() <-chan struct{}
 
 	WithApiServer(apiserver ApiServer) Config
+	ApiServer() ApiServer
+
 	WithStorageFactory(storagefactory StorageFactory) Config
+	StorageFactory() StorageFactory
+
 	WithBackend(name BackendName, backend Backend) Config
+	Backends() map[BackendName]Backend
+	Backend(name BackendName) Backend
+	DefaultBackend() Backend
 
 	Host() Host
 	Kube() Kube
-	ApiServer() ApiServer
-	StorageFactory() StorageFactory
 	Tunnel(name ServiceName) Tunnel
 
 	KubeletReady() <-chan struct{}
@@ -243,10 +247,7 @@ type Config interface {
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
 	KubeletDependencies() *kubelet.Dependencies
 
-	Backends() map[BackendName]Backend
 	Services(baseURL *url.URL) []*restful.WebService
-	DefaultBackend() Backend
-	Backend(name BackendName) Backend
 }
 
 type PortMap interface {

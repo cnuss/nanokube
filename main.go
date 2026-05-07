@@ -154,7 +154,7 @@ func main() {
 		OnCancel(snapshotStorage(config), snapshotPods()).
 		OnCancel(removeSandboxes(config)).
 		OnCancel(removeNetworks(config)).
-		Finished()
+		Done()
 }
 
 func run(ctx context.Context, config v1.Config) {

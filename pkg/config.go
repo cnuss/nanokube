@@ -215,7 +215,7 @@ func (c *ConfigImpl) runCancelHooks() {
 	})
 }
 
-func (c *ConfigImpl) Finished() <-chan struct{} {
+func (c *ConfigImpl) Done() <-chan struct{} {
 	return c.Context().Done()
 }
 
