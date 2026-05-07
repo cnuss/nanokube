@@ -143,8 +143,7 @@ func main() {
 
 	config = config.
 		WithStorageFactory(nanokube.NewStorageFactory(config)).
-		WithApiServer(nanokube.NewApiServer(config)).
-		WithKubelet(nanokube.NewKubelet(config))
+		WithApiServer(nanokube.NewApiServer(config))
 
 	go run(ctx, config)
 	go updateKubeconfig(config)
@@ -160,7 +159,7 @@ func main() {
 
 func run(ctx context.Context, config v1.Config) {
 	// DEVNOTE: everything runs implicitly when we call their accessors
-	config.Kube().Kubelet().Run(ctx)
+	config.KubeletRun(ctx)
 	config.Cancel(nanokube.NewError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
@@ -171,7 +170,7 @@ func updateNode(config v1.Config) {
 	}
 
 	nodes := config.Kube().Client().CoreV1().Nodes()
-	tunnel := config.Kube().Kubelet().Tunnel()
+	tunnel := config.Tunnel(v1.KubeletService)
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		node, err := nodes.Get(config.Context(), ref.Name, metav1.GetOptions{})
@@ -244,7 +243,7 @@ func deleteNode(config v1.Config) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		// TODO(incomplete): cordon and drain node before deleting
 		nodes := config.Kube().Client().CoreV1().Nodes()
-		nodes.Delete(ctx, config.Kube().Kubelet().Flags().HostnameOverride, metav1.DeleteOptions{})
+		nodes.Delete(ctx, config.KubeletFlags().HostnameOverride, metav1.DeleteOptions{})
 	}
 }
 

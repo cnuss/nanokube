@@ -157,16 +157,6 @@ type ApiServer interface {
 	CACerts() []*x509.Certificate
 }
 
-type Kubelet interface {
-	Ready
-
-	Run(ctx context.Context)
-	Flags() *kubeletoptions.KubeletFlags
-	Configuration() *kubeletconfig.KubeletConfiguration
-	Dependencies() *kubelet.Dependencies
-	Tunnel() Tunnel
-}
-
 type StorageFactory interface {
 	Ready
 
@@ -215,9 +205,6 @@ type Kube interface {
 	Environ() []string
 	InformerFactory() informers.SharedInformerFactory
 
-	WithKubelet(kubelet Kubelet) Kube
-	Kubelet() Kubelet
-
 	WithApiServer(apiserver ApiServer) Kube
 	ApiServer() ApiServer
 
@@ -231,27 +218,30 @@ type Kube interface {
 
 type Config interface {
 	Context() context.Context
-	Finished() <-chan struct{}
-
-	Cancel(reason Error)
-	Canceled() <-chan struct{}
-	OnCancel(fns ...func(ctx context.Context)) Config
-
 	Options() Options
 	Version() string
 
-	Tunnel(name ServiceName) Tunnel
+	Cancel(reason Error)
+	OnCancel(fns ...func(ctx context.Context)) Config
 
-	WithKubelet(kubelet Kubelet) Config
+	Canceled() <-chan struct{}
+	Finished() <-chan struct{}
+
 	WithApiServer(apiserver ApiServer) Config
 	WithStorageFactory(storagefactory StorageFactory) Config
 	WithBackend(name BackendName, backend Backend) Config
 
 	Host() Host
 	Kube() Kube
-	Kubelet() Kubelet
 	ApiServer() ApiServer
 	StorageFactory() StorageFactory
+	Tunnel(name ServiceName) Tunnel
+
+	KubeletReady() <-chan struct{}
+	KubeletRun(ctx context.Context)
+	KubeletFlags() *kubeletoptions.KubeletFlags
+	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
+	KubeletDependencies() *kubelet.Dependencies
 
 	Backends() map[BackendName]Backend
 	Services(baseURL *url.URL) []*restful.WebService

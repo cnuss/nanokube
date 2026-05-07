@@ -53,9 +53,6 @@ type KubeImpl struct {
 	defaultStorageFactory     *storage.DefaultStorageFactory
 	defaultStorageFactoryOnce sync.Once
 
-	kubelet         v1.Kubelet
-	kubeletProvided chan struct{}
-
 	apiserver         v1.ApiServer
 	apiserverProvided chan struct{}
 
@@ -76,7 +73,7 @@ type KubeImpl struct {
 
 var _ v1.Kube = &KubeImpl{}
 
-func newKube(config v1.Config) v1.Kube {
+func newKube(config v1.Config) *KubeImpl {
 	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(FeatureGates); err != nil {
 		klog.Fatalf("Failed to set feature gates: %v", err)
 	}
@@ -95,7 +92,6 @@ func newKube(config v1.Config) v1.Kube {
 	kube := &KubeImpl{
 		ctx:                    config.Context(),
 		config:                 config,
-		kubeletProvided:        make(chan struct{}),
 		apiserverProvided:      make(chan struct{}),
 		storagefactoryProvided: make(chan struct{}),
 		recorderProvided:       make(chan struct{}),
@@ -159,7 +155,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 //go:embed kube-system.yaml
 var kubeSystem string
 
-func (k *KubeImpl) WithKubelet(kubelet v1.Kubelet) v1.Kube {
+func (k *KubeImpl) bindKubelet(c *ConfigImpl) {
 	// convert kubeSystemManifest into v1.Pod
 	pod := &corev1.Pod{}
 	if err := runtime.DecodeInto(scheme.Codecs.UniversalDecoder(), []byte(kubeSystem), pod); err != nil {
@@ -178,23 +174,14 @@ func (k *KubeImpl) WithKubelet(kubelet v1.Kubelet) v1.Kube {
 	if err != nil {
 		klog.Fatalf("Failed to marshal kube-system pod: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(kubelet.Configuration().StaticPodPath, "kube-system.yaml"), json, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(c.kubeletConfiguration.StaticPodPath, "kube-system.yaml"), json, 0o644); err != nil {
 		klog.Fatalf("Failed to write static pod manifest: %v", err)
 	}
 
-	k.kubelet = kubelet
-	close(k.kubeletProvided)
-
-	k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Config().Options().Name(), Host: kubelet.Tunnel().FQDN()})
+	k.recorder = k.broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Config().Options().Name(), Host: c.Tunnel(v1.KubeletService).FQDN()})
 	close(k.recorderProvided)
 
-	kubelet.Dependencies().Recorder = k
-	return k
-}
-
-func (k *KubeImpl) Kubelet() v1.Kubelet {
-	<-k.kubeletProvided
-	return k.kubelet
+	c.kubeletDependencies.Recorder = k
 }
 
 func (k *KubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Kube {
@@ -279,11 +266,12 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
+			tunnel := k.config.Tunnel(v1.KubeletService)
 			filterNames := []string{
-				k.Kubelet().Tunnel().Hostname(),
-				k.Kubelet().Tunnel().FQDN(),
-				k.Kubelet().Tunnel().LocalHostname(),
-				k.Kubelet().Tunnel().LocalFQDN(),
+				tunnel.Hostname(),
+				tunnel.FQDN(),
+				tunnel.LocalHostname(),
+				tunnel.LocalFQDN(),
 			}
 			for _, name := range filterNames {
 				if strings.ToLower(ref.Name) == strings.ToLower(name) {

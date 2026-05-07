@@ -2,11 +2,13 @@ package pkg
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -18,7 +20,37 @@ import (
 	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
+	"k8s.io/client-go/tools/record"
+	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/version"
+	"k8s.io/klog/v2"
+	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
+	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
+	"k8s.io/kubernetes/pkg/kubelet"
+	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
+	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
+	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
+	"k8s.io/kubernetes/pkg/kubelet/server"
+	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
+	"k8s.io/kubernetes/pkg/util/oom"
+	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/configmap"
+	"k8s.io/kubernetes/pkg/volume/csi"
+	"k8s.io/kubernetes/pkg/volume/downwardapi"
+	"k8s.io/kubernetes/pkg/volume/emptydir"
+	"k8s.io/kubernetes/pkg/volume/fc"
+	"k8s.io/kubernetes/pkg/volume/git_repo"
+	"k8s.io/kubernetes/pkg/volume/hostpath"
+	"k8s.io/kubernetes/pkg/volume/iscsi"
+	"k8s.io/kubernetes/pkg/volume/local"
+	"k8s.io/kubernetes/pkg/volume/nfs"
+	"k8s.io/kubernetes/pkg/volume/portworx"
+	"k8s.io/kubernetes/pkg/volume/projected"
+	"k8s.io/kubernetes/pkg/volume/secret"
+	"k8s.io/kubernetes/pkg/volume/util/hostutil"
+	"k8s.io/kubernetes/pkg/volume/util/subpath"
+	"k8s.io/mount-utils"
 )
 
 const shutdownTimeout = 30 * time.Second
@@ -38,8 +70,14 @@ type ConfigImpl struct {
 	host     v1.Host
 	hostOnce sync.Once
 
-	kube     v1.Kube
+	kube     *KubeImpl
 	kubeOnce sync.Once
+
+	kubeletOnce          sync.Once
+	kubeletReady         chan struct{}
+	kubeletFlags         *kubeletoptions.KubeletFlags
+	kubeletConfiguration *kubeletconfig.KubeletConfiguration
+	kubeletDependencies  *kubelet.Dependencies
 
 	backends     sync.Map // map[v1.BackendName]v1.Backend
 	backendsOnce sync.Once
@@ -190,12 +228,10 @@ func (c *ConfigImpl) Version() string {
 }
 
 func (c *ConfigImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
-	if tunnel, ok := c.tunnels.Load(service); ok {
-		return tunnel.(v1.Tunnel)
-	}
-	tunnel := NewTunnel(c, service)
-	c.tunnels.Store(service, tunnel)
-	return tunnel
+	tunnel, _ := c.tunnels.LoadOrStore(service, func() v1.Tunnel {
+		return NewTunnel(c, service)
+	}())
+	return tunnel.(v1.Tunnel)
 }
 
 func (c *ConfigImpl) Host() v1.Host {
@@ -210,15 +246,6 @@ func (c *ConfigImpl) Kube() v1.Kube {
 		c.kube = newKube(c)
 	})
 	return c.kube
-}
-
-func (c *ConfigImpl) WithKubelet(kubelet v1.Kubelet) v1.Config {
-	c.Kube().WithKubelet(kubelet)
-	return c
-}
-
-func (c *ConfigImpl) Kubelet() v1.Kubelet {
-	return c.Kube().Kubelet()
 }
 
 func (c *ConfigImpl) WithApiServer(apiserver v1.ApiServer) v1.Config {
@@ -288,4 +315,155 @@ func (c *ConfigImpl) DefaultBackend() v1.Backend {
 func (c *ConfigImpl) WithBackend(name v1.BackendName, backend v1.Backend) v1.Config {
 	c.backends.Store(name, backend)
 	return c
+}
+
+func (c *ConfigImpl) ensureKubelet() {
+	c.kubeletOnce.Do(func() {
+		c.kubeletReady = make(chan struct{})
+		tunnel := c.Tunnel(v1.KubeletService)
+
+		c.kubeletFlags = kubeletoptions.NewKubeletFlags()
+		c.kubeletFlags.CloudProvider = "external"
+		c.kubeletFlags.HostnameOverride = tunnel.Hostname()
+		c.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
+		c.kubeletFlags.NodeIP = tunnel.LocalIP().String()
+		c.kubeletFlags.RootDirectory = c.Options().DataDirAt(v1.DataDirKubelet)
+
+		if cfg, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
+			c.kubeletConfiguration = cfg
+		} else {
+			c.kubeletConfiguration = &kubeletconfig.KubeletConfiguration{}
+		}
+		if c.Options().Standalone() {
+			c.kubeletConfiguration.RegisterNode = false
+		}
+		c.kubeletConfiguration.Address = tunnel.LocalIP().String()
+		c.kubeletConfiguration.ClusterDomain = tunnel.Domain()
+		// TODO(incomplete): probe a container to get resolv.conf
+		c.kubeletConfiguration.ClusterDNS = []string{"1.1.1.1"}
+		c.kubeletConfiguration.PodLogsDir = c.Options().DataDirAt(v1.DataDirLogs)
+		c.kubeletConfiguration.Port = tunnel.LocalPort()
+		c.kubeletConfiguration.ReadOnlyPort = 0
+		c.kubeletConfiguration.StaticPodPath = c.Options().DataDirAt(v1.DataDirStaticPods)
+
+		c.kubeletDependencies = &kubelet.Dependencies{
+			// These dependencies are required by the kubelet
+			RemoteRuntimeService: nil,
+			RemoteImageService:   nil,
+			CAdvisorInterface:    nil,
+			ContainerManager:     nil,
+			TLSOptions:           nil,
+			// These are needed for non-standalone mode
+			KubeClient:      nil,
+			HeartbeatClient: nil,
+			// Use fake implementations for the rest of the dependencies
+			ProbeManager:              probetest.FakeManager{},
+			OSInterface:               &containertest.FakeOS{},
+			VolumePlugins:             volumePlugins(),
+			OOMAdjuster:               oom.NewFakeOOMAdjuster(),
+			Mounter:                   &mount.FakeMounter{},
+			Subpather:                 &subpath.FakeSubpath{},
+			HostUtil:                  hostutil.NewFakeHostUtil(nil),
+			PodStartupLatencyTracker:  kubeletutil.NewPodStartupLatencyTracker(),
+			NodeStartupLatencyTracker: kubeletutil.NewNodeStartupLatencyTracker(),
+			TracerProvider:            noopoteltrace.NewTracerProvider(),
+			Recorder:                  &record.FakeRecorder{},
+		}
+		if !c.Options().Standalone() {
+			c.kubeletDependencies.KubeClient = c.Kube().Client()
+			c.kubeletDependencies.HeartbeatClient = c.Kube().Client()
+		} else {
+			c.kubeletDependencies.KubeClient = nil
+			c.kubeletDependencies.HeartbeatClient = nil
+			c.kubeletDependencies.EventClient = nil
+		}
+		c.kubeletDependencies.RemoteRuntimeService = c.DefaultBackend().Driver()
+		c.kubeletDependencies.RemoteImageService = c.DefaultBackend().Driver()
+		c.kubeletDependencies.CAdvisorInterface = c.DefaultBackend()
+		c.kubeletDependencies.ContainerManager = c.DefaultBackend().Manager()
+		c.kubeletDependencies.TLSOptions = &server.TLSOptions{
+			Config: &tls.Config{
+				NextProtos: func() []string {
+					if !v1.HTTP2 {
+						return []string{"http/1.1"}
+					}
+					return []string{"h2", "http/1.1"}
+				}(),
+				MinVersion: func() uint16 {
+					if v, err := cliflag.TLSVersion(c.kubeletConfiguration.TLSMinVersion); err == nil {
+						return v
+					}
+					return cliflag.DefaultTLSVersion()
+				}(),
+				CipherSuites: func() []uint16 {
+					if v, err := cliflag.TLSCipherSuites(c.kubeletConfiguration.TLSCipherSuites); err == nil {
+						return v
+					}
+					return nil
+				}(),
+			},
+			CertFile: filepath.Join(string(c.Options().DataDir()), string(v1.CertFile)),
+			KeyFile:  filepath.Join(string(c.Options().DataDir()), string(v1.KeyFile)),
+		}
+		c.kubeletDependencies.ProbeManager = nil
+		c.kubeletDependencies.Services = c.Services(tunnel.URL())
+		c.kubeletDependencies.VolumePlugins = c.Host().VolumePlugins()
+		c.kubeletDependencies.OSInterface = c.Host()
+		c.kubeletDependencies.Mounter = c.Host()
+		c.kubeletDependencies.Subpather = c.Host()
+		c.kubeletDependencies.HostUtil = c.Host()
+
+		c.Kube()
+		c.kube.bindKubelet(c)
+	})
+}
+
+func (c *ConfigImpl) KubeletReady() <-chan struct{} {
+	c.ensureKubelet()
+	return c.kubeletReady
+}
+
+func (c *ConfigImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
+	c.ensureKubelet()
+	return c.kubeletFlags
+}
+
+func (c *ConfigImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
+	c.ensureKubelet()
+	return c.kubeletConfiguration
+}
+
+func (c *ConfigImpl) KubeletDependencies() *kubelet.Dependencies {
+	c.ensureKubelet()
+	return c.kubeletDependencies
+}
+
+func (c *ConfigImpl) KubeletRun(ctx context.Context) {
+	c.ensureKubelet()
+	if err := kubeletapp.RunKubelet(ctx, &kubeletoptions.KubeletServer{
+		KubeletFlags:         *c.kubeletFlags,
+		KubeletConfiguration: *c.kubeletConfiguration,
+	}, c.kubeletDependencies); err != nil {
+		klog.Fatalf("Failed to run Kubelet: %v. Exiting.", err)
+	}
+	close(c.kubeletReady)
+	<-ctx.Done()
+}
+
+func volumePlugins() []volume.VolumePlugin {
+	allPlugins := []volume.VolumePlugin{}
+	allPlugins = append(allPlugins, emptydir.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, git_repo.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, hostpath.ProbeVolumePlugins(volume.VolumeConfig{})...)
+	allPlugins = append(allPlugins, nfs.ProbeVolumePlugins(volume.VolumeConfig{})...)
+	allPlugins = append(allPlugins, secret.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, iscsi.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, downwardapi.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, fc.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, configmap.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, projected.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, portworx.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, local.ProbeVolumePlugins()...)
+	allPlugins = append(allPlugins, csi.ProbeVolumePlugins()...)
+	return allPlugins
 }
