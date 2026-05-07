@@ -36,9 +36,9 @@ type StorageFactoryImpl struct {
 	ready   chan struct{}
 }
 
-var _ v1.StorageFactory = &StorageFactoryImpl{}
+var _ v1.Storage = &StorageFactoryImpl{}
 
-func NewStorageFactory(config v1.Config) v1.StorageFactory {
+func NewStorage(config v1.Config) v1.Storage {
 	return &StorageFactoryImpl{
 		ctx:                           config.Context(),
 		config:                        config,
@@ -51,13 +51,13 @@ func (s *StorageFactoryImpl) Ready() <-chan struct{} {
 	return s.ready
 }
 
-func (s *StorageFactoryImpl) WithDefault(factory *serverstorage.DefaultStorageFactory) v1.StorageFactory {
+func (s *StorageFactoryImpl) WithFactory(factory *serverstorage.DefaultStorageFactory) v1.Storage {
 	s.defaultStorageFactory = factory
 	close(s.defaultStorageFactoryProvided)
 	return s
 }
 
-func (s *StorageFactoryImpl) Default() *serverstorage.DefaultStorageFactory {
+func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 	<-s.defaultStorageFactoryProvided
 
 	s.runOnce.Do(func() {
@@ -142,25 +142,25 @@ func (s *StorageFactoryImpl) Port() int {
 }
 
 func (s *StorageFactoryImpl) Backends() []serverstorage.Backend {
-	backends := s.Default().Backends()
+	backends := s.Factory().Backends()
 	// TODO: intercept backends
 	return backends
 }
 
 func (s *StorageFactoryImpl) Configs() []storagebackend.Config {
-	configs := s.Default().Configs()
+	configs := s.Factory().Configs()
 	// TODO: intercept configs
 	return configs
 }
 
 func (s *StorageFactoryImpl) NewConfig(groupResource schema.GroupResource, obj runtime.Object) (*storagebackend.ConfigForResource, error) {
-	config, err := s.Default().NewConfig(groupResource, obj)
+	config, err := s.Factory().NewConfig(groupResource, obj)
 	// TODO: intercept
 	return config, err
 }
 
 func (s *StorageFactoryImpl) ResourcePrefix(groupResource schema.GroupResource) string {
-	resourcePrefix := s.Default().ResourcePrefix(groupResource)
+	resourcePrefix := s.Factory().ResourcePrefix(groupResource)
 	// TODO intercept
 	return resourcePrefix
 }

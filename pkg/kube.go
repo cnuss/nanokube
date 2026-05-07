@@ -56,8 +56,8 @@ type KubeImpl struct {
 	apiserver         v1.ApiServer
 	apiserverProvided chan struct{}
 
-	storagefactory         v1.StorageFactory
-	storagefactoryProvided chan struct{}
+	storage         v1.Storage
+	storageProvided chan struct{}
 
 	broadcaster      record.EventBroadcaster
 	recorder         record.EventRecorder
@@ -90,13 +90,13 @@ func newKube(config v1.Config) *KubeImpl {
 	}
 
 	kube := &KubeImpl{
-		ctx:                    config.Context(),
-		config:                 config,
-		apiserverProvided:      make(chan struct{}),
-		storagefactoryProvided: make(chan struct{}),
-		recorderProvided:       make(chan struct{}),
-		broadcaster:            record.NewBroadcaster(record.WithContext(config.Context())),
-		nodeReady:              make(chan *corev1.ObjectReference, 1),
+		ctx:               config.Context(),
+		config:            config,
+		apiserverProvided: make(chan struct{}),
+		storageProvided:   make(chan struct{}),
+		recorderProvided:  make(chan struct{}),
+		broadcaster:       record.NewBroadcaster(record.WithContext(config.Context())),
+		nodeReady:         make(chan *corev1.ObjectReference, 1),
 	}
 
 	return kube
@@ -121,7 +121,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.Authentication.ServiceAccounts.KeyFiles = []string{filepath.Join(string(k.Config().Options().DataDir()), string(v1.KeyFile))}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
-		opts.Etcd.StorageConfig.Transport.ServerList = k.StorageFactory().ServerList()
+		opts.Etcd.StorageConfig.Transport.ServerList = k.Storage().ServerList()
 		opts.GenericServerRunOptions.ExternalHost = tunnel.FQDN()
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 0
 		opts.KubeletConfig.PreferredAddressTypes = []string{
@@ -185,7 +185,7 @@ func (k *KubeImpl) bindKubelet(c *ConfigImpl) {
 }
 
 func (k *KubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Kube {
-	apiserver.Config().KubeAPIs.ControlPlane.StorageFactory = k.StorageFactory()
+	apiserver.Config().KubeAPIs.ControlPlane.StorageFactory = k.Storage()
 	k.apiserver = apiserver
 	close(k.apiserverProvided)
 	return k
@@ -196,15 +196,15 @@ func (k *KubeImpl) ApiServer() v1.ApiServer {
 	return k.apiserver
 }
 
-func (k *KubeImpl) WithStorageFactory(storagefactory v1.StorageFactory) v1.Kube {
-	k.storagefactory = storagefactory
-	close(k.storagefactoryProvided)
+func (k *KubeImpl) WithStorage(storage v1.Storage) v1.Kube {
+	k.storage = storage
+	close(k.storageProvided)
 	return k
 }
 
-func (k *KubeImpl) StorageFactory() v1.StorageFactory {
-	<-k.storagefactoryProvided
-	return k.storagefactory
+func (k *KubeImpl) Storage() v1.Storage {
+	<-k.storageProvided
+	return k.storage
 }
 
 func (k *KubeImpl) Args(service v1.ServiceName) []string {

@@ -142,7 +142,7 @@ func main() {
 	nanokube.Log.Info("starting nanokube", "version", config.Version())
 
 	config = config.
-		WithStorageFactory(nanokube.NewStorageFactory(config)).
+		WithStorage(nanokube.NewStorage(config)).
 		WithApiServer(nanokube.NewApiServer(config))
 
 	go run(ctx, config)

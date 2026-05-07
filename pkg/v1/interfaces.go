@@ -157,15 +157,14 @@ type ApiServer interface {
 	CACerts() []*x509.Certificate
 }
 
-type StorageFactory interface {
-	Ready
-
+type Storage interface {
 	storage.StorageFactory
+	Ready
 
 	ServerList() []string
 	Port() int
-	WithDefault(factory *storage.DefaultStorageFactory) StorageFactory
-	Default() *storage.DefaultStorageFactory
+	WithFactory(factory *storage.DefaultStorageFactory) Storage
+	Factory() *storage.DefaultStorageFactory
 }
 
 type Manager interface {
@@ -209,8 +208,8 @@ type Kube interface {
 	WithApiServer(apiserver ApiServer) Kube
 	ApiServer() ApiServer
 
-	WithStorageFactory(storagefactory StorageFactory) Kube
-	StorageFactory() StorageFactory
+	WithStorage(storage Storage) Kube
+	Storage() Storage
 
 	NodeReady() chan *corev1.ObjectReference
 }
@@ -229,8 +228,8 @@ type Config interface {
 	WithApiServer(apiserver ApiServer) Config
 	ApiServer() ApiServer
 
-	WithStorageFactory(storagefactory StorageFactory) Config
-	StorageFactory() StorageFactory
+	WithStorage(storage Storage) Config
+	Storage() Storage
 
 	WithBackend(name BackendName, backend Backend) Config
 	Backends() map[BackendName]Backend

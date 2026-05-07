@@ -257,13 +257,13 @@ func (c *ConfigImpl) ApiServer() v1.ApiServer {
 	return c.Kube().ApiServer()
 }
 
-func (c *ConfigImpl) WithStorageFactory(storagefactory v1.StorageFactory) v1.Config {
-	c.Kube().WithStorageFactory(storagefactory)
+func (c *ConfigImpl) WithStorage(storage v1.Storage) v1.Config {
+	c.Kube().WithStorage(storage)
 	return c
 }
 
-func (c *ConfigImpl) StorageFactory() v1.StorageFactory {
-	return c.Kube().StorageFactory()
+func (c *ConfigImpl) Storage() v1.Storage {
+	return c.Kube().Storage()
 }
 
 func (c *ConfigImpl) Backend(name v1.BackendName) v1.Backend {

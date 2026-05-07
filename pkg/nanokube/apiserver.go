@@ -25,7 +25,7 @@ import (
 type ApiServerImpl struct {
 	config    v1.Config
 	appConfig *app.Config
-	storage   v1.StorageFactory
+	storage   v1.Storage
 
 	client v1.Client
 
@@ -54,9 +54,9 @@ func NewApiServer(config v1.Config) v1.ApiServer {
 		klog.Fatalf("Failed to build generic config: %v", err)
 	}
 
-	storage := config.Kube().StorageFactory().WithDefault(storageFactory)
+	storage := config.Kube().Storage().WithFactory(storageFactory)
 
-	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Default())
+	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Factory())
 	if err != nil {
 		klog.Fatalf("Failed to create kube-apiserver config: %v", err)
 	}
