@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/cnuss/nanokube/pkg"
-	"github.com/cnuss/nanokube/pkg/awslambda"
-	podman "github.com/cnuss/nanokube/pkg/awslambda"
-	"github.com/cnuss/nanokube/pkg/docker"
+	"github.com/cnuss/nanokube/pkg/driver/awslambda"
+	"github.com/cnuss/nanokube/pkg/driver/docker"
+	"github.com/cnuss/nanokube/pkg/driver/podman"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -23,106 +23,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
 )
-
-// var featureGates = map[string]bool{
-// 	"APIServerIdentity":         false,
-// 	"RuntimeClassInImageCriApi": false,
-// 	"KubeletInUserNamespace":    true,
-// }
-
-// var rootCmd = &cobra.Command{
-// 	Use:           "nanokube [flags]",
-// 	Short:         "A minimal Kubernetes distribution",
-// 	SilenceUsage:  true,
-// 	SilenceErrors: true,
-// 	PreRunE: func(cmd *cobra.Command, args []string) error {
-// 		if options.DataDir == "" {
-// 			options.DataDir = config.DefaultDataDir(options.Name)
-// 		}
-// 		return options.Validate()
-// 	},
-// 	RunE: func(cmd *cobra.Command, args []string) error {
-// 		sigCtx := cmd.Context()
-// 		log.Info().Str("data", options.DataDir).Str("name", options.Name).Msg("starting up")
-// 		log.Debug().Msg("debug logging enabled")
-
-// 		crid := crid.NewCRID(sigCtx, options.Name, options.DataDir, options.Clean)
-// 		etcd := etcd.NewEtcd(crid.Certs(), crid.DataDirs().Etcd)
-// 		manifests := kubernetes.NewManifests(crid)
-
-// 		components := []component.Component{etcd, crid, manifests}
-
-// 		if options.Kubelet {
-// 			components = append(components, kubernetes.NewKubelet(crid, featureGates))
-// 		}
-
-// 		// Each component gets its own context so we can cancel them
-// 		// in reverse order during shutdown, keeping dependencies alive.
-// 		cancels := make([]context.CancelFunc, len(components))
-// 		started := 0
-// 		for i, c := range components {
-// 			compCtx, cancel := context.WithCancel(context.Background())
-// 			cancels[i] = cancel
-
-// 			// Allow ctrl+c to abort startup
-// 			done := make(chan error, 1)
-// 			go func() {
-// 				s, err := c.Start(compCtx)
-// 				if err != nil {
-// 					done <- err
-// 					return
-// 				}
-// 				<-s
-// 				done <- nil
-// 			}()
-
-// 			select {
-// 			case err := <-done:
-// 				if err != nil {
-// 					cancel()
-// 					return err
-// 				}
-// 				started = i + 1
-// 			case <-sigCtx.Done():
-// 				cancel()
-// 				log.Info().Msg("startup interrupted")
-// 				goto shutdown
-// 			}
-// 		}
-
-// 		<-sigCtx.Done()
-// 	shutdown:
-// 		fmt.Fprintln(os.Stderr, "")
-// 		fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════╗")
-// 		fmt.Fprintln(os.Stderr, "║          SIGNAL RECEIVED — SHUTTING DOWN         ║")
-// 		fmt.Fprintln(os.Stderr, "║                                                  ║")
-// 		fmt.Fprintln(os.Stderr, "║  Initiating graceful shutdown sequence...        ║")
-// 		fmt.Fprintln(os.Stderr, "║  Components will be stopped in reverse order.    ║")
-// 		fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════╝")
-// 		fmt.Fprintln(os.Stderr, "")
-
-// 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-// 		defer shutdownCancel()
-
-// 		names := make([]string, len(components))
-// 		for i, c := range components {
-// 			names[i] = fmt.Sprintf("%T", c)
-// 		}
-// 		for i := started - 1; i >= 0; i-- {
-// 			log.Debug().Str("component", names[i]).Msg("stopping")
-// 			cancels[i]()
-// 			<-components[i].Stop(shutdownCtx)
-// 			log.Debug().Str("component", names[i]).Msg("stopped")
-// 		}
-// 		return nil
-// 	},
-// }
-
-// var options *config.Options
-
-// func init() {
-// 	options = config.NewOptions(rootCmd)
-// }
 
 func init() {
 	if !v1.HTTP2 {
