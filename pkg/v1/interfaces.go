@@ -237,10 +237,11 @@ type Config interface {
 	Kube() Kube
 	Tunnel(name ServiceName) Tunnel
 
-	KubeletRun(ctx context.Context)
-	KubeletHostname() string
+	KubeletHostname() string // TODO: Remove
 
 	Services(baseURL *url.URL) []*restful.WebService
+
+	Run() Config
 }
 
 type PortMap interface {

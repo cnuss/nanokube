@@ -36,7 +36,6 @@ func init() {
 
 func main() {
 	config := pkg.NewConfig()
-	ctx := config.Context()
 
 	nanokube.SetupLogging(config.Options().Verbosity())
 	nanokube.Log.Info("starting nanokube", "version", config.Version())
@@ -45,7 +44,6 @@ func main() {
 		WithStorage(nanokube.NewStorage(config)).
 		WithApiServer(nanokube.NewApiServer(config))
 
-	go run(ctx, config)
 	go updateKubeconfig(config)
 	go updateNode(config)
 
@@ -54,13 +52,8 @@ func main() {
 		OnCancel(snapshotStorage(config), snapshotPods()).
 		OnCancel(removeSandboxes(config)).
 		OnCancel(removeNetworks(config)).
+		Run().
 		Done()
-}
-
-func run(ctx context.Context, config v1.Config) {
-	// DEVNOTE: everything runs implicitly when we call their accessors
-	config.KubeletRun(ctx)
-	config.Cancel(nanokube.NewError(fmt.Errorf("kubelet exited unexpectedly")))
 }
 
 func updateNode(config v1.Config) {

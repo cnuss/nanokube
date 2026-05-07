@@ -24,7 +24,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/version"
-	"k8s.io/klog/v2"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet"
@@ -35,19 +34,6 @@ import (
 	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/configmap"
-	"k8s.io/kubernetes/pkg/volume/csi"
-	"k8s.io/kubernetes/pkg/volume/downwardapi"
-	"k8s.io/kubernetes/pkg/volume/emptydir"
-	"k8s.io/kubernetes/pkg/volume/fc"
-	"k8s.io/kubernetes/pkg/volume/git_repo"
-	"k8s.io/kubernetes/pkg/volume/hostpath"
-	"k8s.io/kubernetes/pkg/volume/iscsi"
-	"k8s.io/kubernetes/pkg/volume/local"
-	"k8s.io/kubernetes/pkg/volume/nfs"
-	"k8s.io/kubernetes/pkg/volume/portworx"
-	"k8s.io/kubernetes/pkg/volume/projected"
-	"k8s.io/kubernetes/pkg/volume/secret"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
@@ -60,6 +46,8 @@ type ConfigImpl struct {
 	cancel  context.CancelCauseFunc
 	cmd     *cobra.Command
 	options v1.Options
+
+	runOnce sync.Once
 
 	canceled     chan struct{}
 	canceledOnce sync.Once
@@ -357,7 +345,7 @@ func (c *ConfigImpl) ensureKubelet() {
 			// Use fake implementations for the rest of the dependencies
 			ProbeManager:              probetest.FakeManager{},
 			OSInterface:               &containertest.FakeOS{},
-			VolumePlugins:             volumePlugins(),
+			VolumePlugins:             []volume.VolumePlugin{},
 			OOMAdjuster:               oom.NewFakeOOMAdjuster(),
 			Mounter:                   &mount.FakeMounter{},
 			Subpather:                 &subpath.FakeSubpath{},
@@ -421,31 +409,44 @@ func (c *ConfigImpl) KubeletHostname() string {
 	return c.kubeletFlags.HostnameOverride
 }
 
-func (c *ConfigImpl) KubeletRun(ctx context.Context) {
-	c.ensureKubelet()
-	if err := kubeletapp.RunKubelet(ctx, &kubeletoptions.KubeletServer{
-		KubeletFlags:         *c.kubeletFlags,
-		KubeletConfiguration: *c.kubeletConfiguration,
-	}, c.kubeletDependencies); err != nil {
-		klog.Fatalf("Failed to run Kubelet: %v. Exiting.", err)
-	}
-	<-ctx.Done()
+// func (c *ConfigImpl) KubeletRun(ctx context.Context) {
+// 	c.ensureKubelet()
+// 	if err := kubeletapp.RunKubelet(ctx, &kubeletoptions.KubeletServer{
+// 		KubeletFlags:         *c.kubeletFlags,
+// 		KubeletConfiguration: *c.kubeletConfiguration,
+// 	}, c.kubeletDependencies); err != nil {
+// 		klog.Fatalf("Failed to run Kubelet: %v. Exiting.", err)
+// 	}
+// 	<-ctx.Done()
+// }
+
+func (c *ConfigImpl) Run() v1.Config {
+	c.runOnce.Do(func() {
+		c.ensureKubelet()
+		if err := kubeletapp.RunKubelet(c.ctx, &kubeletoptions.KubeletServer{
+			KubeletFlags:         *c.kubeletFlags,
+			KubeletConfiguration: *c.kubeletConfiguration,
+		}, c.kubeletDependencies); err != nil {
+			c.Cancel(nanokube.NewError(err).WithCode(1))
+		}
+	})
+	return c
 }
 
-func volumePlugins() []volume.VolumePlugin {
-	allPlugins := []volume.VolumePlugin{}
-	allPlugins = append(allPlugins, emptydir.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, git_repo.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, hostpath.ProbeVolumePlugins(volume.VolumeConfig{})...)
-	allPlugins = append(allPlugins, nfs.ProbeVolumePlugins(volume.VolumeConfig{})...)
-	allPlugins = append(allPlugins, secret.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, iscsi.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, downwardapi.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, fc.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, configmap.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, projected.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, portworx.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, local.ProbeVolumePlugins()...)
-	allPlugins = append(allPlugins, csi.ProbeVolumePlugins()...)
-	return allPlugins
-}
+// func volumePlugins() []volume.VolumePlugin {
+// 	allPlugins := []volume.VolumePlugin{}
+// 	allPlugins = append(allPlugins, emptydir.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, git_repo.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, hostpath.ProbeVolumePlugins(volume.VolumeConfig{})...)
+// 	allPlugins = append(allPlugins, nfs.ProbeVolumePlugins(volume.VolumeConfig{})...)
+// 	allPlugins = append(allPlugins, secret.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, iscsi.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, downwardapi.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, fc.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, configmap.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, projected.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, portworx.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, local.ProbeVolumePlugins()...)
+// 	allPlugins = append(allPlugins, csi.ProbeVolumePlugins()...)
+// 	return allPlugins
+// }
