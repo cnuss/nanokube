@@ -87,7 +87,7 @@ type KubeImpl struct {
 
 	eventsOnce sync.Once
 
-	nodeReady     chan *corev1.ObjectReference
+	nodeReady     chan struct{}
 	nodeReadyOnce sync.Once
 
 	informerFactory     informers.SharedInformerFactory
@@ -123,7 +123,7 @@ func newKube(config v1.Config) *KubeImpl {
 		config:            config,
 		apiserverProvided: make(chan struct{}),
 		storageProvided:   make(chan struct{}),
-		nodeReady:         make(chan *corev1.ObjectReference, 1),
+		nodeReady:         make(chan struct{}),
 	}
 
 	return kube
@@ -407,21 +407,10 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
-			tunnel := k.Config().Tunnel(v1.KubeletService)
-			filterNames := []string{
-				tunnel.Hostname(),
-				tunnel.FQDN(),
-				tunnel.LocalHostname(),
-				tunnel.LocalFQDN(),
-			}
-			for _, name := range filterNames {
-				if strings.ToLower(ref.Name) == strings.ToLower(name) {
-					k.nodeReadyOnce.Do(func() {
-						k.nodeReady <- ref
-						close(k.nodeReady)
-					})
-					break
-				}
+			if strings.ToLower(k.KubeletHostname()) == strings.ToLower(ref.Name) {
+				k.nodeReadyOnce.Do(func() {
+					close(k.nodeReady)
+				})
 			}
 		}
 	}
@@ -445,6 +434,6 @@ func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, 
 	logFunc(fmt.Sprintf(messageFmt, args...), kv...)
 }
 
-func (k *KubeImpl) NodeReady() chan *corev1.ObjectReference {
+func (k *KubeImpl) NodeReady() chan struct{} {
 	return k.nodeReady
 }

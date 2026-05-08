@@ -18,6 +18,7 @@ var (
 	KubeletService           ServiceName = "kubelet"
 	ControllerManagerService ServiceName = "controller-manager"
 	SchedulerService         ServiceName = "scheduler"
+	Node                     ServiceName = "node"
 
 	DataDirLock       DataDir  = "lock"
 	DataDirKubelet    DataDir  = "kubelet"

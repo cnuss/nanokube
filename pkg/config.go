@@ -148,6 +148,35 @@ func (c *ConfigImpl) OnCancel(fns ...func(ctx context.Context)) v1.Config {
 	return c
 }
 
+func (c *ConfigImpl) OnReady(service v1.ServiceName, fns ...func(ctx context.Context)) v1.Config {
+	for _, fn := range fns {
+		var ch <-chan struct{}
+
+		switch service {
+		case v1.APIServerService:
+			ch = c.Kube().ApiServer().Ready()
+		case v1.Node:
+			ch = c.Kube().NodeReady()
+		default:
+			c.Cancel(nanokube.NewError(fmt.Errorf("unknown service %s", service)))
+			return c
+		}
+
+		go func(fn func(ctx context.Context), ch <-chan struct{}) {
+			for {
+				select {
+				case <-ch:
+					fn(c.Context())
+					return
+				case <-c.Canceled():
+					return
+				}
+			}
+		}(fn, ch)
+	}
+	return c
+}
+
 func (c *ConfigImpl) runCancelHooks() {
 	c.cancelOnce.Do(func() {
 		c.cancelMu.Lock()

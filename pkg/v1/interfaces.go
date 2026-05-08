@@ -217,7 +217,7 @@ type Kube interface {
 	WithStorage(storage Storage) Kube
 	Storage() Storage
 
-	NodeReady() chan *corev1.ObjectReference
+	NodeReady() chan struct{}
 }
 
 type Config interface {
@@ -227,6 +227,7 @@ type Config interface {
 
 	Cancel(reason Error)
 	OnCancel(fns ...func(ctx context.Context)) Config
+	OnReady(service ServiceName, fns ...func(ctx context.Context)) Config
 
 	Canceled() <-chan struct{}
 	Done() <-chan struct{}
