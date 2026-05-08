@@ -12,14 +12,14 @@ import (
 	dockerclient "github.com/docker/docker/client"
 )
 
-func newClient(config v1.Config, socket string) (*dockerclient.Client, error) {
+func newClient(kubelet v1.Kubelet, socket string) (*dockerclient.Client, error) {
 	opts := []dockerclient.Opt{
 		dockerclient.WithHost("unix://" + socket),
 		dockerclient.WithAPIVersionNegotiation(),
 	}
-	if config.Options().Verbosity() >= 3 {
+	if kubelet.Options().Verbosity() >= 3 {
 		httpClient := &http.Client{
-			Transport: newTransport(config, socket),
+			Transport: newTransport(kubelet, socket),
 		}
 		opts = append(opts, dockerclient.WithHTTPClient(httpClient))
 	}
@@ -37,13 +37,13 @@ type readCloserFunc struct {
 
 func (r readCloserFunc) Close() error { return r.close() }
 
-func newTransport(config v1.Config, socket string) http.RoundTripper {
+func newTransport(kubelet v1.Kubelet, socket string) http.RoundTripper {
 	inner := &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return net.Dial("unix", socket)
 		},
 	}
-	verbose := config.Options().Verbosity() >= 4
+	verbose := kubelet.Options().Verbosity() >= 4
 	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		var reqBuf bytes.Buffer
 		if req.Body != nil && verbose {

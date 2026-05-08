@@ -23,8 +23,8 @@ import (
 )
 
 type StorageFactoryImpl struct {
-	ctx    context.Context
-	config v1.Config
+	ctx     context.Context
+	kubelet v1.Kubelet
 
 	defaultStorageFactory         *serverstorage.DefaultStorageFactory
 	defaultStorageFactoryProvided chan struct{}
@@ -38,10 +38,10 @@ type StorageFactoryImpl struct {
 
 var _ v1.Storage = &StorageFactoryImpl{}
 
-func NewStorage(config v1.Config) v1.Storage {
+func NewStorage(kubelet v1.Kubelet) v1.Storage {
 	return &StorageFactoryImpl{
-		ctx:                           config.Context(),
-		config:                        config,
+		ctx:                           kubelet.Context(),
+		kubelet:                       kubelet,
 		defaultStorageFactoryProvided: make(chan struct{}),
 		ready:                         make(chan struct{}),
 	}
@@ -61,7 +61,7 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 	<-s.defaultStorageFactoryProvided
 
 	s.runOnce.Do(func() {
-		dataDir := s.config.Options().DataDirAt(v1.DataDirEtcd)
+		dataDir := s.kubelet.Options().DataDirAt(v1.DataDirEtcd)
 		port := s.Port()
 
 		clientURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
@@ -83,11 +83,11 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 
 		var etcdLevel zapcore.Level
 		switch {
-		case s.config.Options().Verbosity() >= 3:
+		case s.kubelet.Options().Verbosity() >= 3:
 			etcdLevel = zapcore.DebugLevel
-		case s.config.Options().Verbosity() >= 2:
+		case s.kubelet.Options().Verbosity() >= 2:
 			etcdLevel = zapcore.InfoLevel
-		case s.config.Options().Verbosity() >= 1:
+		case s.kubelet.Options().Verbosity() >= 1:
 			etcdLevel = zapcore.WarnLevel
 		default:
 			etcdLevel = zapcore.FatalLevel

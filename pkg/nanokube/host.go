@@ -27,7 +27,7 @@ import (
 var PluginName = "nanokube"
 
 type HostImpl struct {
-	config v1.Config
+	kubelet v1.Kubelet
 
 	volumeHost         volume.VolumeHost
 	volumeHostOnce     sync.Once
@@ -42,15 +42,15 @@ type HostImpl struct {
 
 var _ v1.Host = &HostImpl{}
 
-func NewHost(config v1.Config) v1.Host {
+func NewHost(kubelet v1.Kubelet) v1.Host {
 	return &HostImpl{
-		config:             config,
+		kubelet:            kubelet,
 		volumeHostProvided: make(chan struct{}),
 	}
 }
 
-func (h *HostImpl) Config() v1.Config {
-	return h.config
+func (h *HostImpl) Kubelet() v1.Kubelet {
+	return h.kubelet
 }
 
 func (h *HostImpl) CanSafelySkipMountPointCheck() bool {
@@ -68,7 +68,7 @@ func (h *HostImpl) GetMountRefs(pathname string) ([]string, error) {
 }
 
 func (h *HostImpl) IsLikelyNotMountPoint(file string) (bool, error) {
-	if h.Config().Options().InDataDir(file) {
+	if h.Kubelet().Options().InDataDir(file) {
 		return true, nil
 	}
 	Log.Error("IsLikelyNotMountPoint", "file", file)
@@ -323,7 +323,7 @@ func (m *mounterImpl) TearDown() error {
 	}
 	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
 		// TODO(incomplete): emit events to args.GetEventRecorder() about volume creation
-		backend := m.host.Config().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
+		backend := m.host.Kubelet().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
 		if backend == nil {
 			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)
 		}
@@ -398,7 +398,7 @@ func (m *mounterImpl) SetUp(args volume.MounterArgs) error {
 	}
 	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
 		// TODO(incomplete): emit events to args.GetEventRecorder() about volume creation
-		backend := m.host.Config().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
+		backend := m.host.Kubelet().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
 		if backend == nil {
 			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)
 		}

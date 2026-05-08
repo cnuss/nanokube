@@ -119,7 +119,7 @@ type Driver interface {
 	VolumeService
 
 	Context() context.Context
-	Config() Config
+	Kubelet() Kubelet
 	Name() string
 
 	ExecOnHost(ctx context.Context, image string, cmd []string, mounts []Path) (string, error)
@@ -196,7 +196,7 @@ type Backend interface {
 
 type Kube interface {
 	record.EventRecorder
-	Config() Config
+	Kubelet() Kubelet
 
 	ApiServerOptions() *apiserveroptions.CompletedOptions
 	Args(service ServiceName, mountPath string) []string
@@ -220,25 +220,25 @@ type Kube interface {
 	NodeReady() chan struct{}
 }
 
-type Config interface {
+type Kubelet interface {
 	Context() context.Context
 	Options() Options
 	Version() string
 
 	Cancel(reason Error)
-	OnCancel(fns ...func(ctx context.Context)) Config
-	OnReady(service ServiceName, fns ...func(ctx context.Context)) Config
+	OnCancel(fns ...func(ctx context.Context)) Kubelet
+	OnReady(service ServiceName, fns ...func(ctx context.Context)) Kubelet
 
 	Canceled() <-chan struct{}
 	Done() <-chan struct{}
 
-	WithApiServer(apiserver ApiServer) Config
+	WithApiServer(apiserver ApiServer) Kubelet
 	ApiServer() ApiServer
 
-	WithStorage(storage Storage) Config
+	WithStorage(storage Storage) Kubelet
 	Storage() Storage
 
-	WithBackend(name BackendName, backend Backend) Config
+	WithBackend(name BackendName, backend Backend) Kubelet
 	Backends() map[BackendName]Backend
 	Backend(name BackendName) Backend
 	DefaultBackend() Backend
@@ -250,7 +250,7 @@ type Config interface {
 
 	Services(baseURL *url.URL) []*restful.WebService
 
-	Run() Config
+	Run() Kubelet
 }
 
 type PortMap interface {
@@ -275,6 +275,6 @@ type Host interface {
 	subpath.Interface
 	mount.Interface
 
-	Config() Config
+	Kubelet() Kubelet
 	VolumePlugins() []volume.VolumePlugin
 }

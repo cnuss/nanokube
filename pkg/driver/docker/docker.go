@@ -44,7 +44,7 @@ import (
 // streamIdleTimeout matches upstream cri/streaming server's default.
 const streamIdleTimeout = 4 * time.Hour
 
-func Detect(config v1.Config) v1.Backend {
+func Detect(kubelet v1.Kubelet) v1.Backend {
 	home, _ := os.UserHomeDir()
 
 	// TODO: Windows support
@@ -66,7 +66,7 @@ func Detect(config v1.Config) v1.Backend {
 			nanokube.Log.Debug("docker socket not present", "socket", socket, "error", err)
 			continue
 		}
-		backend, err := NewBackend(config, socket)
+		backend, err := NewBackend(kubelet, socket)
 		if err != nil {
 			nanokube.Log.Warn("docker socket present but unusable", "socket", socket, "error", err)
 			continue
@@ -78,13 +78,13 @@ func Detect(config v1.Config) v1.Backend {
 	return nil
 }
 
-func NewBackend(config v1.Config, socket string) (v1.Backend, error) {
-	client, err := newClient(config, socket)
+func NewBackend(kubelet v1.Kubelet, socket string) (v1.Backend, error) {
+	client, err := newClient(kubelet, socket)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(config.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(kubelet.Context(), 5*time.Second)
 	defer cancel()
 
 	if _, err := client.Ping(ctx); err != nil {
@@ -92,17 +92,17 @@ func NewBackend(config v1.Config, socket string) (v1.Backend, error) {
 	}
 
 	return pkg.NewBackend(v1.DockerBackend, &driver{
-		config:          config,
+		kubelet:         kubelet,
 		client:          client,
 		baseURLProvided: make(chan struct{}),
 		streamsProvided: make(chan struct{}),
 		networkProvided: make(chan struct{}),
-	}, config), nil
+	}, kubelet), nil
 }
 
 type driver struct {
-	config v1.Config
-	client *client.Client
+	kubelet v1.Kubelet
+	client  *client.Client
 
 	name     string
 	nameOnce sync.Once
@@ -138,11 +138,11 @@ func (d *driver) Name() string {
 }
 
 func (d *driver) Context() context.Context {
-	return d.config.Context()
+	return d.kubelet.Context()
 }
 
-func (d *driver) Config() v1.Config {
-	return d.config
+func (d *driver) Kubelet() v1.Kubelet {
+	return d.kubelet
 }
 
 func (d *driver) Service() *restful.WebService {
@@ -1134,7 +1134,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConf
 			Hostname:   config.GetHostname(),
 			Domainname: meta.GetNamespace() + ".svc.cluster.local",
 			Labels:     labels,
-			Env:        d.Config().Kube().Environ(),
+			Env:        d.Kubelet().Kube().Environ(),
 		}
 
 		networkMode := container.NetworkMode("bridge")
@@ -1698,7 +1698,7 @@ func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.P
 									WithKey("kubernetes.io/hostname").
 									WithOperator(corev1.NodeSelectorOpIn).
 									// TODO(incomplete): kublet hostname getter
-									WithValues(backend.Driver().Config().Tunnel(v1.KubeletService).Hostname()),
+									WithValues(backend.Driver().Kubelet().Tunnel(v1.KubeletService).Hostname()),
 							))))),
 			metav1.ApplyOptions{FieldManager: string(backend.Name())})
 		if err != nil {
@@ -1789,7 +1789,7 @@ func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1
 					if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn {
 						for _, v := range expr.Values {
 							// TODO(incomplete): kublet hostname getter
-							if v == backend.Driver().Config().Tunnel(v1.KubeletService).Hostname() {
+							if v == backend.Driver().Kubelet().Tunnel(v1.KubeletService).Hostname() {
 								return pv, nil
 							}
 						}

@@ -6,7 +6,7 @@ import (
 
 type (
 	BackendName string
-	BackendFunc func(config Config) Backend
+	BackendFunc func(kubelet Kubelet) Backend
 	DataDir     string
 	FileName    string
 	Path        string

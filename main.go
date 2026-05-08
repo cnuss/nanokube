@@ -35,45 +35,45 @@ func init() {
 }
 
 func main() {
-	config := pkg.NewConfig()
+	kubelet := pkg.NewKubelet()
 
-	nanokube.SetupLogging(config.Options().Verbosity())
-	nanokube.Log.Info("starting nanokube", "version", config.Version())
+	nanokube.SetupLogging(kubelet.Options().Verbosity())
+	nanokube.Log.Info("starting nanokube", "version", kubelet.Version())
 
-	<-config.
-		WithStorage(nanokube.NewStorage(config)).
-		WithApiServer(nanokube.NewApiServer(config)).
-		OnReady(v1.APIServerService, updateKubeconfig(config)).
-		OnReady(v1.Node, updateNode(config)).
-		OnCancel(deleteNode(config), stopSandboxes(config)).
-		OnCancel(snapshotStorage(config), snapshotPods()).
-		OnCancel(removeSandboxes(config)).
-		OnCancel(removeNetworks(config)).
+	<-kubelet.
+		WithStorage(nanokube.NewStorage(kubelet)).
+		WithApiServer(nanokube.NewApiServer(kubelet)).
+		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
+		OnReady(v1.Node, updateNode(kubelet)).
+		OnCancel(deleteNode(kubelet), stopSandboxes(kubelet)).
+		OnCancel(snapshotStorage(kubelet), snapshotPods()).
+		OnCancel(removeSandboxes(kubelet)).
+		OnCancel(removeNetworks(kubelet)).
 		Run().Done()
 }
 
-func updateNode(config v1.Config) func(ctx context.Context) {
+func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		nodes := config.Kube().Client().CoreV1().Nodes()
-		tunnel := config.Tunnel(v1.KubeletService)
+		nodes := kubelet.Kube().Client().CoreV1().Nodes()
+		tunnel := kubelet.Tunnel(v1.KubeletService)
 
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			node, err := nodes.Get(config.Context(), config.Kube().KubeletHostname(), metav1.GetOptions{})
+			node, err := nodes.Get(kubelet.Context(), kubelet.Kube().KubeletHostname(), metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			node.Spec.Taints = slices.DeleteFunc(node.Spec.Taints, func(t corev1.Taint) bool {
 				return t.Key == cloudproviderapi.TaintExternalCloudProvider
 			})
-			_, err = nodes.Update(config.Context(), node, metav1.UpdateOptions{})
+			_, err = nodes.Update(kubelet.Context(), node, metav1.UpdateOptions{})
 			return err
 		}); err != nil {
-			nanokube.Log.Warn("failed to update node taints", "name", config.Kube().KubeletHostname(), "error", err)
+			nanokube.Log.Warn("failed to update node taints", "name", kubelet.Kube().KubeletHostname(), "error", err)
 		}
 
 		if _, err := nodes.ApplyStatus(
-			config.Context(),
-			corev1ac.Node(config.Kube().KubeletHostname()).WithStatus(
+			kubelet.Context(),
+			corev1ac.Node(kubelet.Kube().KubeletHostname()).WithStatus(
 				corev1ac.NodeStatus().WithAddresses(
 					corev1ac.NodeAddress().WithType(corev1.NodeHostName).WithAddress(func() string {
 						a, _ := os.Hostname()
@@ -90,30 +90,30 @@ func updateNode(config v1.Config) func(ctx context.Context) {
 					}()),
 				),
 			),
-			metav1.ApplyOptions{FieldManager: config.Options().Name(), Force: true},
+			metav1.ApplyOptions{FieldManager: kubelet.Options().Name(), Force: true},
 		); err != nil {
-			nanokube.Log.Warn("failed to apply node status", "name", config.Kube().KubeletHostname(), "error", err)
+			nanokube.Log.Warn("failed to apply node status", "name", kubelet.Kube().KubeletHostname(), "error", err)
 		}
 
-		nanokube.Log.Info("node is ready", "name", config.Kube().KubeletHostname(), "fqdn", tunnel.FQDN())
+		nanokube.Log.Info("node is ready", "name", kubelet.Kube().KubeletHostname(), "fqdn", tunnel.FQDN())
 	}
 }
 
-func updateKubeconfig(config v1.Config) func(ctx context.Context) {
+func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		kubeconfig, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
 		if err != nil {
 			kubeconfig = clientcmdapi.NewConfig()
 		}
 
-		internal := config.Kube().Client().WithTunnel(config.Kube().ApiServer().Tunnel(), true)
-		external := config.Kube().Client().WithTunnel(config.Kube().ApiServer().Tunnel(), false)
+		internal := kubelet.Kube().Client().WithTunnel(kubelet.Kube().ApiServer().Tunnel(), true)
+		external := kubelet.Kube().Client().WithTunnel(kubelet.Kube().ApiServer().Tunnel(), false)
 
-		if err := internal.WriteKubeconfig(filepath.Join(string(config.Options().DataDir()), string(v1.KubeconfigFile))); err != nil {
-			nanokube.Log.Error("failed to write internal kubeconfig", "path", string(config.Options().DataDir())+string(v1.KubeconfigFile), "error", err)
+		if err := internal.WriteKubeconfig(filepath.Join(string(kubelet.Options().DataDir()), string(v1.KubeconfigFile))); err != nil {
+			nanokube.Log.Error("failed to write internal kubeconfig", "path", string(kubelet.Options().DataDir())+string(v1.KubeconfigFile), "error", err)
 		}
 
-		current := external.Kubeconfig(config.Options().Name())
+		current := external.Kubeconfig(kubelet.Options().Name())
 		maps.Copy(kubeconfig.Clusters, current.Clusters)
 		maps.Copy(kubeconfig.AuthInfos, current.AuthInfos)
 		maps.Copy(kubeconfig.Contexts, current.Contexts)
@@ -127,17 +127,17 @@ func updateKubeconfig(config v1.Config) func(ctx context.Context) {
 	}
 }
 
-func deleteNode(config v1.Config) func(ctx context.Context) {
+func deleteNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		// TODO(incomplete): cordon and drain node before deleting
-		nodes := config.Kube().Client().CoreV1().Nodes()
-		nodes.Delete(ctx, config.Kube().KubeletHostname(), metav1.DeleteOptions{})
+		nodes := kubelet.Kube().Client().CoreV1().Nodes()
+		nodes.Delete(ctx, kubelet.Kube().KubeletHostname(), metav1.DeleteOptions{})
 	}
 }
 
-func stopSandboxes(config v1.Config) func(ctx context.Context) {
+func stopSandboxes(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		for _, backend := range config.Backends() {
+		for _, backend := range kubelet.Backends() {
 			if sandboxes, err := backend.Driver().ListPodSandbox(ctx, nil); err == nil {
 				for _, sandbox := range sandboxes {
 					backend.Driver().StopPodSandbox(ctx, sandbox.Id)
@@ -147,7 +147,7 @@ func stopSandboxes(config v1.Config) func(ctx context.Context) {
 	}
 }
 
-func snapshotStorage(config v1.Config) func(ctx context.Context) {
+func snapshotStorage(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		// TODO(premium): snapshot storage with podman/docker checkpoint or AWS Lambda snapshots
 		nanokube.Log.Warn("please visit nanokube.cloud to enable storage snapshots")
@@ -161,9 +161,9 @@ func snapshotPods() func(ctx context.Context) {
 	}
 }
 
-func removeSandboxes(config v1.Config) func(ctx context.Context) {
+func removeSandboxes(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		for _, backend := range config.Backends() {
+		for _, backend := range kubelet.Backends() {
 			if sandboxes, err := backend.Driver().ListPodSandbox(ctx, nil); err == nil {
 				for _, sandbox := range sandboxes {
 					backend.Driver().RemovePodSandbox(ctx, sandbox.Id)
@@ -173,9 +173,9 @@ func removeSandboxes(config v1.Config) func(ctx context.Context) {
 	}
 }
 
-func removeNetworks(config v1.Config) func(ctx context.Context) {
+func removeNetworks(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		for _, backend := range config.Backends() {
+		for _, backend := range kubelet.Backends() {
 			for _, network := range backend.Network().Networks() {
 				backend.Driver().RemoveNetwork(ctx, network.ID())
 			}

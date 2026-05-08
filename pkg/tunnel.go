@@ -53,7 +53,7 @@ var promMu sync.Mutex
 
 type TunnelImpl struct {
 	ctx         context.Context
-	config      v1.Config
+	kubelet     v1.Kubelet
 	serviceName v1.ServiceName
 
 	localHost     net.IP
@@ -73,10 +73,10 @@ type TunnelImpl struct {
 
 var _ v1.Tunnel = &TunnelImpl{}
 
-func NewTunnel(config v1.Config, serviceName v1.ServiceName) v1.Tunnel {
+func NewTunnel(kubelet v1.Kubelet, serviceName v1.ServiceName) v1.Tunnel {
 	return &TunnelImpl{
-		ctx:         config.Context(),
-		config:      config,
+		ctx:         kubelet.Context(),
+		kubelet:     kubelet,
 		serviceName: serviceName,
 		fqdnReady:   make(chan struct{}),
 		tunnelReady: make(chan struct{}),
@@ -100,7 +100,7 @@ func (t *TunnelImpl) LocalPort() int32 {
 	t.localPortOnce.Do(func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			t.config.Cancel(nanokube.NewError(fmt.Errorf("failed to acquire tunnel port: %w", err)))
+			t.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to acquire tunnel port: %w", err)))
 			return
 		}
 		defer listener.Close()
@@ -145,7 +145,7 @@ func (t *TunnelImpl) FQDN() string {
 
 		tunnel, err := newQuickTunnel(t, t.serviceName)
 		if err != nil {
-			t.config.Cancel(nanokube.NewError(fmt.Errorf("failed to create tunnel: %w", err)))
+			t.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create tunnel: %w", err)))
 			return
 		}
 
@@ -164,7 +164,7 @@ func (t *TunnelImpl) FQDN() string {
 			case <-t.tunnel.Stopped():
 				close(t.tunnelReady)
 			}
-			t.config.Cancel(nanokube.NewError(fmt.Errorf("tunnel cancelled")))
+			t.kubelet.Cancel(nanokube.NewError(fmt.Errorf("tunnel cancelled")))
 		}()
 	})
 	return t.fqdn

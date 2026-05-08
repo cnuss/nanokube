@@ -23,7 +23,7 @@ import (
 )
 
 type ApiServerImpl struct {
-	config    v1.Config
+	kubelet   v1.Kubelet
 	appConfig *app.Config
 	storage   v1.Storage
 
@@ -38,8 +38,8 @@ type ApiServerImpl struct {
 
 var _ v1.ApiServer = &ApiServerImpl{}
 
-func NewApiServer(config v1.Config) v1.ApiServer {
-	opts := config.Kube().ApiServerOptions()
+func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
+	opts := kubelet.Kube().ApiServerOptions()
 	c := &app.Config{
 		Options: *opts,
 	}
@@ -54,7 +54,7 @@ func NewApiServer(config v1.Config) v1.ApiServer {
 		klog.Fatalf("Failed to build generic config: %v", err)
 	}
 
-	storage := config.Kube().Storage().WithFactory(storageFactory)
+	storage := kubelet.Kube().Storage().WithFactory(storageFactory)
 
 	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Factory())
 	if err != nil {
@@ -76,7 +76,7 @@ func NewApiServer(config v1.Config) v1.ApiServer {
 	c.Aggregator = aggregator
 
 	return &ApiServerImpl{
-		config:    config,
+		kubelet:   kubelet,
 		appConfig: c,
 		storage:   storage,
 		ready:     make(chan struct{}),
@@ -92,7 +92,7 @@ func (h *ApiServerImpl) Config() *app.Config {
 }
 
 func (h *ApiServerImpl) Tunnel() v1.Tunnel {
-	return h.config.Tunnel(v1.APIServerService)
+	return h.kubelet.Tunnel(v1.APIServerService)
 }
 
 func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
@@ -145,7 +145,7 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 
 func (h *ApiServerImpl) CACerts() []*x509.Certificate {
 	h.caCertsOnce.Do(func() {
-		h.caCerts = h.config.Tunnel(v1.APIServerService).CACerts()
+		h.caCerts = h.kubelet.Tunnel(v1.APIServerService).CACerts()
 		// TODO(incomplete): add generated apiserver.crt to CA certs
 	})
 	return h.caCerts

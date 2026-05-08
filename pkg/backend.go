@@ -46,9 +46,9 @@ type fsCacheEntry struct {
 }
 
 type BackendImpl struct {
-	name   v1.BackendName
-	driver v1.Driver
-	config v1.Config
+	name    v1.BackendName
+	driver  v1.Driver
+	kubelet v1.Kubelet
 
 	manager     v1.Manager
 	managerOnce sync.Once
@@ -68,11 +68,11 @@ type BackendImpl struct {
 
 var _ v1.Backend = &BackendImpl{}
 
-func NewBackend(name v1.BackendName, driver v1.Driver, config v1.Config) v1.Backend {
+func NewBackend(name v1.BackendName, driver v1.Driver, kubelet v1.Kubelet) v1.Backend {
 	return &BackendImpl{
 		name:    name,
 		driver:  driver,
-		config:  config,
+		kubelet: kubelet,
 		ready:   make(chan struct{}),
 		fsCache: make(map[string]fsCacheEntry),
 	}
@@ -83,7 +83,7 @@ func (b *BackendImpl) Name() v1.BackendName {
 }
 
 func (b *BackendImpl) Context() context.Context {
-	return b.config.Context()
+	return b.kubelet.Context()
 }
 
 func (b *BackendImpl) Driver() v1.Driver {
@@ -216,7 +216,7 @@ func (b *BackendImpl) Ready() <-chan struct{} {
 
 func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
-		factory := b.config.Kube().InformerFactory()
+		factory := b.kubelet.Kube().InformerFactory()
 		factory.Core().V1().PersistentVolumeClaims().Informer().AddEventHandler(clientcache.ResourceEventHandlerFuncs{
 			AddFunc:    func(obj interface{}) { b.Reconcile(obj, false) },
 			UpdateFunc: func(_, obj interface{}) { b.Reconcile(obj, false) },
@@ -236,7 +236,7 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 	}
 	switch v := obj.(type) {
 	case *corev1.PersistentVolumeClaim:
-		client := b.config.Kube().Client()
+		client := b.kubelet.Kube().Client()
 		if deleted || v.DeletionTimestamp != nil {
 			if err := b.Driver().ReleaseVolume(b, client, v); err != nil {
 				nanokube.Log.Warn("unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)

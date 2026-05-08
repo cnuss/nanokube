@@ -29,7 +29,7 @@ import (
 
 const shutdownTimeout = 30 * time.Second
 
-type ConfigImpl struct {
+type KubeletImpl struct {
 	ctx     context.Context
 	cancel  context.CancelCauseFunc
 	cmd     *cobra.Command
@@ -63,9 +63,9 @@ type ConfigImpl struct {
 	tunnels sync.Map
 }
 
-var _ v1.Config = &ConfigImpl{}
+var _ v1.Kubelet = &KubeletImpl{}
 
-func NewConfig() v1.Config {
+func NewKubelet() v1.Kubelet {
 	ctx, cancel := context.WithCancelCause(context.Background())
 
 	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
@@ -79,7 +79,7 @@ func NewConfig() v1.Config {
 
 	options := nanokube.NewOptions(cmd)
 
-	config := &ConfigImpl{
+	kubelet := &KubeletImpl{
 		ctx:      ctx,
 		cancel:   cancel,
 		canceled: make(chan struct{}),
@@ -92,7 +92,7 @@ func NewConfig() v1.Config {
 	go func() {
 		sig := <-sigCh
 		nanokube.Log.Info("shutdown initiated", "signal", sig)
-		config.Cancel(nil)
+		kubelet.Cancel(nil)
 	}()
 
 	go func() {
@@ -115,73 +115,73 @@ func NewConfig() v1.Config {
 	}
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		config.Cancel(nanokube.NewError(err).WithCode(1))
+		kubelet.Cancel(nanokube.NewError(err).WithCode(1))
 	} else if !ran {
-		config.Cancel(nil)
+		kubelet.Cancel(nil)
 	}
 
-	return config
+	return kubelet
 }
 
-func (c *ConfigImpl) Context() context.Context {
-	return c.ctx
+func (k *KubeletImpl) Context() context.Context {
+	return k.ctx
 }
 
-func (c *ConfigImpl) Cancel(reason v1.Error) {
-	c.canceledOnce.Do(func() { close(c.canceled) })
-	c.runCancelHooks()
-	c.cancel(reason)
+func (k *KubeletImpl) Cancel(reason v1.Error) {
+	k.canceledOnce.Do(func() { close(k.canceled) })
+	k.runCancelHooks()
+	k.cancel(reason)
 	var fatal v1.Error
 	if errors.As(reason, &fatal) {
 		runtime.Goexit()
 	}
 }
 
-func (c *ConfigImpl) Canceled() <-chan struct{} {
-	return c.canceled
+func (k *KubeletImpl) Canceled() <-chan struct{} {
+	return k.canceled
 }
 
-func (c *ConfigImpl) OnCancel(fns ...func(ctx context.Context)) v1.Config {
-	c.cancelMu.Lock()
-	defer c.cancelMu.Unlock()
-	c.cancelHooks = append(c.cancelHooks, fns)
-	return c
+func (k *KubeletImpl) OnCancel(fns ...func(ctx context.Context)) v1.Kubelet {
+	k.cancelMu.Lock()
+	defer k.cancelMu.Unlock()
+	k.cancelHooks = append(k.cancelHooks, fns)
+	return k
 }
 
-func (c *ConfigImpl) OnReady(service v1.ServiceName, fns ...func(ctx context.Context)) v1.Config {
+func (k *KubeletImpl) OnReady(service v1.ServiceName, fns ...func(ctx context.Context)) v1.Kubelet {
 	for _, fn := range fns {
 		var ch <-chan struct{}
 
 		switch service {
 		case v1.APIServerService:
-			ch = c.Kube().ApiServer().Ready()
+			ch = k.Kube().ApiServer().Ready()
 		case v1.Node:
-			ch = c.Kube().NodeReady()
+			ch = k.Kube().NodeReady()
 		default:
-			c.Cancel(nanokube.NewError(fmt.Errorf("unknown service %s", service)))
-			return c
+			k.Cancel(nanokube.NewError(fmt.Errorf("unknown service %s", service)))
+			return k
 		}
 
 		go func(fn func(ctx context.Context), ch <-chan struct{}) {
 			for {
 				select {
 				case <-ch:
-					fn(c.Context())
+					fn(k.Context())
 					return
-				case <-c.Canceled():
+				case <-k.Canceled():
 					return
 				}
 			}
 		}(fn, ch)
 	}
-	return c
+	return k
 }
 
-func (c *ConfigImpl) runCancelHooks() {
-	c.cancelOnce.Do(func() {
-		c.cancelMu.Lock()
-		groups := append([][]func(context.Context){}, c.cancelHooks...)
-		c.cancelMu.Unlock()
+func (k *KubeletImpl) runCancelHooks() {
+	k.cancelOnce.Do(func() {
+		k.cancelMu.Lock()
+		groups := append([][]func(context.Context){}, k.cancelHooks...)
+		k.cancelMu.Unlock()
 
 		hookCtx, hookCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer hookCancel()
@@ -217,77 +217,77 @@ func (c *ConfigImpl) runCancelHooks() {
 	})
 }
 
-func (c *ConfigImpl) Done() <-chan struct{} {
-	return c.Context().Done()
+func (k *KubeletImpl) Done() <-chan struct{} {
+	return k.Context().Done()
 }
 
-func (c *ConfigImpl) Options() v1.Options {
-	return c.options
+func (k *KubeletImpl) Options() v1.Options {
+	return k.options
 }
 
-func (c *ConfigImpl) Version() string {
-	return c.cmd.Version
+func (k *KubeletImpl) Version() string {
+	return k.cmd.Version
 }
 
-func (c *ConfigImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
-	tunnel, _ := c.tunnels.LoadOrStore(service, func() v1.Tunnel {
-		return NewTunnel(c, service)
+func (k *KubeletImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
+	tunnel, _ := k.tunnels.LoadOrStore(service, func() v1.Tunnel {
+		return NewTunnel(k, service)
 	}())
 	return tunnel.(v1.Tunnel)
 }
 
-func (c *ConfigImpl) Host() v1.Host {
-	c.hostOnce.Do(func() {
-		c.host = nanokube.NewHost(c)
+func (k *KubeletImpl) Host() v1.Host {
+	k.hostOnce.Do(func() {
+		k.host = nanokube.NewHost(k)
 	})
-	return c.host
+	return k.host
 }
 
-func (c *ConfigImpl) Kube() v1.Kube {
-	c.kubeOnce.Do(func() {
-		c.kube = newKube(c)
+func (k *KubeletImpl) Kube() v1.Kube {
+	k.kubeOnce.Do(func() {
+		k.kube = newKube(k)
 	})
-	return c.kube
+	return k.kube
 }
 
-func (c *ConfigImpl) WithApiServer(apiserver v1.ApiServer) v1.Config {
-	c.Kube().WithApiServer(apiserver)
-	return c
+func (k *KubeletImpl) WithApiServer(apiserver v1.ApiServer) v1.Kubelet {
+	k.Kube().WithApiServer(apiserver)
+	return k
 }
 
-func (c *ConfigImpl) ApiServer() v1.ApiServer {
-	return c.Kube().ApiServer()
+func (k *KubeletImpl) ApiServer() v1.ApiServer {
+	return k.Kube().ApiServer()
 }
 
-func (c *ConfigImpl) WithStorage(storage v1.Storage) v1.Config {
-	c.Kube().WithStorage(storage)
-	return c
+func (k *KubeletImpl) WithStorage(storage v1.Storage) v1.Kubelet {
+	k.Kube().WithStorage(storage)
+	return k
 }
 
-func (c *ConfigImpl) Storage() v1.Storage {
-	return c.Kube().Storage()
+func (k *KubeletImpl) Storage() v1.Storage {
+	return k.Kube().Storage()
 }
 
-func (c *ConfigImpl) Backend(name v1.BackendName) v1.Backend {
-	if backend, ok := c.backends.Load(name); ok {
+func (k *KubeletImpl) Backend(name v1.BackendName) v1.Backend {
+	if backend, ok := k.backends.Load(name); ok {
 		return backend.(v1.Backend)
 	}
 	return nil
 }
 
-func (c *ConfigImpl) Backends() map[v1.BackendName]v1.Backend {
-	c.backendsOnce.Do(func() {
+func (k *KubeletImpl) Backends() map[v1.BackendName]v1.Backend {
+	k.backendsOnce.Do(func() {
 		for _, detect := range v1.Backends {
-			backend := detect(c)
+			backend := detect(k)
 			if backend != nil {
 				nanokube.Log.Info("backend detected", "backend", backend.Name())
-				c.WithBackend(backend.Name(), backend)
+				k.WithBackend(backend.Name(), backend)
 			}
 		}
 	})
 
 	backends := make(map[v1.BackendName]v1.Backend)
-	c.backends.Range(func(key, value any) bool {
+	k.backends.Range(func(key, value any) bool {
 		name := key.(v1.BackendName)
 		backend := value.(v1.Backend)
 		backends[name] = backend
@@ -296,33 +296,33 @@ func (c *ConfigImpl) Backends() map[v1.BackendName]v1.Backend {
 	return backends
 }
 
-func (c *ConfigImpl) Services(baseURL *url.URL) []*restful.WebService {
-	c.servicesOnce.Do(func() {
+func (k *KubeletImpl) Services(baseURL *url.URL) []*restful.WebService {
+	k.servicesOnce.Do(func() {
 		services := []*restful.WebService{}
-		for _, backend := range c.Backends() {
+		for _, backend := range k.Backends() {
 			services = append(services, backend.WithBaseURL(baseURL.JoinPath(string(backend.Name()))).Services()...)
 		}
-		c.services = services
+		k.services = services
 	})
-	return c.services
+	return k.services
 }
 
-func (c *ConfigImpl) DefaultBackend() v1.Backend {
-	for _, backend := range c.Backends() {
+func (k *KubeletImpl) DefaultBackend() v1.Backend {
+	for _, backend := range k.Backends() {
 		return backend
 	}
 	return nil
 }
 
-func (c *ConfigImpl) WithBackend(name v1.BackendName, backend v1.Backend) v1.Config {
-	c.backends.Store(name, backend)
-	return c
+func (k *KubeletImpl) WithBackend(name v1.BackendName, backend v1.Backend) v1.Kubelet {
+	k.backends.Store(name, backend)
+	return k
 }
 
-func (c *ConfigImpl) StaticPods() []*corev1.Pod {
-	c.staticPodsOnce.Do(func() {
-		c.staticPods = []*corev1.Pod{}
-		mountPath := string(c.Options().DataDir())
+func (k *KubeletImpl) StaticPods() []*corev1.Pod {
+	k.staticPodsOnce.Do(func() {
+		k.staticPods = []*corev1.Pod{}
+		mountPath := string(k.Options().DataDir())
 		volumes := []corev1.Volume{
 			{Name: "nanokube-home", VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
@@ -334,13 +334,13 @@ func (c *ConfigImpl) StaticPods() []*corev1.Pod {
 			{Name: "nanokube-home", MountPath: string(mountPath)},
 		}
 
-		c.staticPods = append(c.staticPods, &corev1.Pod{
+		k.staticPods = append(k.staticPods, &corev1.Pod{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Pod",
 				APIVersion: "v1",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      c.Options().Name(),
+				Name:      k.Options().Name(),
 				Namespace: "kube-system",
 			},
 			Spec: corev1.PodSpec{
@@ -349,14 +349,14 @@ func (c *ConfigImpl) StaticPods() []*corev1.Pod {
 						Name:         "controller-manager",
 						Image:        "registry.k8s.io/kube-controller-manager:v1.35.0", // TODO(incomplete): add version
 						Command:      []string{"kube-controller-manager"},
-						Args:         c.Kube().Args(v1.ControllerManagerService, mountPath),
+						Args:         k.Kube().Args(v1.ControllerManagerService, mountPath),
 						VolumeMounts: volumeMounts,
 					},
 					{
 						Name:         "scheduler",
 						Image:        "registry.k8s.io/kube-scheduler:v1.35.0", // TODO(incomplete): add version
 						Command:      []string{"kube-scheduler"},
-						Args:         c.Kube().Args(v1.SchedulerService, mountPath),
+						Args:         k.Kube().Args(v1.SchedulerService, mountPath),
 						VolumeMounts: volumeMounts,
 					},
 				},
@@ -364,30 +364,30 @@ func (c *ConfigImpl) StaticPods() []*corev1.Pod {
 			},
 		})
 	})
-	return c.staticPods
+	return k.staticPods
 }
 
-func (c *ConfigImpl) Run() v1.Config {
-	c.runOnce.Do(func() {
-		for _, pod := range c.StaticPods() {
+func (k *KubeletImpl) Run() v1.Kubelet {
+	k.runOnce.Do(func() {
+		for _, pod := range k.StaticPods() {
 			data, err := json.Marshal(pod)
 			if err != nil {
-				c.Cancel(nanokube.NewError(fmt.Errorf("Failed to marshal static pod %s: %v", pod.Name, err)))
+				k.Cancel(nanokube.NewError(fmt.Errorf("Failed to marshal static pod %s: %v", pod.Name, err)))
 				return
 			}
-			if err := os.WriteFile(filepath.Join(c.Kube().KubeletConfiguration().StaticPodPath, pod.Name+".json"), data, 0o644); err != nil {
-				c.Cancel(nanokube.NewError(fmt.Errorf("Failed to write static pod manifest %s: %v", pod.Name, err)))
+			if err := os.WriteFile(filepath.Join(k.Kube().KubeletConfiguration().StaticPodPath, pod.Name+".json"), data, 0o644); err != nil {
+				k.Cancel(nanokube.NewError(fmt.Errorf("Failed to write static pod manifest %s: %v", pod.Name, err)))
 				return
 			}
 		}
-		if err := kubeletapp.RunKubelet(c.ctx, &kubeletoptions.KubeletServer{
-			KubeletFlags:         *c.Kube().KubeletFlags(),
-			KubeletConfiguration: *c.Kube().KubeletConfiguration(),
-		}, c.Kube().KubeletDependencies()); err != nil {
-			c.Cancel(nanokube.NewError(err).WithCode(1))
+		if err := kubeletapp.RunKubelet(k.ctx, &kubeletoptions.KubeletServer{
+			KubeletFlags:         *k.Kube().KubeletFlags(),
+			KubeletConfiguration: *k.Kube().KubeletConfiguration(),
+		}, k.Kube().KubeletDependencies()); err != nil {
+			k.Cancel(nanokube.NewError(err).WithCode(1))
 		}
 	})
-	return c
+	return k
 }
 
 // func volumePlugins() []volume.VolumePlugin {
