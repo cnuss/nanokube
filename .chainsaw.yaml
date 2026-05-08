@@ -1,0 +1,27 @@
+apiVersion: chainsaw.kyverno.io/v1alpha2
+kind: Configuration
+metadata:
+  name: nanokube
+spec:
+  timeouts:
+    apply: 30s
+    assert: 1m
+    cleanup: 60s
+    delete: 30s
+    error: 30s
+    exec: 30s
+  discovery:
+    testFile: chainsaw-test.yaml
+    fullName: true
+    includeTestRegex: ^chainsaw$/^tests
+  execution:
+    failFast: false
+    parallel: 4
+  cleanup:
+    skipDelete: false
+  error:
+    catch:
+      - events: {}
+  report:
+    format: JSON
+    name: chainsaw-report

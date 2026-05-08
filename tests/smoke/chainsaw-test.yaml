@@ -1,0 +1,22 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: smoke
+spec:
+  description: Apply the chainsaw-kube smoke manifest and assert the deployment becomes available.
+  steps:
+    - name: apply-smoke-resources
+      try:
+        - apply:
+            file: https://raw.githubusercontent.com/cnuss/chainsaw-kube/refs/heads/main/smoke/resources.yaml
+    - name: assert-deployment-available
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: smoke-deploy
+              status:
+                availableReplicas: 1
+                readyReplicas: 1

@@ -3,3 +3,4 @@ kubeconfig
 tests/artifacts/
 kind-logs-*
 cri-tools/critest
+chainsaw-report*

@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(tee -a /tmp/claude-d4d6e4ee-2fa8-4577-ac62-9ef05c8cd908.log)",
-      "Bash(go build *)"
+      "Bash(go build *)",
+      "Bash(chainsaw test *)",
+      "Bash(tee -a /tmp/claude-0d0a499c-efd3-47bc-9c11-43fe83f1c0d9.log)"
     ]
   }
 }
