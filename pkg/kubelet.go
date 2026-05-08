@@ -19,10 +19,8 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/component-base/version"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 )
@@ -34,6 +32,9 @@ type KubeletImpl struct {
 	cancel  context.CancelCauseFunc
 	cmd     *cobra.Command
 	options v1.Options
+
+	version     string
+	versionOnce sync.Once
 
 	runOnce sync.Once
 
@@ -65,17 +66,8 @@ type KubeletImpl struct {
 
 var _ v1.Kubelet = &KubeletImpl{}
 
-func NewKubelet() v1.Kubelet {
+func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	ctx, cancel := context.WithCancelCause(context.Background())
-
-	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
-	cmd := &cobra.Command{
-		Use:           "nanokube [flags]",
-		Short:         "nanokube is a fully functional Kubernetes cluster that runs natively on your machine",
-		Version:       version.Get().GitVersion,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
 
 	options := nanokube.NewOptions(cmd)
 
@@ -108,6 +100,11 @@ func NewKubelet() v1.Kubelet {
 	}()
 
 	ran := false
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		nanokube.SetupLogging(kubelet.Options().Verbosity())
+		nanokube.Log.Info("starting", "version", kubelet.Version())
+		return nil
+	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ran = true
 		// TODO(future): subprocess management
@@ -226,7 +223,10 @@ func (k *KubeletImpl) Options() v1.Options {
 }
 
 func (k *KubeletImpl) Version() string {
-	return k.cmd.Version
+	k.versionOnce.Do(func() {
+		k.version = k.cmd.Version
+	})
+	return k.version
 }
 
 func (k *KubeletImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
@@ -347,14 +347,14 @@ func (k *KubeletImpl) StaticPods() []*corev1.Pod {
 				Containers: []corev1.Container{
 					{
 						Name:         "controller-manager",
-						Image:        "registry.k8s.io/kube-controller-manager:v1.35.0", // TODO(incomplete): add version
+						Image:        "registry.k8s.io/kube-controller-manager:" + k.Version(),
 						Command:      []string{"kube-controller-manager"},
 						Args:         k.Kube().Args(v1.ControllerManagerService, mountPath),
 						VolumeMounts: volumeMounts,
 					},
 					{
 						Name:         "scheduler",
-						Image:        "registry.k8s.io/kube-scheduler:v1.35.0", // TODO(incomplete): add version
+						Image:        "registry.k8s.io/kube-scheduler:" + k.Version(),
 						Command:      []string{"kube-scheduler"},
 						Args:         k.Kube().Args(v1.SchedulerService, mountPath),
 						VolumeMounts: volumeMounts,

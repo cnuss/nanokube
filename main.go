@@ -15,6 +15,8 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/podman"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -22,6 +24,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
+	"k8s.io/component-base/version"
 )
 
 func init() {
@@ -35,10 +38,15 @@ func init() {
 }
 
 func main() {
-	kubelet := pkg.NewKubelet()
-
-	nanokube.SetupLogging(kubelet.Options().Verbosity())
-	nanokube.Log.Info("starting nanokube", "version", kubelet.Version())
+	pflag.CommandLine = pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
+	cmd := &cobra.Command{
+		Use:           "nanokube [flags]",
+		Short:         "nanokube is a fully functional Kubernetes cluster that runs natively on your machine",
+		Version:       version.Get().GitVersion,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	kubelet := pkg.NewKubelet(cmd)
 
 	<-kubelet.
 		WithStorage(nanokube.NewStorage(kubelet)).
