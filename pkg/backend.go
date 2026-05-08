@@ -239,7 +239,7 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 		client := b.config.Kube().Client()
 		if deleted || v.DeletionTimestamp != nil {
 			if err := b.Driver().ReleaseVolume(b, client, v); err != nil {
-				nanokube.Log.Error("failed to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
+				nanokube.Log.Warn("unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
 				return
 			}
 			nanokube.Log.Info("released PVC", "name", v.Name, "namespace", v.Namespace)
