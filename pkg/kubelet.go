@@ -111,6 +111,34 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		return nil
 	}
 
+	startCmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start nanokube in the background",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ran = true
+			bin, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("failed to resolve current executable: %w", err)
+			}
+			args = append(options.Args(), args...)
+			nanokube.Log.Info("start", "bin", bin, "args", args)
+			kubelet.Cancel(nanokube.NewError(fmt.Errorf("not implemented")))
+			return nil
+		},
+	}
+	options.RunFlags(startCmd) // TODO(incomplete): this feels wierd
+
+	cmd.AddCommand(startCmd)
+	cmd.AddCommand(&cobra.Command{
+		Use:   "stop",
+		Short: "Stop nanokube background processes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ran = true
+			kubelet.Cancel(nanokube.NewError(fmt.Errorf("not implemented: stop")))
+			return nil
+		},
+	})
+
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		kubelet.Cancel(nanokube.NewError(err).WithCode(1))
 	} else if !ran {

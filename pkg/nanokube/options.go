@@ -8,15 +8,17 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
 type OptionsImpl struct {
-	name       string
-	verbosity  int
-	dataDir    string
-	standalone bool
+	cmd *cobra.Command
+
+	name      string
+	verbosity int
+	dataDir   string
 
 	dirs    sync.Map
 	tunnels sync.Map // map[v1.ServiceName]v1.Tunnel
@@ -26,16 +28,37 @@ var _ v1.Options = &OptionsImpl{}
 
 func NewOptions(cmd *cobra.Command) v1.Options {
 	options := &OptionsImpl{}
-	cmd.Flags().StringVar(&options.name, "name", "nanokube", "cluster name")
-	cmd.Flags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
-	cmd.Flags().StringVar(&options.dataDir, "data", func() string {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, fmt.Sprintf(".%s", options.Name()))
-	}(), "data directory")
-	cmd.Flags().BoolVar(&options.standalone, "standalone", false, "run in standalone mode")
+	cmd.PersistentFlags().StringVar(&options.name, "name", "nanokube", "cluster name")
+	cmd.PersistentFlags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
+	return options.RunFlags(cmd)
+}
 
-	os.Setenv("NANOKUBE_HOME", options.dataDir)
-	return options
+func (o *OptionsImpl) RunFlags(cmd *cobra.Command) v1.Options {
+	o.cmd = cmd
+	cmd.Flags().StringVar(&o.dataDir, "data", func() string {
+		home, _ := os.UserHomeDir()
+		datadir := filepath.Join(home, fmt.Sprintf(".%s", o.Name()))
+		os.Setenv("NANOKUBE_HOME", datadir)
+		return datadir
+	}(), "data directory")
+	return o
+}
+
+func (o *OptionsImpl) Args() []string {
+	args := []string{}
+	o.cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Name == "help" {
+			return
+		}
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			for _, v := range sv.GetSlice() {
+				args = append(args, "--"+f.Name+"="+v)
+			}
+			return
+		}
+		args = append(args, "--"+f.Name+"="+f.Value.String())
+	})
+	return args
 }
 
 func (o *OptionsImpl) Name() string {
@@ -48,10 +71,6 @@ func (o *OptionsImpl) Verbosity() int {
 
 func (o *OptionsImpl) DataDir() v1.DataDir {
 	return v1.DataDir(o.dataDir)
-}
-
-func (o *OptionsImpl) Standalone() bool {
-	return o.standalone
 }
 
 func (o *OptionsImpl) DataDirAt(name v1.DataDir) string {

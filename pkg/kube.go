@@ -212,9 +212,6 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		} else {
 			k.kubeletConfiguration = &kubeletconfig.KubeletConfiguration{}
 		}
-		if k.Kubelet().Options().Standalone() {
-			k.kubeletConfiguration.RegisterNode = false
-		}
 		k.kubeletConfiguration.Address = tunnel.LocalIP().String()
 		k.kubeletConfiguration.ClusterDomain = tunnel.Domain()
 		// TODO(incomplete): probe a container to get resolv.conf
@@ -222,6 +219,7 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		k.kubeletConfiguration.PodLogsDir = k.Kubelet().Options().DataDirAt(v1.DataDirLogs)
 		k.kubeletConfiguration.Port = tunnel.LocalPort()
 		k.kubeletConfiguration.ReadOnlyPort = 0
+		k.kubeletConfiguration.RegisterNode = true
 		k.kubeletConfiguration.StaticPodPath = k.Kubelet().Options().DataDirAt(v1.DataDirStaticPods)
 	})
 	return k.kubeletConfiguration
@@ -253,14 +251,14 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 			TracerProvider:            noopoteltrace.NewTracerProvider(),
 			Recorder:                  &record.FakeRecorder{},
 		}
-		if !k.Kubelet().Options().Standalone() {
-			k.kubeletDependencies.KubeClient = k.Client()
-			k.kubeletDependencies.HeartbeatClient = k.Client()
-		} else {
-			k.kubeletDependencies.KubeClient = nil
-			k.kubeletDependencies.HeartbeatClient = nil
-			k.kubeletDependencies.EventClient = nil
-		}
+		// if !k.Kubelet().Options().Standalone() {
+		k.kubeletDependencies.KubeClient = k.Client()
+		k.kubeletDependencies.HeartbeatClient = k.Client()
+		// } else {
+		// 	k.kubeletDependencies.KubeClient = nil
+		// 	k.kubeletDependencies.HeartbeatClient = nil
+		// 	k.kubeletDependencies.EventClient = nil
+		// }
 		k.kubeletDependencies.RemoteRuntimeService = k.Kubelet().DefaultBackend().Driver()
 		k.kubeletDependencies.RemoteImageService = k.Kubelet().DefaultBackend().Driver()
 		k.kubeletDependencies.CAdvisorInterface = k.Kubelet().DefaultBackend()

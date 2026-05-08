@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/emicklei/go-restful/v3"
+	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	storage "k8s.io/apiserver/pkg/server/storage"
@@ -43,10 +44,12 @@ type Options interface {
 	Name() string
 	Verbosity() int
 	DataDir() DataDir
-	Standalone() bool
 
 	DataDirAt(name DataDir) string
 	InDataDir(path string) bool
+
+	Args() []string
+	RunFlags(cmd *cobra.Command) Options
 }
 
 type Tunnel interface {
