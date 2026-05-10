@@ -43,7 +43,6 @@ import (
 const (
 	httpTimeout        = 15 * time.Second
 	gracePeriod        = 30 * time.Second
-	serviceUrl         = "https://api.trycloudflare.com"
 	cloudflaredVersion = "2026.3.0" // TODO(experimental): mock cloudflared release version reported to the edge; keep aligned with upstream
 )
 

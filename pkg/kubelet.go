@@ -93,7 +93,7 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		cause := context.Cause(ctx)
 		var err v1.Error
 		if errors.As(cause, &err) {
-			fmt.Fprintln(os.Stderr, fmt.Sprintf("nanokube exiting: %v", err))
+			fmt.Fprintf(os.Stderr, "nanokube exiting: %v\n", err)
 			os.Exit(err.ExitStatus())
 		}
 		os.Exit(0)
