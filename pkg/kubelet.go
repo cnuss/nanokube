@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -62,6 +65,9 @@ type KubeletImpl struct {
 	dirs    sync.Map
 	files   sync.Map
 	tunnels sync.Map
+
+	pidfileWritten bool
+	detachOnce     sync.Once
 }
 
 var _ v1.Kubelet = &KubeletImpl{}
@@ -79,17 +85,8 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		cmd:      cmd,
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	go func() {
-		sig := <-sigCh
-		nanokube.Log.Info("shutdown initiated", "signal", sig)
-		kubelet.Cancel(nil)
-	}()
-
 	go func() {
 		<-ctx.Done()
-		signal.Stop(sigCh)
 		cause := context.Cause(ctx)
 		var err v1.Error
 		if errors.As(cause, &err) {
@@ -107,7 +104,6 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ran = true
-		// TODO(future): subprocess management
 		return nil
 	}
 
@@ -120,10 +116,91 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 			if err != nil {
 				return fmt.Errorf("failed to resolve current executable: %w", err)
 			}
-			args = append(options.Args(), args...)
-			nanokube.Log.Info("start", "bin", bin, "args", args)
-			kubelet.Cancel(nanokube.NewError(fmt.Errorf("not implemented")))
-			return nil
+
+			logPath := options.FilePathAt(v1.LogFile(options))
+			logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+			if err != nil {
+				return fmt.Errorf("failed to open log file %s: %w", logPath, err)
+			}
+			defer logFile.Close()
+
+			devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+			if err != nil {
+				return fmt.Errorf("failed to open /dev/null: %w", err)
+			}
+			defer devNull.Close()
+
+			childArgs := append([]string{bin}, append(options.Args(), args...)...)
+			env := append(os.Environ(), fmt.Sprintf("NANOKUBE_LAUNCHER_PID=%d", os.Getpid()))
+
+			child, err := os.StartProcess(bin, childArgs, &os.ProcAttr{
+				Dir:   string(options.DataDir()),
+				Env:   env,
+				Files: []*os.File{devNull, logFile, logFile},
+				Sys:   &syscall.SysProcAttr{Setsid: true},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to spawn nanokube: %w", err)
+			}
+
+			parentSigs := make(chan os.Signal, 1)
+			signal.Notify(parentSigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+			defer signal.Stop(parentSigs)
+
+			ready := make(chan os.Signal, 1)
+			signal.Notify(ready, syscall.SIGUSR1)
+			defer signal.Stop(ready)
+
+			childExit := make(chan *os.ProcessState, 1)
+			go func() {
+				state, _ := child.Wait()
+				childExit <- state
+			}()
+
+			tailFile, err := os.OpenFile(logPath, os.O_RDONLY|os.O_CREATE, 0o644)
+			if err != nil {
+				nanokube.Log.Warn("could not tail nanokube log", "path", logPath, "error", err)
+			} else {
+				defer tailFile.Close()
+				tailFile.Seek(0, io.SeekEnd)
+			}
+
+			drain := func() {
+				if tailFile == nil {
+					return
+				}
+				if _, err := io.Copy(os.Stdout, tailFile); err != nil && !errors.Is(err, io.EOF) {
+					nanokube.Log.Warn("error tailing nanokube log", "error", err)
+				}
+			}
+
+			tick := time.NewTicker(100 * time.Millisecond)
+			defer tick.Stop()
+
+			nanokube.Log.Info("nanokube spawned, waiting for ready", "pid", child.Pid)
+			for {
+				select {
+				case <-tick.C:
+					drain()
+				case <-ready:
+					drain()
+					nanokube.Log.Info("nanokube is ready", "pid", child.Pid)
+					os.Exit(0)
+				case sig := <-parentSigs:
+					nanokube.Log.Info("forwarding signal", "signal", sig, "pid", child.Pid)
+					if err := child.Signal(sig); err != nil {
+						nanokube.Log.Warn("failed to forward signal", "signal", sig, "error", err)
+					}
+				case state := <-childExit:
+					drain()
+					code := 1
+					if state != nil && state.Exited() {
+						code = state.ExitCode()
+					}
+					nanokube.Log.Warn("nanokube exited", "pid", child.Pid, "code", code)
+					os.Exit(code)
+				}
+			}
 		},
 	}
 	options.RunFlags(startCmd) // TODO(incomplete): this feels wierd
@@ -131,10 +208,23 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	cmd.AddCommand(startCmd)
 	cmd.AddCommand(&cobra.Command{
 		Use:   "stop",
-		Short: "Stop nanokube background processes",
+		Short: "Stop a running nanokube",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ran = true
-			kubelet.Cancel(nanokube.NewError(fmt.Errorf("not implemented: stop")))
+			pidPath := options.FilePathAt(v1.PidFile(options))
+			data, err := os.ReadFile(pidPath)
+			if err != nil {
+				return fmt.Errorf("not running (no pidfile at %s): %w", pidPath, err)
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				return fmt.Errorf("invalid pid in %s: %w", pidPath, err)
+			}
+			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+				return fmt.Errorf("failed to signal pid %d: %w", pid, err)
+			}
+			nanokube.Log.Info("sent SIGTERM to nanokube", "pid", pid)
+			os.Exit(0)
 			return nil
 		},
 	})
@@ -155,11 +245,34 @@ func (k *KubeletImpl) Context() context.Context {
 func (k *KubeletImpl) Cancel(reason v1.Error) {
 	k.canceledOnce.Do(func() { close(k.canceled) })
 	k.runCancelHooks()
+	if k.pidfileWritten {
+		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
+		if err := os.Remove(pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			nanokube.Log.Warn("failed to remove pidfile", "path", pidPath, "error", err)
+		}
+	}
 	k.cancel(reason)
 	var fatal v1.Error
 	if errors.As(reason, &fatal) {
 		runtime.Goexit()
 	}
+}
+
+func (k *KubeletImpl) Detach() {
+	k.detachOnce.Do(func() {
+		pidStr := os.Getenv("NANOKUBE_LAUNCHER_PID")
+		if pidStr == "" {
+			return
+		}
+		ppid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			nanokube.Log.Warn("invalid NANOKUBE_LAUNCHER_PID", "value", pidStr, "error", err)
+			return
+		}
+		if err := syscall.Kill(ppid, syscall.SIGUSR1); err != nil {
+			nanokube.Log.Warn("failed to signal launcher", "pid", ppid, "error", err)
+		}
+	})
 }
 
 func (k *KubeletImpl) Canceled() <-chan struct{} {
@@ -400,6 +513,21 @@ func (k *KubeletImpl) StaticPods() []*corev1.Pod {
 
 func (k *KubeletImpl) Run() v1.Kubelet {
 	k.runOnce.Do(func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		go func() {
+			sig := <-sigCh
+			nanokube.Log.Info("shutdown initiated", "signal", sig)
+			k.Cancel(nil)
+		}()
+
+		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
+		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			nanokube.Log.Warn("failed to write pidfile", "path", pidPath, "error", err)
+		} else {
+			k.pidfileWritten = true
+		}
+
 		for _, pod := range k.StaticPods() {
 			data, err := json.Marshal(pod)
 			if err != nil {

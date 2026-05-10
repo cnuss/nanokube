@@ -46,6 +46,7 @@ type Options interface {
 	DataDir() DataDir
 
 	DataDirAt(name DataDir) string
+	FilePathAt(file FileName) string
 	InDataDir(path string) bool
 
 	Args() []string
@@ -229,6 +230,7 @@ type Kubelet interface {
 	Version() string
 
 	Cancel(reason Error)
+	Detach()
 	OnCancel(fns ...func(ctx context.Context)) Kubelet
 	OnReady(service ServiceName, fns ...func(ctx context.Context)) Kubelet
 

@@ -52,12 +52,18 @@ func main() {
 		WithStorage(nanokube.NewStorage(kubelet)).
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
-		OnReady(v1.Node, updateNode(kubelet)).
+		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
 		OnCancel(deleteNode(kubelet), stopSandboxes(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
 		OnCancel(removeSandboxes(kubelet)).
 		OnCancel(removeNetworks(kubelet)).
 		Run().Done()
+}
+
+func detach(kubelet v1.Kubelet) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		kubelet.Detach()
+	}
 }
 
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {

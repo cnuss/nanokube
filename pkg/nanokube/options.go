@@ -83,6 +83,13 @@ func (o *OptionsImpl) DataDirAt(name v1.DataDir) string {
 	return dir
 }
 
+func (o *OptionsImpl) FilePathAt(file v1.FileName) string {
+	path := filepath.Join(o.dataDir, string(file))
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0o755)
+	return path
+}
+
 func (o *OptionsImpl) InDataDir(path string) bool {
 	clean := filepath.Clean(path) + string(filepath.Separator)
 	dir := filepath.Clean(o.dataDir) + string(filepath.Separator)

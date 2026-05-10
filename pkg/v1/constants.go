@@ -27,6 +27,8 @@ var (
 	DataDirEtcd       DataDir  = "etcd"
 	DataDirKube       DataDir  = ".kube"
 	DataDirStaticPods DataDir  = DataDir(filepath.Join(string(DataDirKubelet), "static-pods"))
+	PidFile                    = func(options Options) FileName { return FileName(options.Name() + ".pid") }
+	LogFile                    = func(options Options) FileName { return FileName(options.Name() + ".log") }
 	CAFile            FileName = FileName(filepath.Join(string(DataDirCerts), "ca.crt"))
 	CertFile          FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.crt"))
 	KeyFile           FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.key"))
