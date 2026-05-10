@@ -405,7 +405,7 @@ func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
-			if strings.ToLower(k.KubeletHostname()) == strings.ToLower(ref.Name) {
+			if strings.EqualFold(k.KubeletHostname(), ref.Name) {
 				k.nodeReadyOnce.Do(func() {
 					close(k.nodeReady)
 				})
