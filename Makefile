@@ -56,3 +56,9 @@ ARGS ?=
 
 run: fmt build
 	./nanokube $(ARGS)
+
+start: fmt build
+	./nanokube start $(ARGS)
+
+stop:
+	./nanokube stop $(ARGS)

@@ -230,12 +230,18 @@ var Log = slog.New(tint.NewHandler(os.Stderr, &tint.Options{
 // SetupLogging configures klog to output through a colorized handler.
 // Verbosity controls what's visible:
 //
-//	0: errors only (quiet)
-//	1: + warnings, info, klog V(0-2)
+//	0: klog silenced entirely
+//	1: warnings, info, klog V(0-2)
 //	2: + klog V(3-4)
 //	3: + klog V(5-6)
 //	4+: + klog V(7-8), everything
 func SetupLogging(verbosity int) {
+	if verbosity < 1 {
+		klog.SetSlogLogger(slog.New(slog.DiscardHandler))
+		klog.SetOutput(io.Discard)
+		return
+	}
+
 	var level slog.Level
 	switch {
 	case verbosity >= 4:
@@ -244,10 +250,8 @@ func SetupLogging(verbosity int) {
 		level = slog.Level(-6)
 	case verbosity >= 2:
 		level = slog.Level(-4)
-	case verbosity >= 1:
-		level = slog.Level(-2)
 	default:
-		level = slog.LevelError
+		level = slog.Level(-2)
 	}
 
 	klog.SetSlogLogger(slog.New(tint.NewHandler(os.Stderr, &tint.Options{

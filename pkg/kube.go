@@ -104,7 +104,8 @@ var _ v1.Kube = &KubeImpl{}
 
 func newKube(kubelet v1.Kubelet) *KubeImpl {
 	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(FeatureGates); err != nil {
-		klog.Fatalf("Failed to set feature gates: %v", err)
+		kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to set feature gates: %w", err)))
+		return nil
 	}
 
 	stopCh := make(chan struct{})
@@ -172,12 +173,14 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 
 		complete, err := opts.Complete(k.Kubelet().Context())
 		if err != nil {
-			klog.Fatalf("Failed to complete apiserver options: %v", err)
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to complete apiserver options: %w", err)))
+			return
 		}
 
 		errs := complete.Validate()
 		if len(errs) > 0 {
-			klog.Fatalf("Failed to validate apiserver options: %v", errs)
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to validate apiserver options: %v", errs)))
+			return
 		}
 
 		nanokube.Log.Info("apiserver configured", "fqdn", opts.GenericServerRunOptions.ExternalHost)
@@ -327,12 +330,14 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 		var buf bytes.Buffer
 		for _, cert := range k.ApiServer().CACerts() {
 			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
-				klog.Fatalf("Failed to PEM-encode CA cert: %v", err)
+				k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to PEM-encode CA cert: %w", err)))
+				return ""
 			}
 		}
 		path := filepath.Join(string(k.Kubelet().Options().DataDir()), string(v1.CAFile))
 		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-			klog.Fatalf("Failed to write CA file %s: %v", path, err)
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to write CA file %s: %w", path, err)))
+			return ""
 		}
 		return string(v1.CAFile)
 	}

@@ -100,7 +100,8 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 
 		server, err := embed.StartEtcd(cfg)
 		if err != nil {
-			klog.Fatalf("Failed to start etcd: %v", err)
+			s.kubelet.Cancel(NewError(fmt.Errorf("failed to start etcd: %w", err)))
+			return
 		}
 
 		select {
@@ -109,7 +110,8 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 			close(s.ready)
 		case <-time.After(30 * time.Second):
 			server.Close()
-			klog.Fatalf("etcd took too long to start")
+			s.kubelet.Cancel(NewError(fmt.Errorf("etcd took too long to start")))
+			return
 		case <-s.ctx.Done():
 			server.Close()
 			return
@@ -133,7 +135,8 @@ func (s *StorageFactoryImpl) Port() int {
 	s.portOnce.Do(func() {
 		port, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			klog.Fatalf("Failed to find free port for etcd: %v", err)
+			s.kubelet.Cancel(NewError(fmt.Errorf("failed to find free port for etcd: %w", err)))
+			return
 		}
 		s.port = port.Addr().(*net.TCPAddr).Port
 		port.Close()

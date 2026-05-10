@@ -3,12 +3,12 @@ package nanokube
 import (
 	"context"
 	"crypto/x509"
+	"fmt"
 	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/klog/v2"
 
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
 	"k8s.io/apiserver/pkg/util/webhook"
@@ -51,27 +51,31 @@ func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
 		generatedopenapi.GetOpenAPIDefinitions,
 	)
 	if err != nil {
-		klog.Fatalf("Failed to build generic config: %v", err)
+		kubelet.Cancel(NewError(fmt.Errorf("failed to build generic config: %w", err)))
+		return nil
 	}
 
 	storage := kubelet.Kube().Storage().WithFactory(storageFactory)
 
 	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Factory())
 	if err != nil {
-		klog.Fatalf("Failed to create kube-apiserver config: %v", err)
+		kubelet.Cancel(NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
+		return nil
 	}
 	c.KubeAPIs = kubeAPIs
 
 	apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*kubeAPIs.ControlPlane.Generic, kubeAPIs.ControlPlane.VersionedInformers, pluginInitializer, opts.CompletedOptions, opts.MasterCount,
 		serviceResolver, webhook.NewDefaultAuthenticationInfoResolverWrapper(kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Generic.EgressSelector, kubeAPIs.ControlPlane.Generic.LoopbackClientConfig, kubeAPIs.ControlPlane.Generic.TracerProvider))
 	if err != nil {
-		klog.Fatalf("Failed to create API extensions config: %v", err)
+		kubelet.Cancel(NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
+		return nil
 	}
 	c.ApiExtensions = apiExtensions
 
 	aggregator, err := controlplaneapiserver.CreateAggregatorConfig(*kubeAPIs.ControlPlane.Generic, opts.CompletedOptions, kubeAPIs.ControlPlane.VersionedInformers, serviceResolver, kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Extra.PeerProxy, pluginInitializer)
 	if err != nil {
-		klog.Fatalf("Failed to create aggregator config: %v", err)
+		kubelet.Cancel(NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
+		return nil
 	}
 	c.Aggregator = aggregator
 
@@ -101,17 +105,20 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 	h.runOnce.Do(func() {
 		completed, err := h.appConfig.Complete()
 		if err != nil {
-			klog.Fatalf("Failed to complete API server config: %v", err)
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to complete API server config: %w", err)))
+			return
 		}
 
 		server, err := app.CreateServerChain(completed)
 		if err != nil {
-			klog.Fatalf("Failed to create API server: %v", err)
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create API server: %w", err)))
+			return
 		}
 
 		prepared, err := server.PrepareRun()
 		if err != nil {
-			klog.Fatalf("Failed to prepare API server: %v", err)
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to prepare API server: %w", err)))
+			return
 		}
 
 		loopback := prepared.GenericAPIServer.LoopbackClientConfig
@@ -134,7 +141,7 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 
 		go func() {
 			if err := prepared.Run(ctx); err != nil {
-				klog.Fatalf("API server exited with error: %v", err)
+				h.kubelet.Cancel(NewError(fmt.Errorf("API server exited with error: %w", err)).WithCode(1))
 			}
 		}()
 	})
