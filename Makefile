@@ -12,12 +12,12 @@ VERSION_LDFLAGS := \
 	-X $(VERSION_PKG).gitMinor=$(KUBE_MINOR) \
 	-X $(VERSION_PKG).buildDate=$(BUILD_DATE)
 
-submodules:
-	@git submodule update --init --recursive --depth 1
-
-patch: submodules
+patch:
 	@cd kubernetes && git reset --hard HEAD
 	@cd kubernetes && git apply ../patches/kubernetes.patch
+
+init: patch
+	@git submodule update --init --recursive --depth 1
 
 patch-save:
 	@cd kubernetes && git diff > ../patches/kubernetes.patch

@@ -339,6 +339,9 @@ func (k *KubeletImpl) DefaultBackend() v1.Backend {
 	for _, backend := range k.Backends() {
 		return backend
 	}
+	// TODO(incomplete): better info on backends searched
+	// TODO(partial): better CTA on how to add backends
+	k.Cancel(nanokube.NewError(fmt.Errorf("no backends detected")))
 	return nil
 }
 
