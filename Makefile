@@ -12,6 +12,8 @@ VERSION_LDFLAGS := \
 	-X $(VERSION_PKG).gitMinor=$(KUBE_MINOR) \
 	-X $(VERSION_PKG).buildDate=$(BUILD_DATE)
 
+CHAINSAW := go tool -modfile=tools/go.mod chainsaw
+
 patch:
 	@cd kubernetes && git reset --hard HEAD
 	@cd kubernetes && git apply ../patches/kubernetes.patch
@@ -48,7 +50,7 @@ fmt:
 	@go fmt ./...
 
 test:
-	chainsaw test
+	$(CHAINSAW) test
 
 ARGS ?=
 
