@@ -235,6 +235,14 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		kubelet.Cancel(nil)
 	}
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		sig := <-sigCh
+		nanokube.Log.Info("shutdown initiated", "signal", sig)
+		kubelet.Cancel(nil)
+	}()
+
 	return kubelet
 }
 
@@ -513,14 +521,6 @@ func (k *KubeletImpl) StaticPods() []*corev1.Pod {
 
 func (k *KubeletImpl) Run() v1.Kubelet {
 	k.runOnce.Do(func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-		go func() {
-			sig := <-sigCh
-			nanokube.Log.Info("shutdown initiated", "signal", sig)
-			k.Cancel(nil)
-		}()
-
 		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
 		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 			nanokube.Log.Warn("failed to write pidfile", "path", pidPath, "error", err)
