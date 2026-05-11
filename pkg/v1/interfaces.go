@@ -186,6 +186,7 @@ type Backend interface {
 	cadvisor.Interface
 
 	Context() context.Context
+	Kubelet() Kubelet
 	Name() BackendName
 
 	Driver() Driver

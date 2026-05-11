@@ -57,6 +57,7 @@ func main() {
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
 		OnCancel(cordonAndDrain(kubelet), stopSandboxes(kubelet)).
+		OnCancel(deleteNode(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
 		OnCancel(removeSandboxes(kubelet)).
 		OnCancel(removeNetworks(kubelet)).
@@ -146,7 +147,6 @@ func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 
 func cordonAndDrain(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		nanokube.Log.Info("cordoning and draining node", "name", kubelet.Kube().KubeletHostname())
 		helper := &drain.Helper{
 			Ctx:                 ctx,
 			Client:              kubelet.Kube().Client().Clientset(),
@@ -167,6 +167,20 @@ func cordonAndDrain(kubelet v1.Kubelet) func(ctx context.Context) {
 		nanokube.Log.Info("node cordoned", "name", kubelet.Kube().KubeletHostname())
 		drain.RunNodeDrain(helper, kubelet.Kube().KubeletHostname())
 		nanokube.Log.Info("node drained", "name", kubelet.Kube().KubeletHostname())
+	}
+}
+
+func deleteNode(kubelet v1.Kubelet) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		name := kubelet.Kube().KubeletHostname()
+		foreground := metav1.DeletePropagationForeground
+		if err := kubelet.Kube().Client().CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{
+			PropagationPolicy: &foreground,
+		}); err != nil {
+			nanokube.Log.Warn("failed to delete node", "name", name, "error", err)
+			return
+		}
+		nanokube.Log.Info("node deleted", "name", name)
 	}
 }
 

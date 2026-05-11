@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,12 @@ func init() {
 
 var FeatureGates = map[string]bool{
 	string(features.KubeletInUserNamespace): true,
+	// nanokube owns shutdown sequencing; keep kubelet's logind-driven
+	// shutdown manager inert so it can't race the lifecycle. Dependent
+	// gates must be disabled too or feature-gate validation rejects the set.
+	string(features.GracefulNodeShutdown):                   false,
+	string(features.GracefulNodeShutdownBasedOnPodPriority): false,
+	string(features.WindowsGracefulNodeShutdown):            false,
 	// Cloudflare-specific features:
 	// - SSE not supported, so disable features that rely on SSE
 	string(apifeatures.WatchList):                          false,
@@ -346,6 +353,17 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 		return string(v1.CAFile)
 	}
 
+	gateKeys := make([]string, 0, len(FeatureGates))
+	for k := range FeatureGates {
+		gateKeys = append(gateKeys, k)
+	}
+	sort.Strings(gateKeys)
+	gateParts := make([]string, 0, len(gateKeys))
+	for _, k := range gateKeys {
+		gateParts = append(gateParts, fmt.Sprintf("%s=%t", k, FeatureGates[k]))
+	}
+	featureGates := "--feature-gates=" + strings.Join(gateParts, ",")
+
 	switch service {
 	case v1.ControllerManagerService:
 		return []string{
@@ -359,6 +377,7 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 			"--tls-private-key-file=" + mountPath + "/certs/apiserver.key",
 			"--service-account-private-key-file=" + mountPath + "/certs/apiserver.key",
 			"--root-ca-file=" + mountPath + "/" + rootCaFile(),
+			featureGates,
 		}
 	case v1.SchedulerService:
 		return []string{
@@ -369,6 +388,7 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 			"--leader-elect=true",
 			"--tls-cert-file=" + mountPath + "/certs/apiserver.crt",
 			"--tls-private-key-file=" + mountPath + "/certs/apiserver.key",
+			featureGates,
 		}
 	}
 	return []string{}
