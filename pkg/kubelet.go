@@ -97,12 +97,9 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	}()
 
 	ran := false
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		nanokube.SetupLogging(kubelet.Options().Verbosity())
 		nanokube.Log.Info("starting", "version", kubelet.Version())
-		return nil
-	}
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ran = true
 		return nil
 	}
@@ -204,8 +201,8 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		},
 	}
 	options.RunFlags(startCmd) // TODO(incomplete): this feels wierd
-
 	cmd.AddCommand(startCmd)
+
 	cmd.AddCommand(&cobra.Command{
 		Use:   "stop",
 		Short: "Stop a running nanokube",

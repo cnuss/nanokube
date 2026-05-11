@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	apifeatures "k8s.io/apiserver/pkg/features"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
@@ -52,9 +53,12 @@ func init() {
 }
 
 var FeatureGates = map[string]bool{
+	string(features.KubeletInUserNamespace): true,
+	// Cloudflare-specific features:
+	// - SSE not supported, so disable features that rely on SSE
+	string(apifeatures.WatchList):                          false,
 	string(features.TranslateStreamCloseWebsocketRequests): false,
 	string(features.PortForwardWebsockets):                 false,
-	string(features.KubeletInUserNamespace):                true,
 }
 
 type KubeImpl struct {

@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/driver/awslambda"
@@ -25,6 +27,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
 	"k8s.io/component-base/version"
+	"k8s.io/kubectl/pkg/drain"
 )
 
 func init() {
@@ -53,17 +56,11 @@ func main() {
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
-		OnCancel(deleteNode(kubelet), stopSandboxes(kubelet)).
+		OnCancel(cordonAndDrain(kubelet), stopSandboxes(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
 		OnCancel(removeSandboxes(kubelet)).
 		OnCancel(removeNetworks(kubelet)).
 		Run().Done()
-}
-
-func detach(kubelet v1.Kubelet) func(ctx context.Context) {
-	return func(ctx context.Context) {
-		kubelet.Detach()
-	}
 }
 
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {
@@ -113,6 +110,12 @@ func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	}
 }
 
+func detach(kubelet v1.Kubelet) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		kubelet.Detach()
+	}
+}
+
 func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		kubeconfig, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
@@ -141,11 +144,29 @@ func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 	}
 }
 
-func deleteNode(kubelet v1.Kubelet) func(ctx context.Context) {
+func cordonAndDrain(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		// TODO(incomplete): cordon and drain node before deleting
-		nodes := kubelet.Kube().Client().CoreV1().Nodes()
-		nodes.Delete(ctx, kubelet.Kube().KubeletHostname(), metav1.DeleteOptions{})
+		nanokube.Log.Info("cordoning and draining node", "name", kubelet.Kube().KubeletHostname())
+		helper := &drain.Helper{
+			Ctx:                 ctx,
+			Client:              kubelet.Kube().Client().Clientset(),
+			Force:               true,
+			GracePeriodSeconds:  30,
+			IgnoreAllDaemonSets: true,
+			DeleteEmptyDirData:  true,
+			Timeout:             60 * time.Second,
+			Out:                 io.Discard,
+			ErrOut:              io.Discard,
+		}
+		node, err := kubelet.Kube().Client().CoreV1().Nodes().Get(ctx, kubelet.Kube().KubeletHostname(), metav1.GetOptions{})
+		if err != nil {
+			nanokube.Log.Warn("failed to get node for draining", "name", kubelet.Kube().KubeletHostname(), "error", err)
+			return
+		}
+		drain.RunCordonOrUncordon(helper, node, true)
+		nanokube.Log.Info("node cordoned", "name", kubelet.Kube().KubeletHostname())
+		drain.RunNodeDrain(helper, kubelet.Kube().KubeletHostname())
+		nanokube.Log.Info("node drained", "name", kubelet.Kube().KubeletHostname())
 	}
 }
 
