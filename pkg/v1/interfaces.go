@@ -157,6 +157,7 @@ type ApiServer interface {
 
 	Client(ctx context.Context) Client
 	Config() *app.Config
+	Done() <-chan struct{}
 	Tunnel() Tunnel
 	CACerts() []*x509.Certificate
 }
@@ -236,7 +237,7 @@ type Kubelet interface {
 	OnReady(service ServiceName, fns ...func(ctx context.Context)) Kubelet
 
 	Canceled() <-chan struct{}
-	Done() <-chan struct{}
+	Done() <-chan int
 
 	WithApiServer(apiserver ApiServer) Kubelet
 	ApiServer() ApiServer

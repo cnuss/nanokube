@@ -51,7 +51,7 @@ func main() {
 	}
 	kubelet := pkg.NewKubelet(cmd)
 
-	<-kubelet.
+	exitCode := <-kubelet.
 		WithStorage(nanokube.NewStorage(kubelet)).
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
@@ -62,6 +62,8 @@ func main() {
 		OnCancel(removeSandboxes(kubelet)).
 		OnCancel(removeNetworks(kubelet)).
 		Run().Done()
+
+	os.Exit(exitCode)
 }
 
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {

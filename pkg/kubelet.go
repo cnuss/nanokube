@@ -47,6 +47,9 @@ type KubeletImpl struct {
 	cancelHooks  [][]func(context.Context)
 	cancelOnce   sync.Once
 
+	exitCode     chan int
+	exitCodeOnce sync.Once
+
 	host     v1.Host
 	hostOnce sync.Once
 
@@ -81,6 +84,7 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		ctx:      ctx,
 		cancel:   cancel,
 		canceled: make(chan struct{}),
+		exitCode: make(chan int, 1),
 		options:  options,
 		cmd:      cmd,
 	}
@@ -88,12 +92,15 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	go func() {
 		<-ctx.Done()
 		cause := context.Cause(ctx)
+		code := 0
 		var err v1.Error
 		if errors.As(cause, &err) {
 			fmt.Fprintf(os.Stderr, "nanokube exiting: %v\n", err)
-			os.Exit(err.ExitStatus())
+			code = err.ExitStatus()
 		}
-		os.Exit(0)
+		kubelet.exitCodeOnce.Do(func() {
+			kubelet.exitCode <- code
+		})
 	}()
 
 	ran := false
@@ -360,8 +367,8 @@ func (k *KubeletImpl) runCancelHooks() {
 	})
 }
 
-func (k *KubeletImpl) Done() <-chan struct{} {
-	return k.Context().Done()
+func (k *KubeletImpl) Done() <-chan int {
+	return k.exitCode
 }
 
 func (k *KubeletImpl) Options() v1.Options {

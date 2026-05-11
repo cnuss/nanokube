@@ -34,6 +34,7 @@ type ApiServerImpl struct {
 
 	runOnce sync.Once
 	ready   chan struct{}
+	done    chan struct{}
 }
 
 var _ v1.ApiServer = &ApiServerImpl{}
@@ -84,11 +85,16 @@ func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
 		appConfig: c,
 		storage:   storage,
 		ready:     make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
 func (h *ApiServerImpl) Ready() <-chan struct{} {
 	return h.ready
+}
+
+func (h *ApiServerImpl) Done() <-chan struct{} {
+	return h.done
 }
 
 func (h *ApiServerImpl) Config() *app.Config {
@@ -140,9 +146,11 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 		}()
 
 		go func() {
+			defer close(h.done)
 			if err := prepared.Run(ctx); err != nil {
 				h.kubelet.Cancel(NewError(fmt.Errorf("API server exited with error: %w", err)).WithCode(1))
 			}
+			Log.Info("apiserver shut down")
 		}()
 	})
 
