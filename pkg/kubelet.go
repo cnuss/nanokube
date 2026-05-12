@@ -240,14 +240,23 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 			ran = true
 			pidPath := options.FilePathAt(v1.PidFile(options))
 			data, err := os.ReadFile(pidPath)
+			if errors.Is(err, os.ErrNotExist) {
+				nanokube.Log.Info("not running", "pidfile", pidPath)
+				os.Exit(0)
+			}
 			if err != nil {
-				return fmt.Errorf("not running (no pidfile at %s): %w", pidPath, err)
+				return fmt.Errorf("failed to read pidfile %s: %w", pidPath, err)
 			}
 			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 			if err != nil {
 				return fmt.Errorf("invalid pid in %s: %w", pidPath, err)
 			}
 			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+				if errors.Is(err, syscall.ESRCH) {
+					nanokube.Log.Info("not running, removing stale pidfile", "pid", pid, "pidfile", pidPath)
+					os.Remove(pidPath)
+					os.Exit(0)
+				}
 				return fmt.Errorf("failed to signal pid %d: %w", pid, err)
 			}
 			nanokube.Log.Info("sent SIGTERM to nanokube", "pid", pid)

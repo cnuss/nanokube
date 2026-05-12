@@ -62,5 +62,5 @@ run: fmt build
 start: fmt build
 	./nanokube start $(ARGS)
 
-stop:
+stop: fmt build
 	./nanokube stop $(ARGS)
