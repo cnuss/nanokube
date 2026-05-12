@@ -63,7 +63,7 @@ func (e *ErrorImpl) Exited() bool {
 }
 
 func (e *ErrorImpl) String() string {
-	if e.command != nil && len(e.command) > 0 {
+	if len(e.command) > 0 {
 		if e.err == nil {
 			return fmt.Sprintf("command %s exited with code %d", strings.Join(e.command, " "), e.code)
 		}
