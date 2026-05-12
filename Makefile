@@ -18,8 +18,9 @@ patch:
 	@cd kubernetes && git reset --hard HEAD
 	@cd kubernetes && git apply ../patches/kubernetes.patch
 
-init: patch
+init:
 	@git submodule update --init --recursive --depth 1
+	@$(MAKE) patch
 
 patch-save:
 	@cd kubernetes && git diff > ../patches/kubernetes.patch

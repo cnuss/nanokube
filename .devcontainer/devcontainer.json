@@ -6,7 +6,7 @@
   },
   "features": {
     "ghcr.io/devcontainers/features/go:1": {
-      "version": "1.25"
+      "version": "1.26"
     },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
@@ -21,7 +21,7 @@
   "containerEnv": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
-  "postCreateCommand": "make submodules",
+  "postCreateCommand": "make init",
   "customizations": {
     "codespaces": {
       "repositories": {
