@@ -34,9 +34,14 @@ runs:
     - shell: bash
       env:
         KUBECONFIG: ${{ github.workspace }}/.nanokube-kubeconfig
+        SLOW: ${{ runner.os == 'macOS' }}
       run: |
         cp "$HOME/.nanokube/.kube/config" "$KUBECONFIG"
-        make test SUITE=${{ inputs.suite }}
+        ARGS=""
+        if [ "$SLOW" = "true" ]; then
+          ARGS="--apply-timeout=2m --assert-timeout=5m --cleanup-timeout=3m --delete-timeout=2m --error-timeout=2m --exec-timeout=2m"
+        fi
+        make test SUITE=${{ inputs.suite }} CHAINSAW_ARGS="$ARGS"
 
     - if: always()
       shell: bash

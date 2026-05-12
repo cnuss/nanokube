@@ -51,9 +51,10 @@ fmt:
 	@go fmt ./...
 
 SUITE ?=
+CHAINSAW_ARGS ?=
 
 test:
-	$(CHAINSAW) test $(if $(SUITE),tests/$(SUITE))
+	$(CHAINSAW) test $(if $(SUITE),tests/$(SUITE)) $(CHAINSAW_ARGS)
 
 ARGS ?=
 
