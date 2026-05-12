@@ -1,6 +1,7 @@
 {
   "name": "nanokube",
   "image": "cnuss/dev:latest",
+  "remoteUser": "ubuntu",
   "hostRequirements": {
     "cpus": 4
   },
