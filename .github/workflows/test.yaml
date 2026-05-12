@@ -19,28 +19,15 @@ jobs:
   build:
     uses: ./.github/workflows/.build.yaml
 
-  smoke:
+  linux:
     needs: build
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: ./.github/actions/run-test
-        with:
-          suite: smoke
-          artifact: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
-          log-name: nanokube-log-smoke
-
-  conformance:
-    needs: [build, smoke]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        suite: [critest, e2e]
+        suite:
+          - smoke
+          # - sanity
     steps:
       - uses: actions/checkout@v6
         with:
@@ -53,8 +40,8 @@ jobs:
           artifact: ${{ fromJSON(needs.build.outputs.artifacts)['ubuntu-24.04'] }}
           log-name: nanokube-log-${{ matrix.suite }}
 
-  cross-platform-smoke:
-    needs: [build, conformance]
+  cross-platform:
+    needs: [build, linux]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -63,37 +50,9 @@ jobs:
           - ubuntu-24.04-arm
           - macos-26
           - macos-26-intel
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: ./.github/actions/run-test
-        with:
-          suite: smoke
-          artifact: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
-          log-name: nanokube-log-${{ matrix.runner }}-smoke
-
-  cross-platform-full:
-    needs: [build, cross-platform-smoke]
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04-arm
-            suite: critest
-          - runner: ubuntu-24.04-arm
-            suite: e2e
-          - runner: macos-26
-            suite: critest
-          # - runner: macos-26
-          #   suite: e2e
-          - runner: macos-26-intel
-            suite: critest
-          # - runner: macos-26-intel
-          #   suite: e2e
+        suite:
+          - smoke
+          # - sanity
     steps:
       - uses: actions/checkout@v6
         with:

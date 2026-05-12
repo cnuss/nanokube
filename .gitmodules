@@ -1,9 +1,3 @@
-[submodule "cri-tools"]
-	path = cri-tools
-	url = https://github.com/kubernetes-sigs/cri-tools.git
-	branch = master
-	shallow = true
-	ignore = dirty
 [submodule "kubernetes"]
 	path = kubernetes
 	url = https://github.com/kubernetes/kubernetes.git

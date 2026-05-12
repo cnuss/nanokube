@@ -3,9 +3,7 @@
     "formatting.gofumpt": true
   },
   "git.ignoredRepositories": [
-    "cri-tools",
-    "kubernetes",
-    "tests"
+    "kubernetes"
   ],
   "explorer.openEditors.visible": 10
 }

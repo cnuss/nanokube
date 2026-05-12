@@ -1,9 +1,9 @@
 name: Run Test
-description: Download artifact, run a test suite, and upload logs
+description: Download artifact, start nanokube, run a chainsaw suite, upload logs
 
 inputs:
   suite:
-    description: "Test suite to run: smoke, critest, or e2e"
+    description: "Chainsaw test suite under tests/ (e.g. smoke, sanity)"
     required: true
   artifact:
     description: "Name of the build artifact to download"
@@ -16,18 +16,30 @@ runs:
   using: composite
   steps:
     - uses: ./.github/actions/setup
-      with:
-        verbose: true
 
     - uses: actions/download-artifact@v4
       with:
         name: ${{ inputs.artifact }}
 
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: go.mod
+
     - shell: bash
-      run: make ${{ inputs.suite }} ARTIFACT=${{ inputs.artifact }} V=1
+      run: make build ARTIFACT=${{ inputs.artifact }}
+
+    - shell: bash
+      run: ./nanokube start
+
+    - shell: bash
+      run: make test SUITE=${{ inputs.suite }}
+
+    - if: always()
+      shell: bash
+      run: ./nanokube stop || true
 
     - uses: actions/upload-artifact@v7
       if: always()
       with:
         name: ${{ inputs.log-name }}
-        path: ~/.nanokube-${{ inputs.suite }}/log
+        path: ~/.nanokube

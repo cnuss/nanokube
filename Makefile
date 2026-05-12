@@ -49,8 +49,10 @@ clean:
 fmt:
 	@go fmt ./...
 
+SUITE ?=
+
 test:
-	$(CHAINSAW) test
+	$(CHAINSAW) test $(if $(SUITE),tests/$(SUITE))
 
 ARGS ?=
 
