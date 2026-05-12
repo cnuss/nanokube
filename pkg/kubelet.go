@@ -107,8 +107,20 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 			fmt.Fprintf(os.Stderr, "nanokube exiting: %v\n", err)
 			code = err.ExitStatus()
 		}
-		<-kubelet.ApiServer().Done()
-		<-kubelet.Storage().Done()
+		// Drain only services that were actually wired up. If cancellation
+		// fires before WithApiServer/WithStorage (e.g. the stop subcommand
+		// or an early-startup error), the provided channel is still open
+		// and there is nothing to await.
+		select {
+		case <-kubelet.apiserverProvided:
+			<-kubelet.apiserver.Done()
+		default:
+		}
+		select {
+		case <-kubelet.storageProvided:
+			<-kubelet.storage.Done()
+		default:
+		}
 		kubelet.exitCodeOnce.Do(func() {
 			kubelet.exitCode <- code
 		})

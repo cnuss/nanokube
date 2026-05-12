@@ -40,7 +40,7 @@ runs:
 
     - if: always()
       shell: bash
-      run: timeout 5 ./nanokube stop || true
+      run: ./nanokube stop || true
 
     - if: always()
       shell: bash
