@@ -179,33 +179,41 @@ func (n *NetworkImpl) FromStatus(ctx context.Context, status *criv1.PodSandboxSt
 func (n *NetworkImpl) FromConfig(ctx context.Context, config *criv1.PodSandboxConfig) (v1.AllocatedNetwork, error) {
 	sandboxUID := types.UID(config.GetMetadata().GetUid())
 
-	if config != nil && config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
+	if config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
 		return n.Default(ctx).WithSandboxUID(&sandboxUID), nil
 	}
 
 	n.nextIPMu.Lock()
 	defer n.nextIPMu.Unlock()
 
-	var nextNet *net.IPNet
-	var reclaimKey string
+	// Reclaim a previously-allocated network whose sandbox is gone. Skip the
+	// default network — it's tracked here for cleanup but isn't a free-list entry.
+	var reclaimed v1.AllocatedNetwork
 	n.networks.Range(func(key, value interface{}) bool {
-		// Find the first network without a sandbox UID to reclaim
-		an := value.(v1.AllocatedNetwork)
-		if an == nil || an.SandboxUID() == nil {
-			nextNet = &net.IPNet{IP: net.ParseIP(key.(string)), Mask: net.CIDRMask(v1.NetworkSubnetSize, 32)}
-			reclaimKey = key.(string)
-			return false
+		an, ok := value.(v1.AllocatedNetwork)
+		if !ok || an == nil {
+			return true
 		}
-		return true
+		if n.defaultNet != nil && an.ID() == n.defaultNet.ID() {
+			return true
+		}
+		if an.SandboxUID() != nil {
+			return true
+		}
+		reclaimed = an
+		return false
 	})
-
-	if nextNet == nil {
-		nextNet = &net.IPNet{
-			IP:   make(net.IP, len(n.nextIP)),
-			Mask: net.CIDRMask(v1.NetworkSubnetSize, 32),
-		}
-		copy(nextNet.IP, n.nextIP)
+	if reclaimed != nil {
+		subnet := reclaimed.Network()
+		Log.Info("reclaiming network for sandbox", "sandboxUID", sandboxUID, "id", reclaimed.ID(), "net", subnet.String())
+		return reclaimed.WithSandboxUID(&sandboxUID), nil
 	}
+
+	nextNet := &net.IPNet{
+		IP:   make(net.IP, len(n.nextIP)),
+		Mask: net.CIDRMask(v1.NetworkSubnetSize, 32),
+	}
+	copy(nextNet.IP, n.nextIP)
 
 	id, err := n.service.CreateNetwork(ctx, "bridge", nextNet, nil)
 	if err != nil {
@@ -217,16 +225,15 @@ func (n *NetworkImpl) FromConfig(ctx context.Context, config *criv1.PodSandboxCo
 		return nil, err
 	}
 
-	if reclaimKey == "" {
-		// Advance high water mark
-		carry := uint32(1) << uint(32-v1.NetworkSubnetSize)
-		for j := len(n.nextIP) - 1; j >= 0 && carry > 0; j-- {
-			sum := uint32(n.nextIP[j]) + carry
-			n.nextIP[j] = byte(sum)
-			carry = sum >> 8
-		}
+	// Advance high-water mark.
+	carry := uint32(1) << uint(32-v1.NetworkSubnetSize)
+	for j := len(n.nextIP) - 1; j >= 0 && carry > 0; j-- {
+		sum := uint32(n.nextIP[j]) + carry
+		n.nextIP[j] = byte(sum)
+		carry = sum >> 8
 	}
 
+	Log.Info("allocated network for sandbox", "sandboxUID", sandboxUID, "id", id, "net", nextNet.String())
 	return network.WithSandboxUID(&sandboxUID), nil
 }
 
