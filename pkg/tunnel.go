@@ -297,16 +297,16 @@ func newQuickTunnel(tunnel v1.Tunnel, serviceName v1.ServiceName) (*QuickTunnel,
 		for {
 			select {
 			case <-connectedWait:
-				nanokube.Log.Info("tunnel connected")
+				nanokube.Log.Info("tunnel connected", "hostname", q.Hostname())
 				close(q.ready)
 				connectedWait = nil // disable this case; Signal fires once but its channel stays readable
 			case <-q.reconnected:
-				nanokube.Log.Info("tunnel reconnecting")
+				nanokube.Log.Info("tunnel reconnecting", "hostname", q.Hostname())
 			case err := <-done:
 				if err != nil {
-					nanokube.Log.Error("tunnel exited with error")
+					nanokube.Log.Error("tunnel exited with error", "hostname", q.Hostname(), "error", err)
 				} else {
-					nanokube.Log.Debug("tunnel exited")
+					nanokube.Log.Debug("tunnel exited", "hostname", q.Hostname())
 				}
 				return
 			}
