@@ -31,12 +31,10 @@ import (
 const shutdownTimeout = 30 * time.Second
 
 type KubeletImpl struct {
-	ctx              context.Context
-	cancel           context.CancelCauseFunc
-	background       context.Context         // TODO(hack): outlives ctx so apiserver+tunnel stay alive past OnCancel
-	backgroundCancel context.CancelCauseFunc // TODO(hack): not yet called anywhere
-	cmd              *cobra.Command
-	options          v1.Options
+	ctx     context.Context
+	cancel  context.CancelCauseFunc
+	cmd     *cobra.Command
+	options v1.Options
 
 	version     string
 	versionOnce sync.Once
@@ -99,6 +97,7 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		storageProvided:   make(chan struct{}),
 	}
 
+	// TODO: consider moving this goroutine into Done() behind a sync.Once so the exit-code orchestration lives next to the channel it publishes on.
 	go func() {
 		<-ctx.Done()
 		cause := context.Cause(ctx)
@@ -264,10 +263,6 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 
 func (k *KubeletImpl) Context() context.Context {
 	return k.ctx
-}
-
-func (k *KubeletImpl) Background() context.Context {
-	return k.background
 }
 
 func (k *KubeletImpl) Cancel(reason v1.Error) {
