@@ -32,14 +32,24 @@ runs:
       run: ./nanokube start
 
     - shell: bash
-      run: make test SUITE=${{ inputs.suite }}
+      env:
+        KUBECONFIG: ${{ github.workspace }}/.nanokube-kubeconfig
+      run: |
+        cp "$HOME/.nanokube/.kube/config" "$KUBECONFIG"
+        make test SUITE=${{ inputs.suite }}
 
     - if: always()
       shell: bash
-      run: ./nanokube stop || true
+      run: timeout 5 ./nanokube stop || true
+
+    - if: always()
+      shell: bash
+      run: |
+        mkdir -p nanokube-data
+        cp -r "$HOME/.nanokube/." nanokube-data/ 2>/dev/null || true
 
     - uses: actions/upload-artifact@v7
       if: always()
       with:
         name: ${{ inputs.log-name }}
-        path: ~/.nanokube
+        path: nanokube-data
