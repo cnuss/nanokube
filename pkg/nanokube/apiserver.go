@@ -23,12 +23,13 @@ import (
 )
 
 type ApiServerImpl struct {
-	ctx       context.Context
-	kubelet   v1.Kubelet
-	appConfig *app.Config
-	storage   v1.Storage
+	ctx     context.Context
+	kubelet v1.Kubelet
 
-	client v1.Client
+	appConfig     *app.Config
+	storage       v1.Storage
+	client        v1.Client
+	appConfigOnce sync.Once
 
 	caCerts     []*x509.Certificate
 	caCertsOnce sync.Once
@@ -43,53 +44,12 @@ var _ v1.ApiServer = &ApiServerImpl{}
 func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	context.AfterFunc(kubelet.Context(), cancel)
-	opts := kubelet.Kube().ApiServerOptions()
-	c := &app.Config{
-		Options: *opts,
-	}
-
-	genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
-		opts.CompletedOptions,
-		[]*runtime.Scheme{legacyscheme.Scheme, apiextensionsapiserver.Scheme, aggregatorscheme.Scheme},
-		controlplane.DefaultAPIResourceConfigSource(),
-		generatedopenapi.GetOpenAPIDefinitions,
-	)
-	if err != nil {
-		kubelet.Cancel(NewError(fmt.Errorf("failed to build generic config: %w", err)))
-		return nil
-	}
-
-	storage := kubelet.Kube().Storage().WithFactory(storageFactory)
-
-	kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Factory())
-	if err != nil {
-		kubelet.Cancel(NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
-		return nil
-	}
-	c.KubeAPIs = kubeAPIs
-
-	apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*kubeAPIs.ControlPlane.Generic, kubeAPIs.ControlPlane.VersionedInformers, pluginInitializer, opts.CompletedOptions, opts.MasterCount,
-		serviceResolver, webhook.NewDefaultAuthenticationInfoResolverWrapper(kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Generic.EgressSelector, kubeAPIs.ControlPlane.Generic.LoopbackClientConfig, kubeAPIs.ControlPlane.Generic.TracerProvider))
-	if err != nil {
-		kubelet.Cancel(NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
-		return nil
-	}
-	c.ApiExtensions = apiExtensions
-
-	aggregator, err := controlplaneapiserver.CreateAggregatorConfig(*kubeAPIs.ControlPlane.Generic, opts.CompletedOptions, kubeAPIs.ControlPlane.VersionedInformers, serviceResolver, kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Extra.PeerProxy, pluginInitializer)
-	if err != nil {
-		kubelet.Cancel(NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
-		return nil
-	}
-	c.Aggregator = aggregator
 
 	return &ApiServerImpl{
-		ctx:       ctx,
-		kubelet:   kubelet,
-		appConfig: c,
-		storage:   storage,
-		ready:     make(chan struct{}),
-		done:      make(chan struct{}),
+		ctx:     ctx,
+		kubelet: kubelet,
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -106,6 +66,51 @@ func (h *ApiServerImpl) Done() <-chan struct{} {
 }
 
 func (h *ApiServerImpl) Config() *app.Config {
+	h.appConfigOnce.Do(func() {
+		opts := h.kubelet.Kube().ApiServerOptions()
+		c := &app.Config{
+			Options: *opts,
+		}
+
+		genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
+			opts.CompletedOptions,
+			[]*runtime.Scheme{legacyscheme.Scheme, apiextensionsapiserver.Scheme, aggregatorscheme.Scheme},
+			controlplane.DefaultAPIResourceConfigSource(),
+			generatedopenapi.GetOpenAPIDefinitions,
+		)
+		if err != nil {
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to build generic config: %w", err)))
+			return
+		}
+
+		storage := h.kubelet.Kube().Storage().WithFactory(storageFactory)
+
+		kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(c.Options, genericConfig, versionedInformers, storage.Factory())
+		if err != nil {
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
+			return
+
+		}
+		c.KubeAPIs = kubeAPIs
+
+		apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*kubeAPIs.ControlPlane.Generic, kubeAPIs.ControlPlane.VersionedInformers, pluginInitializer, opts.CompletedOptions, opts.MasterCount,
+			serviceResolver, webhook.NewDefaultAuthenticationInfoResolverWrapper(kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Generic.EgressSelector, kubeAPIs.ControlPlane.Generic.LoopbackClientConfig, kubeAPIs.ControlPlane.Generic.TracerProvider))
+		if err != nil {
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
+			return
+		}
+		c.ApiExtensions = apiExtensions
+
+		aggregator, err := controlplaneapiserver.CreateAggregatorConfig(*kubeAPIs.ControlPlane.Generic, opts.CompletedOptions, kubeAPIs.ControlPlane.VersionedInformers, serviceResolver, kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Extra.PeerProxy, pluginInitializer)
+		if err != nil {
+			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
+			return
+		}
+		c.Aggregator = aggregator
+
+		h.appConfig = c
+		h.storage = storage
+	})
 	return h.appConfig
 }
 
@@ -114,10 +119,9 @@ func (h *ApiServerImpl) Tunnel() v1.Tunnel {
 }
 
 func (h *ApiServerImpl) Client() v1.Client {
-	<-h.storage.Ready()
-
 	h.runOnce.Do(func() {
-		completed, err := h.appConfig.Complete()
+		completed, err := h.Config().Complete()
+		<-h.storage.Ready()
 		if err != nil {
 			h.kubelet.Cancel(NewError(fmt.Errorf("failed to complete API server config: %w", err)))
 			return
