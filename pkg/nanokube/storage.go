@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
@@ -34,21 +33,33 @@ type StorageFactoryImpl struct {
 
 	runOnce sync.Once
 	ready   chan struct{}
+	done    chan struct{}
 }
 
 var _ v1.Storage = &StorageFactoryImpl{}
 
 func NewStorage(kubelet v1.Kubelet) v1.Storage {
+	ctx, cancel := context.WithCancel(context.Background())
+	context.AfterFunc(kubelet.Context(), cancel)
 	return &StorageFactoryImpl{
-		ctx:                           kubelet.Context(),
+		ctx:                           ctx,
 		kubelet:                       kubelet,
 		defaultStorageFactoryProvided: make(chan struct{}),
 		ready:                         make(chan struct{}),
+		done:                          make(chan struct{}),
 	}
+}
+
+func (s *StorageFactoryImpl) Context() context.Context {
+	return s.ctx
 }
 
 func (s *StorageFactoryImpl) Ready() <-chan struct{} {
 	return s.ready
+}
+
+func (s *StorageFactoryImpl) Done() <-chan struct{} {
+	return s.done
 }
 
 func (s *StorageFactoryImpl) WithFactory(factory *serverstorage.DefaultStorageFactory) v1.Storage {
@@ -58,7 +69,7 @@ func (s *StorageFactoryImpl) WithFactory(factory *serverstorage.DefaultStorageFa
 }
 
 func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
-	<-s.defaultStorageFactoryProvided
+	<-Await(s.ctx, s.defaultStorageFactoryProvided)
 
 	s.runOnce.Do(func() {
 		dataDir := s.kubelet.Options().DataDirAt(v1.DataDirEtcd)
@@ -98,32 +109,25 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 			etcdLevel,
 		)))
 
-		server, err := embed.StartEtcd(cfg)
-		if err != nil {
-			s.kubelet.Cancel(NewError(fmt.Errorf("failed to start etcd: %w", err)))
-			return
-		}
-
-		select {
-		case <-server.Server.ReadyNotify():
-			Log.Info("storage is ready", "port", port)
-			close(s.ready)
-		case <-time.After(30 * time.Second):
-			server.Close()
-			s.kubelet.Cancel(NewError(fmt.Errorf("etcd took too long to start")))
-			return
-		case <-s.ctx.Done():
-			server.Close()
-			return
-		}
-
 		go func() {
+			defer close(s.done)
+			server, err := embed.StartEtcd(cfg)
+			if err != nil {
+				s.kubelet.Cancel(NewError(fmt.Errorf("failed to start etcd: %w", err)))
+				return
+			}
+			<-Await(s.ctx, server.Server.ReadyNotify())
+			if s.ctx.Err() == nil {
+				Log.Info("storage is ready", "port", port)
+			}
+			close(s.ready)
 			<-s.ctx.Done()
 			server.Close()
+			Log.Info("storage is done")
 		}()
 	})
 
-	<-s.Ready()
+	<-Await(s.ctx, s.ready)
 	return s.defaultStorageFactory
 }
 

@@ -166,6 +166,8 @@ type Storage interface {
 	storage.StorageFactory
 	Ready
 
+	Context() context.Context
+	Done() <-chan struct{}
 	ServerList() []string
 	Port() int
 	WithFactory(factory *storage.DefaultStorageFactory) Storage

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -56,7 +57,7 @@ func main() {
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
-		OnCancel(cordonAndDrain(kubelet), stopSandboxes(kubelet)).
+		OnCancel(removeStaticPods(kubelet), cordonAndDrain(kubelet), stopSandboxes(kubelet)).
 		OnCancel(deleteNode(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
 		OnCancel(removeSandboxes(kubelet)).
@@ -143,6 +144,18 @@ func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 			nanokube.Log.Error("failed to update kubeconfig", "path", clientcmd.RecommendedHomeFile, "error", err)
 		} else {
 			nanokube.Log.Info("kubeconfig updated", "path", clientcmd.RecommendedHomeFile)
+		}
+	}
+}
+
+func removeStaticPods(kubelet v1.Kubelet) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		dir := kubelet.Kube().KubeletConfiguration().StaticPodPath
+		for _, pod := range kubelet.StaticPods() {
+			path := filepath.Join(dir, pod.Name+".json")
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				nanokube.Log.Warn("failed to remove static pod manifest", "path", path, "error", err)
+			}
 		}
 	}
 }
