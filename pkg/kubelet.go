@@ -100,6 +100,7 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 			fmt.Fprintf(os.Stderr, "nanokube exiting: %v\n", err)
 			code = err.ExitStatus()
 		}
+		<-kubelet.ApiServer().Done()
 		<-kubelet.Storage().Done()
 		kubelet.exitCodeOnce.Do(func() {
 			kubelet.exitCode <- code

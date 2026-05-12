@@ -155,7 +155,8 @@ type Client interface {
 type ApiServer interface {
 	Ready
 
-	Client(ctx context.Context) Client
+	Context() context.Context
+	Client() Client
 	Config() *app.Config
 	Done() <-chan struct{}
 	Tunnel() Tunnel

@@ -23,6 +23,7 @@ import (
 )
 
 type ApiServerImpl struct {
+	ctx       context.Context
 	kubelet   v1.Kubelet
 	appConfig *app.Config
 	storage   v1.Storage
@@ -40,6 +41,8 @@ type ApiServerImpl struct {
 var _ v1.ApiServer = &ApiServerImpl{}
 
 func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
+	ctx, cancel := context.WithCancel(context.Background())
+	context.AfterFunc(kubelet.Context(), cancel)
 	opts := kubelet.Kube().ApiServerOptions()
 	c := &app.Config{
 		Options: *opts,
@@ -81,12 +84,17 @@ func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
 	c.Aggregator = aggregator
 
 	return &ApiServerImpl{
+		ctx:       ctx,
 		kubelet:   kubelet,
 		appConfig: c,
 		storage:   storage,
 		ready:     make(chan struct{}),
 		done:      make(chan struct{}),
 	}
+}
+
+func (h *ApiServerImpl) Context() context.Context {
+	return h.ctx
 }
 
 func (h *ApiServerImpl) Ready() <-chan struct{} {
@@ -105,7 +113,7 @@ func (h *ApiServerImpl) Tunnel() v1.Tunnel {
 	return h.kubelet.Tunnel(v1.APIServerService)
 }
 
-func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
+func (h *ApiServerImpl) Client() v1.Client {
 	<-h.storage.Ready()
 
 	h.runOnce.Do(func() {
@@ -132,13 +140,13 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 
 		go func() {
 			for {
-				if _, err := h.client.CoreV1().Namespaces().Get(ctx, "kube-system", metav1.GetOptions{}); err == nil {
+				if _, err := h.client.CoreV1().Namespaces().Get(h.ctx, "kube-system", metav1.GetOptions{}); err == nil {
 					Log.Info("apiserver is ready")
 					close(h.ready)
 					break
 				}
 				select {
-				case <-ctx.Done():
+				case <-h.ctx.Done():
 					return
 				case <-time.After(1 * time.Second):
 				}
@@ -147,7 +155,7 @@ func (h *ApiServerImpl) Client(ctx context.Context) v1.Client {
 
 		go func() {
 			defer close(h.done)
-			if err := prepared.Run(ctx); err != nil {
+			if err := prepared.Run(h.ctx); err != nil {
 				h.kubelet.Cancel(NewError(fmt.Errorf("API server exited with error: %w", err)).WithCode(1))
 			}
 			Log.Info("apiserver shut down")

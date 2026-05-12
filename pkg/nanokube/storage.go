@@ -40,7 +40,10 @@ var _ v1.Storage = &StorageFactoryImpl{}
 
 func NewStorage(kubelet v1.Kubelet) v1.Storage {
 	ctx, cancel := context.WithCancel(context.Background())
-	context.AfterFunc(kubelet.Context(), cancel)
+	go func() {
+		<-kubelet.ApiServer().Done()
+		cancel()
+	}()
 	return &StorageFactoryImpl{
 		ctx:                           ctx,
 		kubelet:                       kubelet,

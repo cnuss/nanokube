@@ -392,7 +392,7 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 }
 
 func (k *KubeImpl) Client() v1.Client {
-	return k.ApiServer().Client(k.kubelet.Context())
+	return k.ApiServer().Client()
 }
 
 func (k *KubeImpl) Environ() []string {
