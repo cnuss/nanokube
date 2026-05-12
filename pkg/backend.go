@@ -294,7 +294,6 @@ func newManager(backend v1.Backend) v1.Manager {
 }
 
 func (c *managerImpl) ContainerHasExclusiveCPUs(pod *corev1.Pod, container *corev1.Container) bool {
-	nanokube.Unimplemented()
 	return false
 }
 
@@ -615,7 +614,6 @@ func (c *managerImpl) NewPodContainerManager() cm.PodContainerManager {
 }
 
 func (c *managerImpl) PodHasExclusiveCPUs(pod *corev1.Pod) bool {
-	nanokube.Unimplemented()
 	return false
 }
 
