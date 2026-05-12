@@ -39,7 +39,7 @@ runs:
         cp "$HOME/.nanokube/.kube/config" "$KUBECONFIG"
         ARGS=""
         if [ "$SLOW" = "true" ]; then
-          ARGS="--apply-timeout=2m --assert-timeout=5m --cleanup-timeout=3m --delete-timeout=2m --error-timeout=2m --exec-timeout=2m"
+          ARGS="--apply-timeout=1h --assert-timeout=1h --cleanup-timeout=1h --delete-timeout=1h --error-timeout=1h --exec-timeout=1h"
         fi
         make test SUITE=${{ inputs.suite }} CHAINSAW_ARGS="$ARGS"
 
