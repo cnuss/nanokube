@@ -32,7 +32,8 @@
       "Bash(cf auth *)",
       "Bash(cf agent-context *)",
       "WebFetch(domain:developers.cloudflare.com)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(git *)"
     ]
   }
 }

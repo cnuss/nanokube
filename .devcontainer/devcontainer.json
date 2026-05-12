@@ -1,6 +1,6 @@
 {
-  "name": "NanoKube",
-  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "name": "nanokube",
+  "image": "cnuss/dev:latest",
   "hostRequirements": {
     "cpus": 4
   },
