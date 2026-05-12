@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -81,12 +80,6 @@ type KubeImpl struct {
 	defaultStorageFactory     *storage.DefaultStorageFactory
 	defaultStorageFactoryOnce sync.Once
 
-	apiserver         v1.ApiServer
-	apiserverProvided chan struct{}
-
-	storage         v1.Storage
-	storageProvided chan struct{}
-
 	broadcaster     record.EventBroadcaster
 	broadcasterOnce sync.Once
 
@@ -125,11 +118,9 @@ func newKube(kubelet v1.Kubelet) *KubeImpl {
 	}
 
 	kube := &KubeImpl{
-		ctx:               kubelet.Context(),
-		kubelet:           kubelet,
-		apiserverProvided: make(chan struct{}),
-		storageProvided:   make(chan struct{}),
-		nodeReady:         make(chan struct{}),
+		ctx:       kubelet.Context(),
+		kubelet:   kubelet,
+		nodeReady: make(chan struct{}),
 	}
 
 	return kube
@@ -148,7 +139,7 @@ func (k *KubeImpl) Broadcaster() record.EventBroadcaster {
 
 func (k *KubeImpl) InformerFactory() informers.SharedInformerFactory {
 	k.informerFactoryOnce.Do(func() {
-		k.informerFactory = informers.NewSharedInformerFactory(k.Client(), 0)
+		k.informerFactory = informers.NewSharedInformerFactory(k.Kubelet().Client(), 0)
 	})
 	return k.informerFactory
 }
@@ -158,10 +149,10 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		tunnel := k.Kubelet().Tunnel(v1.APIServerService)
 		opts := apiserveroptions.NewServerRunOptions()
 		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", tunnel.FQDN())}
-		opts.Authentication.ServiceAccounts.KeyFiles = []string{filepath.Join(string(k.Kubelet().Options().DataDir()), string(v1.KeyFile))}
+		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.Kubelet().Options().FilePathAt(v1.KeyFile)}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
-		opts.Etcd.StorageConfig.Transport.ServerList = k.Storage().ServerList()
+		opts.Etcd.StorageConfig.Transport.ServerList = k.Kubelet().Storage().ServerList()
 		opts.GenericServerRunOptions.ExternalHost = tunnel.FQDN()
 		// TODO(incomplete): fiddling with shutdown
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 5 * time.Second
@@ -177,7 +168,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.SecureServing.BindPort = int(tunnel.LocalPort())
 		opts.SecureServing.DisableHTTP2Serving = !v1.HTTP2
 		opts.SecureServing.ServerCert.CertDirectory = k.Kubelet().Options().DataDirAt(v1.DataDirCerts)
-		opts.ServiceAccountSigningKeyFile = filepath.Join(string(k.Kubelet().Options().DataDir()), string(v1.KeyFile))
+		opts.ServiceAccountSigningKeyFile = k.Kubelet().Options().FilePathAt(v1.KeyFile)
 
 		complete, err := opts.Complete(k.Kubelet().Context())
 		if err != nil {
@@ -263,8 +254,8 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 			Recorder:                  &record.FakeRecorder{},
 		}
 		// if !k.Kubelet().Options().Standalone() {
-		k.kubeletDependencies.KubeClient = k.Client()
-		k.kubeletDependencies.HeartbeatClient = k.Client()
+		k.kubeletDependencies.KubeClient = k.Kubelet().Client()
+		k.kubeletDependencies.HeartbeatClient = k.Kubelet().Client()
 		// } else {
 		// 	k.kubeletDependencies.KubeClient = nil
 		// 	k.kubeletDependencies.HeartbeatClient = nil
@@ -295,8 +286,8 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 					return nil
 				}(),
 			},
-			CertFile: filepath.Join(string(k.Kubelet().Options().DataDir()), string(v1.CertFile)),
-			KeyFile:  filepath.Join(string(k.Kubelet().Options().DataDir()), string(v1.KeyFile)),
+			CertFile: k.Kubelet().Options().FilePathAt(v1.CertFile),
+			KeyFile:  k.Kubelet().Options().FilePathAt(v1.KeyFile),
 		}
 		k.kubeletDependencies.ProbeManager = nil
 		k.kubeletDependencies.Services = k.Kubelet().Services(tunnel.URL())
@@ -310,39 +301,16 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 	return k.kubeletDependencies
 }
 
-func (k *KubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Kube {
-	apiserver.Config().KubeAPIs.ControlPlane.StorageFactory = k.Storage()
-	k.apiserver = apiserver
-	close(k.apiserverProvided)
-	return k
-}
-
-func (k *KubeImpl) ApiServer() v1.ApiServer {
-	<-k.apiserverProvided
-	return k.apiserver
-}
-
-func (k *KubeImpl) WithStorage(storage v1.Storage) v1.Kube {
-	k.storage = storage
-	close(k.storageProvided)
-	return k
-}
-
-func (k *KubeImpl) Storage() v1.Storage {
-	<-k.storageProvided
-	return k.storage
-}
-
 func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 	rootCaFile := func() string {
 		var buf bytes.Buffer
-		for _, cert := range k.ApiServer().CACerts() {
+		for _, cert := range k.Kubelet().ApiServer().CACerts() {
 			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
 				k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to PEM-encode CA cert: %w", err)))
 				return ""
 			}
 		}
-		path := filepath.Join(string(k.Kubelet().Options().DataDir()), string(v1.CAFile))
+		path := k.Kubelet().Options().FilePathAt(v1.CAFile)
 		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to write CA file %s: %w", path, err)))
 			return ""
@@ -391,13 +359,9 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 	return []string{}
 }
 
-func (k *KubeImpl) Client() v1.Client {
-	return k.ApiServer().Client()
-}
-
 func (k *KubeImpl) Environ() []string {
 	return []string{
-		"KUBERNETES_SERVICE_HOST=" + k.ApiServer().Tunnel().FQDN(),
+		"KUBERNETES_SERVICE_HOST=" + k.Kubelet().ApiServer().Tunnel().FQDN(),
 		"KUBERNETES_SERVICE_PORT=443",
 	}
 }

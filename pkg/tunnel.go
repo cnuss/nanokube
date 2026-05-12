@@ -61,6 +61,9 @@ type TunnelImpl struct {
 	localPort     int32
 	localPortOnce sync.Once
 
+	caCerts     []*x509.Certificate
+	caCertsOnce sync.Once
+
 	fqdn      string
 	fqdnReady chan struct{}
 	fqdnOnce  sync.Once
@@ -126,8 +129,30 @@ func (t *TunnelImpl) LocalFQDN() string {
 }
 
 func (t *TunnelImpl) CACerts() []*x509.Certificate {
-	<-t.fqdnReady
-	return t.tunnel.CACerts()
+	t.caCertsOnce.Do(func() {
+		certificates := []*x509.Certificate{}
+
+		rest := []byte(embedded.MozillaCACertificatesPEM())
+		for {
+			block, remainder := pem.Decode(rest)
+			if block == nil {
+				break
+			}
+			rest = remainder
+			if block.Type != "CERTIFICATE" {
+				continue
+			}
+			if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+				certificates = append(certificates, cert)
+			}
+		}
+
+		cloudflare, _ := tlsconfig.GetCloudflareRootCA()
+		certificates = append(certificates, cloudflare...)
+
+		t.caCerts = certificates
+	})
+	return t.caCerts
 }
 
 func (t *TunnelImpl) FQDN() string {
@@ -203,9 +228,6 @@ type QuickTunnel struct {
 
 	spec     *quickTunnelSpec
 	specOnce sync.Once
-
-	caCerts     []*x509.Certificate
-	caCertsOnce sync.Once
 
 	tunnelConfig     *supervisor.TunnelConfig
 	tunnelConfigOnce sync.Once
@@ -433,33 +455,6 @@ func (q *QuickTunnel) Supervisor() (*supervisor.Supervisor, error) {
 	return supervisor, nil
 }
 
-func (q *QuickTunnel) CACerts() []*x509.Certificate {
-	q.caCertsOnce.Do(func() {
-		certificates := []*x509.Certificate{}
-
-		rest := []byte(embedded.MozillaCACertificatesPEM())
-		for {
-			block, remainder := pem.Decode(rest)
-			if block == nil {
-				break
-			}
-			rest = remainder
-			if block.Type != "CERTIFICATE" {
-				continue
-			}
-			if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
-				certificates = append(certificates, cert)
-			}
-		}
-
-		cloudflare, _ := tlsconfig.GetCloudflareRootCA()
-		certificates = append(certificates, cloudflare...)
-
-		q.caCerts = certificates
-	})
-	return q.caCerts
-}
-
 func (q *QuickTunnel) TunnelConfig() *supervisor.TunnelConfig {
 	q.tunnelConfigOnce.Do(func() {
 		tunnelConfig := &supervisor.TunnelConfig{
@@ -496,7 +491,7 @@ func (q *QuickTunnel) TunnelConfig() *supervisor.TunnelConfig {
 			}(),
 			EdgeTLSConfigs: func() map[connection.Protocol]*tls.Config {
 				pool := x509.NewCertPool()
-				for _, c := range q.CACerts() {
+				for _, c := range q.tunnel.CACerts() {
 					pool.AddCert(c)
 				}
 				out := make(map[connection.Protocol]*tls.Config, len(connection.ProtocolList))

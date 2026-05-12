@@ -58,6 +58,12 @@ type KubeletImpl struct {
 	kube     *KubeImpl
 	kubeOnce sync.Once
 
+	apiserver         v1.ApiServer
+	apiserverProvided chan struct{}
+
+	storage         v1.Storage
+	storageProvided chan struct{}
+
 	backends     sync.Map // map[v1.BackendName]v1.Backend
 	backendsOnce sync.Once
 
@@ -83,12 +89,14 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	options := nanokube.NewOptions(cmd)
 
 	kubelet := &KubeletImpl{
-		ctx:      ctx,
-		cancel:   cancel,
-		canceled: make(chan struct{}),
-		exitCode: make(chan int, 1),
-		options:  options,
-		cmd:      cmd,
+		ctx:               ctx,
+		cancel:            cancel,
+		canceled:          make(chan struct{}),
+		exitCode:          make(chan int, 1),
+		options:           options,
+		cmd:               cmd,
+		apiserverProvided: make(chan struct{}),
+		storageProvided:   make(chan struct{}),
 	}
 
 	go func() {
@@ -312,7 +320,7 @@ func (k *KubeletImpl) OnReady(service v1.ServiceName, fns ...func(ctx context.Co
 
 		switch service {
 		case v1.APIServerService:
-			ch = k.Kube().ApiServer().Ready()
+			ch = k.ApiServer().Ready()
 		case v1.Node:
 			ch = k.Kube().NodeReady()
 		default:
@@ -411,22 +419,30 @@ func (k *KubeletImpl) Kube() v1.Kube {
 	return k.kube
 }
 
+func (k *KubeletImpl) Client() v1.Client {
+	return k.ApiServer().Client()
+}
+
 func (k *KubeletImpl) WithApiServer(apiserver v1.ApiServer) v1.Kubelet {
-	k.Kube().WithApiServer(apiserver)
+	k.apiserver = apiserver
+	close(k.apiserverProvided)
 	return k
 }
 
 func (k *KubeletImpl) ApiServer() v1.ApiServer {
-	return k.Kube().ApiServer()
+	<-k.apiserverProvided
+	return k.apiserver
 }
 
 func (k *KubeletImpl) WithStorage(storage v1.Storage) v1.Kubelet {
-	k.Kube().WithStorage(storage)
+	k.storage = storage
+	close(k.storageProvided)
 	return k
 }
 
 func (k *KubeletImpl) Storage() v1.Storage {
-	return k.Kube().Storage()
+	<-k.storageProvided
+	return k.storage
 }
 
 func (k *KubeletImpl) Backend(name v1.BackendName) v1.Backend {

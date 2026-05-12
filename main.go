@@ -69,7 +69,7 @@ func main() {
 
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		nodes := kubelet.Kube().Client().CoreV1().Nodes()
+		nodes := kubelet.Client().CoreV1().Nodes()
 		tunnel := kubelet.Tunnel(v1.KubeletService)
 
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -127,10 +127,10 @@ func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 			kubeconfig = clientcmdapi.NewConfig()
 		}
 
-		internal := kubelet.Kube().Client().WithTunnel(kubelet.Kube().ApiServer().Tunnel(), true)
-		external := kubelet.Kube().Client().WithTunnel(kubelet.Kube().ApiServer().Tunnel(), false)
+		internal := kubelet.Client().WithTunnel(kubelet.ApiServer().Tunnel(), true)
+		external := kubelet.Client().WithTunnel(kubelet.ApiServer().Tunnel(), false)
 
-		if err := internal.WriteKubeconfig(filepath.Join(string(kubelet.Options().DataDir()), string(v1.KubeconfigFile))); err != nil {
+		if err := internal.WriteKubeconfig(kubelet.Options().FilePathAt(v1.KubeconfigFile)); err != nil {
 			nanokube.Log.Error("failed to write internal kubeconfig", "path", string(kubelet.Options().DataDir())+string(v1.KubeconfigFile), "error", err)
 		}
 
@@ -164,7 +164,7 @@ func cordonAndDrain(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		helper := &drain.Helper{
 			Ctx:                 ctx,
-			Client:              kubelet.Kube().Client().Clientset(),
+			Client:              kubelet.Client().Clientset(),
 			Force:               true,
 			GracePeriodSeconds:  30,
 			IgnoreAllDaemonSets: true,
@@ -173,7 +173,7 @@ func cordonAndDrain(kubelet v1.Kubelet) func(ctx context.Context) {
 			Out:                 io.Discard,
 			ErrOut:              io.Discard,
 		}
-		node, err := kubelet.Kube().Client().CoreV1().Nodes().Get(ctx, kubelet.Kube().KubeletHostname(), metav1.GetOptions{})
+		node, err := kubelet.Client().CoreV1().Nodes().Get(ctx, kubelet.Kube().KubeletHostname(), metav1.GetOptions{})
 		if err != nil {
 			nanokube.Log.Warn("failed to get node for draining", "name", kubelet.Kube().KubeletHostname(), "error", err)
 			return
@@ -189,7 +189,7 @@ func deleteNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		name := kubelet.Kube().KubeletHostname()
 		foreground := metav1.DeletePropagationForeground
-		if err := kubelet.Kube().Client().CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{
+		if err := kubelet.Client().CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{
 			PropagationPolicy: &foreground,
 		}); err != nil {
 			nanokube.Log.Warn("failed to delete node", "name", name, "error", err)

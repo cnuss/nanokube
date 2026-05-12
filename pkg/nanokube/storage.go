@@ -25,8 +25,7 @@ type StorageFactoryImpl struct {
 	ctx     context.Context
 	kubelet v1.Kubelet
 
-	defaultStorageFactory         *serverstorage.DefaultStorageFactory
-	defaultStorageFactoryProvided chan struct{}
+	defaultStorageFactory *serverstorage.DefaultStorageFactory
 
 	port     int
 	portOnce sync.Once
@@ -45,11 +44,10 @@ func NewStorage(kubelet v1.Kubelet) v1.Storage {
 		cancel()
 	}()
 	return &StorageFactoryImpl{
-		ctx:                           ctx,
-		kubelet:                       kubelet,
-		defaultStorageFactoryProvided: make(chan struct{}),
-		ready:                         make(chan struct{}),
-		done:                          make(chan struct{}),
+		ctx:     ctx,
+		kubelet: kubelet,
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -67,13 +65,14 @@ func (s *StorageFactoryImpl) Done() <-chan struct{} {
 
 func (s *StorageFactoryImpl) WithFactory(factory *serverstorage.DefaultStorageFactory) v1.Storage {
 	s.defaultStorageFactory = factory
-	close(s.defaultStorageFactoryProvided)
 	return s
 }
 
 func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
-	<-Await(s.ctx, s.defaultStorageFactoryProvided)
+	return s.defaultStorageFactory
+}
 
+func (s *StorageFactoryImpl) ServerList() []string {
 	s.runOnce.Do(func() {
 		dataDir := s.kubelet.Options().DataDirAt(v1.DataDirEtcd)
 		port := s.Port()
@@ -131,10 +130,6 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 	})
 
 	<-Await(s.ctx, s.ready)
-	return s.defaultStorageFactory
-}
-
-func (s *StorageFactoryImpl) ServerList() []string {
 	return []string{fmt.Sprintf("http://127.0.0.1:%d", s.Port())}
 }
 

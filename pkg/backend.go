@@ -240,7 +240,7 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 	}
 	switch v := obj.(type) {
 	case *corev1.PersistentVolumeClaim:
-		client := b.kubelet.Kube().Client()
+		client := b.kubelet.Client()
 		if deleted || v.DeletionTimestamp != nil {
 			if err := b.Driver().ReleaseVolume(b, client, v); err != nil {
 				nanokube.Log.Warn("unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)

@@ -20,7 +20,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	cri "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet"
@@ -157,7 +156,6 @@ type ApiServer interface {
 
 	Context() context.Context
 	Client() Client
-	Config() *app.Config
 	Done() <-chan struct{}
 	Tunnel() Tunnel
 	CACerts() []*x509.Certificate
@@ -210,7 +208,6 @@ type Kube interface {
 	ApiServerOptions() *apiserveroptions.CompletedOptions
 	Args(service ServiceName, mountPath string) []string
 
-	Client() Client
 	Environ() []string
 	Broadcaster() record.EventBroadcaster
 	InformerFactory() informers.SharedInformerFactory
@@ -219,12 +216,6 @@ type Kube interface {
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
 	KubeletDependencies() *kubelet.Dependencies
 	KubeletHostname() string // TODO: Remove
-
-	WithApiServer(apiserver ApiServer) Kube
-	ApiServer() ApiServer
-
-	WithStorage(storage Storage) Kube
-	Storage() Storage
 
 	NodeReady() chan struct{}
 }
@@ -255,6 +246,7 @@ type Kubelet interface {
 
 	Host() Host
 	Kube() Kube
+	Client() Client
 	Tunnel(name ServiceName) Tunnel
 	StaticPods() []*corev1.Pod
 
