@@ -17,10 +17,42 @@ concurrency:
 
 jobs:
   build:
-    uses: ./.github/workflows/.build.yaml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-26-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - uses: ./.github/actions/build
+        with:
+          runner: ${{ matrix.runner }}
+
+  collect:
+    outputs:
+      artifacts: ${{ steps.artifacts.outputs.map }}
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-meta-*
+          path: meta
+          merge-multiple: true
+      - id: artifacts
+        run: |
+          map=$(jq -sc 'reduce .[] as $item ({}; . + {($item.runner): $item.artifact})' meta/*.json)
+          echo "map=$map" >> "$GITHUB_OUTPUT"
 
   smoke:
-    needs: build
+    needs: collect
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -34,14 +66,14 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - uses: ./.github/actions/run-test
+      - uses: ./.github/actions/test
         with:
           suite: smoke
-          artifact: ${{ fromJSON(needs.build.outputs.artifacts)[matrix.runner] }}
+          artifact: ${{ fromJSON(needs.collect.outputs.artifacts)[matrix.runner] }}
           log-name: nanokube-log-${{ matrix.runner }}-smoke
 
   release:
-    needs: [build, smoke]
+    needs: [collect, smoke]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
