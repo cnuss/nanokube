@@ -79,7 +79,7 @@ func (d *driver) CheckpointContainer(ctx context.Context, options *criv1.Checkpo
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) Close() error {
+func (d *driver) Close(ctx context.Context) error {
 	return nanokube.Unimplemented()
 }
 

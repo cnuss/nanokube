@@ -30,7 +30,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/emicklei/go-restful/v3"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	tools "k8s.io/client-go/tools/remotecommand"
+	tools "k8s.io/cri-streaming/pkg/streaming/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	utilexec "k8s.io/utils/exec"
 
@@ -223,7 +223,7 @@ func (d *driver) CheckpointContainer(ctx context.Context, options *criv1.Checkpo
 	return nanokube.Unimplemented()
 }
 
-func (d *driver) Close() error {
+func (d *driver) Close(ctx context.Context) error {
 	return nanokube.Unimplemented()
 }
 

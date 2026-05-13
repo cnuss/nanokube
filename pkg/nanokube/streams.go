@@ -14,13 +14,11 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/google/uuid"
-	"k8s.io/apimachinery/pkg/types"
 	remotecommandconsts "k8s.io/apimachinery/pkg/util/remotecommand"
-	tools "k8s.io/client-go/tools/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kubelet/pkg/cri/streaming/portforward"
-	"k8s.io/kubelet/pkg/cri/streaming/remotecommand"
-	remotecommandserver "k8s.io/kubelet/pkg/cri/streaming/remotecommand"
+	"k8s.io/cri-streaming/pkg/streaming/portforward"
+	"k8s.io/cri-streaming/pkg/streaming/remotecommand"
+	remotecommandserver "k8s.io/cri-streaming/pkg/streaming/remotecommand"
 )
 
 type Streams interface {
@@ -85,8 +83,8 @@ func (s *StreamsImpl) New() Stream {
 }
 
 type (
-	ExecHandler    func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize, timeout time.Duration) <-chan Done
-	AttachHandler  func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan tools.TerminalSize) <-chan Done
+	ExecHandler    func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan remotecommand.TerminalSize, timeout time.Duration) <-chan Done
+	AttachHandler  func(ctx context.Context, stream Stream, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, resize <-chan remotecommand.TerminalSize) <-chan Done
 	ForwardHandler func(ctx context.Context, stream Stream, port int32, closer io.ReadWriteCloser) <-chan Done
 )
 
@@ -113,7 +111,7 @@ type Stream interface {
 
 	Handle(req *restful.Request, resp *restful.Response)
 	ProxyStream(ctx context.Context, tty bool, stdin bool, in io.Reader, stdout bool, out io.WriteCloser, stderr bool, err io.WriteCloser, res *Proxy) (context.CancelFunc, error)
-	Resizer(ctx context.Context, resize <-chan tools.TerminalSize) <-chan Resizer
+	Resizer(ctx context.Context, resize <-chan remotecommand.TerminalSize) <-chan Resizer
 }
 
 type Done struct {
@@ -252,7 +250,7 @@ func (s *StreamImpl) URL() string {
 	return fmt.Sprintf("%s/streams/%s", s.driver.BaseURL().String(), s.id)
 }
 
-func (s *StreamImpl) AttachContainer(ctx context.Context, _ string, _ types.UID, _ string, in io.Reader, out io.WriteCloser, err io.WriteCloser, tty bool, resize <-chan tools.TerminalSize) error {
+func (s *StreamImpl) AttachContainer(ctx context.Context, _ string, _ string, _ string, in io.Reader, out io.WriteCloser, err io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
 	if s.attach == nil || s.attachHandler == nil {
 		return fmt.Errorf("stream %s: attach handler not configured", s.id)
 	}
@@ -265,7 +263,7 @@ func (s *StreamImpl) AttachContainer(ctx context.Context, _ string, _ types.UID,
 	return nil
 }
 
-func (s *StreamImpl) ExecInContainer(ctx context.Context, _ string, _ types.UID, _ string, cmd []string, in io.Reader, out io.WriteCloser, err io.WriteCloser, tty bool, resize <-chan tools.TerminalSize, timeout time.Duration) error {
+func (s *StreamImpl) ExecInContainer(ctx context.Context, _ string, _ string, _ string, cmd []string, in io.Reader, out io.WriteCloser, err io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize, timeout time.Duration) error {
 	if s.exec == nil || s.execHandler == nil {
 		return fmt.Errorf("stream %s: exec handler not configured", s.id)
 	}
@@ -286,7 +284,7 @@ func (s *StreamImpl) ExecInContainer(ctx context.Context, _ string, _ types.UID,
 	return nil
 }
 
-func (s *StreamImpl) PortForward(ctx context.Context, _ string, _ types.UID, port int32, stream io.ReadWriteCloser) error {
+func (s *StreamImpl) PortForward(ctx context.Context, _ string, _ string, port int32, stream io.ReadWriteCloser) error {
 	if s.forward == nil || s.forwardHandler == nil {
 		return fmt.Errorf("stream %s: forward handler not configured", s.id)
 	}
@@ -386,7 +384,7 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 
 // TODO(incomplete): move
 type Resizer interface {
-	TerminalSize() tools.TerminalSize
+	TerminalSize() remotecommand.TerminalSize
 	ConsoleSize() *[2]uint
 	WithHandler(func(height, width uint)) Resizer
 	Done() error
@@ -395,7 +393,7 @@ type Resizer interface {
 type resizerImpl struct {
 	cancelFunc   context.CancelFunc
 	mu           sync.Mutex
-	terminalSize tools.TerminalSize
+	terminalSize remotecommand.TerminalSize
 	consoleSize  *[2]uint
 	handler      func(height, width uint)
 }
@@ -408,7 +406,7 @@ var _ Resizer = &resizerImpl{}
 // this budget. Sparse clients fall through and attach proceeds unsized.
 const initialResizeTimeout = 250 * time.Millisecond
 
-func (r *resizerImpl) update(s tools.TerminalSize) {
+func (r *resizerImpl) update(s remotecommand.TerminalSize) {
 	r.mu.Lock()
 	r.terminalSize = s
 	r.consoleSize = &[2]uint{uint(s.Height), uint(s.Width)}
@@ -419,7 +417,7 @@ func (r *resizerImpl) update(s tools.TerminalSize) {
 	}
 }
 
-func (r *resizerImpl) TerminalSize() tools.TerminalSize {
+func (r *resizerImpl) TerminalSize() remotecommand.TerminalSize {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.terminalSize
@@ -448,7 +446,7 @@ func (r *resizerImpl) Done() error {
 	return nil
 }
 
-func (s *StreamImpl) Resizer(ctx context.Context, resize <-chan tools.TerminalSize) <-chan Resizer {
+func (s *StreamImpl) Resizer(ctx context.Context, resize <-chan remotecommand.TerminalSize) <-chan Resizer {
 	ctx, cancel := context.WithCancel(ctx)
 	r := &resizerImpl{cancelFunc: cancel}
 	ready := make(chan Resizer, 1)

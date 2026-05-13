@@ -1,0 +1,174 @@
+diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
+index d8cfd44222c..b2b1c9e71a3 100644
+--- a/pkg/controlplane/controller/kubernetesservice/controller.go
++++ b/pkg/controlplane/controller/kubernetesservice/controller.go
+@@ -85,6 +85,12 @@ func New(config Config, client kubernetes.Interface, serviceInformer v1informers
+ // Start begins the core controller loops that must exist for bootstrapping
+ // a cluster.
+ func (c *Controller) Start(stopCh <-chan struct{}) {
++	// nanokube: skip bootstrap of the default "kubernetes" Service and its
++	// endpoint reconciliation. The controller is left constructed so Stop()
++	// can be called safely, but no work is performed.
++	klog.Info("nanokube: kubernetesservice.Controller.Start is a no-op")
++	return
++
+ 	if !cache.WaitForCacheSync(stopCh, c.serviceSynced) {
+ 		runtime.HandleError(fmt.Errorf("timed out waiting for caches to sync"))
+ 		return
+@@ -111,6 +117,10 @@ func (c *Controller) Start(stopCh <-chan struct{}) {
+ 
+ // Stop cleans up this API Servers endpoint reconciliation leases so another master can take over more quickly.
+ func (c *Controller) Stop() {
++	// nanokube: matched no-op for Start; nothing was started, nothing to stop.
++	klog.Info("nanokube: kubernetesservice.Controller.Stop is a no-op")
++	return
++
+ 	c.lock.Lock()
+ 	defer c.lock.Unlock()
+ 
+diff --git a/pkg/kubelet/client/kubelet_client.go b/pkg/kubelet/client/kubelet_client.go
+index b9d366ad462..045e062d751 100644
+--- a/pkg/kubelet/client/kubelet_client.go
++++ b/pkg/kubelet/client/kubelet_client.go
+@@ -19,6 +19,7 @@ package client
+ import (
+ 	"context"
+ 	"fmt"
++	"net"
+ 	"net/http"
+ 	"strconv"
+ 	"time"
+@@ -198,6 +199,18 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
+ 		return nil, err
+ 	}
+ 
++	// nanokube: if the selected address already carries a port (e.g. "fqdn:443"
++	// from an external address), honor it and ignore DaemonEndpoints.
++	if h, p, splitErr := net.SplitHostPort(host); splitErr == nil {
++		return &ConnectionInfo{
++			Scheme:                         k.scheme,
++			Hostname:                       h,
++			Port:                           p,
++			Transport:                      k.transport,
++			InsecureSkipTLSVerifyTransport: k.insecureSkipTLSVerifyTransport,
++		}, nil
++	}
++
+ 	// Use the kubelet-reported port, if present
+ 	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
+ 	if port <= 0 {
+diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
+index 5bf378bab58..d05e30a402f 100644
+--- a/pkg/kubelet/kubelet.go
++++ b/pkg/kubelet/kubelet.go
+@@ -572,7 +572,9 @@ func NewMainKubelet(ctx context.Context,
+ 				return nil, err
+ 			}
+ 		} else {
+-			return nil, err
++			// nanokube: oomWatcher creation fails on macOS (no /proc); ignore.
++			logger.V(2).Info("Failed to create an oomWatcher (ignoring)", "err", err)
++			oomWatcher = nil
+ 		}
+ 	}
+ 
+diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
+index fe96a4ab366..cbb73de3eca 100644
+--- a/pkg/kubelet/server/server.go
++++ b/pkg/kubelet/server/server.go
+@@ -878,6 +878,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
+ 	}
+ 
+ 	response.Header().Set("Transfer-Encoding", "chunked")
++	// nanokube: return 206 Partial Content to bypass Cloudflare edge's
++	// 128KB chunked-response buffer. apiserver proxies kubelet's response
++	// body through unchanged, so the 206 propagates end-to-end.
++	response.WriteHeader(http.StatusPartialContent)
+ 	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
+ 		response.WriteError(http.StatusBadRequest, err)
+ 		return
+diff --git a/pkg/registry/core/pod/rest/subresources.go b/pkg/registry/core/pod/rest/subresources.go
+index f5160574bb4..bb3a1c661b4 100644
+--- a/pkg/registry/core/pod/rest/subresources.go
++++ b/pkg/registry/core/pod/rest/subresources.go
+@@ -309,6 +309,10 @@ func (r *PortForwardREST) Connect(ctx context.Context, name string, opts runtime
+ func newThrottledUpgradeAwareProxyHandler(location *url.URL, transport http.RoundTripper, wrapTransport, upgradeRequired bool, responder rest.Responder) http.Handler {
+ 	handler := proxy.NewUpgradeAwareHandler(location, transport, wrapTransport, upgradeRequired, proxy.NewErrorResponder(responder))
+ 	handler.MaxBytesPerSec = capabilities.Get().PerConnectionBandwidthLimitBytesPerSec
++	// nanokube: rewrite outgoing Host header to match the backend URL. Without
++	// this, the incoming Host (apiserver's cloudflare FQDN) is forwarded and
++	// cloudflare routes the apiserver→kubelet subrequest back to the apiserver.
++	handler.UseLocationHost = true
+ 	return handler
+ }
+ 
+diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
+index 134e163eeb3..fb0fa2008a6 100644
+--- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
++++ b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
+@@ -275,6 +275,12 @@ func handleWatch(ctx context.Context, rw rest.Watcher, scope *RequestScope, req
+ 	if timeout == 0 && minRequestTimeout > 0 {
+ 		timeout = time.Duration(float64(minRequestTimeout) * (rand.Float64() + 1.0))
+ 	}
++	// nanokube: cap watch timeouts so the apiserver closes the response
++	// frequently — this forces Cloudflare's edge to flush its buffered
++	// body. See docs/cloudflare-sse-limits.md.
++	if timeout > 5*time.Second {
++		timeout = 5 * time.Second
++	}
+ 
+ 	klog.V(3).InfoS("Starting watch", "path", req.URL.Path, "resourceVersion", opts.ResourceVersion, "labels", opts.LabelSelector, "fields", opts.FieldSelector, "sendInitialEvents", opts.SendInitialEvents, "timeout", timeout, "audit-ID", audit.GetAuditIDTruncated(ctx))
+ 	ctx, cancel := context.WithTimeout(ctx, timeout)
+diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
+index cb782f76a3e..b6eb6722bc9 100644
+--- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
++++ b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
+@@ -39,6 +39,7 @@ import (
+ 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
+ 	"k8s.io/apiserver/pkg/endpoints/metrics"
+ 	"k8s.io/apiserver/pkg/endpoints/request"
++	genericrest "k8s.io/apiserver/pkg/registry/generic/rest"
+ 	"k8s.io/apiserver/pkg/registry/rest"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+ 	"k8s.io/apiserver/pkg/util/flushwriter"
+@@ -73,6 +74,12 @@ func StreamObject(statusCode int, gv schema.GroupVersion, s runtime.NegotiatedSe
+ 	if len(contentType) == 0 {
+ 		contentType = "application/octet-stream"
+ 	}
++	// nanokube: forward the backend response's status code when the
++	// streamer recorded one (e.g. pods/log passes kubelet's 206 through so
++	// cloudflare's edge skips its 128KB chunked-response buffer).
++	if ls, ok := stream.(*genericrest.LocationStreamer); ok && ls.StatusCode != 0 {
++		statusCode = ls.StatusCode
++	}
+ 	w.Header().Set("Content-Type", contentType)
+ 	w.WriteHeader(statusCode)
+ 	// Flush headers, if possible
+diff --git a/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go b/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
+index b1a61991bf5..c2b49b9f32d 100644
+--- a/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
++++ b/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
+@@ -43,6 +43,12 @@ type LocationStreamer struct {
+ 	Flush           bool
+ 	ResponseChecker HttpResponseChecker
+ 	RedirectChecker func(req *http.Request, via []*http.Request) error
++	// nanokube: InputStream records the backend's HTTP status code here so
++	// StreamObject can forward it to the client instead of the caller's
++	// default 200. Used by pods/log so kubelet's 206 Partial Content (which
++	// bypasses Cloudflare's 128KB chunked-response buffer) propagates
++	// end-to-end.
++	StatusCode int
+ 	// TLSVerificationErrorCounter is an optional value that will Inc every time a TLS error is encountered.  This can
+ 	// be wired a single prometheus counter instance to get counts overall.
+ 	TLSVerificationErrorCounter CounterMetric
+@@ -104,6 +110,10 @@ func (s *LocationStreamer) InputStream(ctx context.Context, apiVersion, acceptHe
+ 		}
+ 	}
+ 
++	// nanokube: capture backend status so StreamObject can forward it
++	// end-to-end.
++	s.StatusCode = resp.StatusCode
++
+ 	contentType = s.ContentType
+ 	if len(contentType) == 0 {
+ 		contentType = resp.Header.Get("Content-Type")

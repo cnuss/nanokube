@@ -1,6 +1,6 @@
 [submodule "kubernetes"]
 	path = kubernetes
 	url = https://github.com/kubernetes/kubernetes.git
-	branch = release-1.35
+	branch = release-1.36
 	shallow = true
 	ignore = dirty

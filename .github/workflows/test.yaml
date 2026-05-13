@@ -2,9 +2,9 @@ name: Run Tests
 
 on:
   push:
-    branches: ["1.35"]
+    branches: ["1.36"]
   pull_request:
-    branches: ["1.35"]
+    branches: ["1.36"]
   workflow_dispatch:
 
 concurrency:

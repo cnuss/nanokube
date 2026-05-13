@@ -229,7 +229,6 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 
 func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 	k.kubeletDependenciesOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletService)
 		k.kubeletDependencies = &kubelet.Dependencies{
 			// These dependencies are required by the kubelet
 			RemoteRuntimeService: nil,
@@ -266,31 +265,31 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 		k.kubeletDependencies.CAdvisorInterface = k.Kubelet().DefaultBackend()
 		k.kubeletDependencies.ContainerManager = k.Kubelet().DefaultBackend().Manager()
 		k.kubeletDependencies.TLSOptions = &server.TLSOptions{
-			Config: &tls.Config{
-				NextProtos: func() []string {
-					if !v1.HTTP2 {
-						return []string{"http/1.1"}
-					}
-					return []string{"h2", "http/1.1"}
-				}(),
-				MinVersion: func() uint16 {
-					if v, err := cliflag.TLSVersion(k.KubeletConfiguration().TLSMinVersion); err == nil {
-						return v
-					}
-					return cliflag.DefaultTLSVersion()
-				}(),
-				CipherSuites: func() []uint16 {
-					if v, err := cliflag.TLSCipherSuites(k.KubeletConfiguration().TLSCipherSuites); err == nil {
-						return v
-					}
-					return nil
-				}(),
-			},
+			MinVersion: func() uint16 {
+				if v, err := cliflag.TLSVersion(k.KubeletConfiguration().TLSMinVersion); err == nil {
+					return v
+				}
+				return cliflag.DefaultTLSVersion()
+			}(),
+			CipherSuites: func() []uint16 {
+				if v, err := cliflag.TLSCipherSuites(k.KubeletConfiguration().TLSCipherSuites); err == nil {
+					return v
+				}
+				return nil
+			}(),
 			CertFile: k.Kubelet().Options().FilePathAt(v1.CertFile),
 			KeyFile:  k.Kubelet().Options().FilePathAt(v1.KeyFile),
 		}
+		k.kubeletDependencies.TLSConfig = &tls.Config{
+			NextProtos: func() []string {
+				if !v1.HTTP2 {
+					return []string{"http/1.1"}
+				}
+				return []string{"h2", "http/1.1"}
+			}(),
+		}
 		k.kubeletDependencies.ProbeManager = nil
-		k.kubeletDependencies.Services = k.Kubelet().Services(tunnel.URL())
+		// TODO(1.36): Dependencies.Services field was removed; backend WebServices need a new mount point
 		k.kubeletDependencies.VolumePlugins = k.Kubelet().Host().VolumePlugins()
 		k.kubeletDependencies.OSInterface = k.Kubelet().Host()
 		k.kubeletDependencies.Mounter = k.Kubelet().Host()
@@ -382,6 +381,10 @@ func (k *KubeImpl) AnnotatedEventf(object runtime.Object, annotations map[string
 func (k *KubeImpl) Event(object runtime.Object, eventtype string, reason string, message string) {
 	k.Logf(object, eventtype, reason, "%s", message)
 	k.recorder().Event(object, eventtype, reason, message)
+}
+
+func (k *KubeImpl) WithLogger(klog.Logger) record.EventRecorderLogger {
+	return k
 }
 
 func (k *KubeImpl) Eventf(object runtime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
