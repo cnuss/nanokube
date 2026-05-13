@@ -4,3 +4,4 @@ tests/artifacts/
 kind-logs-*
 cri-tools/critest
 chainsaw-report*
+.claude/settings.local.json

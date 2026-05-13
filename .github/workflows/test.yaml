@@ -47,34 +47,14 @@ jobs:
       - id: collect
         uses: ./.github/actions/collect
 
-  linux:
-    needs: collect
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        suite:
-          - smoke
-          # - sanity
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: ./.github/actions/test
-        with:
-          suite: ${{ matrix.suite }}
-          artifact: ${{ fromJSON(needs.collect.outputs.artifacts)['ubuntu-24.04'] }}
-          log-name: nanokube-log-${{ matrix.suite }}
-
-  cross-platform:
-    needs: [collect, linux]
+  test:
+    needs: [collect]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         runner:
+          - ubuntu-24.04
           - ubuntu-24.04-arm
           - macos-26
           - macos-26-intel
