@@ -3,12 +3,8 @@ name: Build
 on:
   push:
     branches: ["1.35"]
-    paths-ignore:
-      - .github/workflows/inspect.yaml
   pull_request:
     branches: ["1.35"]
-    paths-ignore:
-      - .github/workflows/inspect.yaml
   workflow_dispatch:
 
 concurrency:
@@ -27,11 +23,7 @@ jobs:
           - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-      - uses: ./.github/actions/build
+      - uses: cnuss/nanokube/.github/actions/build@github
         with:
           runner: ${{ matrix.runner }}
 
@@ -41,32 +33,18 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
       - id: collect
-        uses: ./.github/actions/collect
+        uses: cnuss/nanokube/.github/actions/collect@github
 
   smoke:
     needs: collect
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runner:
-          - ubuntu-24.04
-          - macos-26
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: ./.github/actions/test
+      - uses: cnuss/nanokube/.github/actions/test@github
         with:
           suite: smoke
-          artifact: ${{ fromJSON(needs.collect.outputs.artifacts)[matrix.runner] }}
-          log-name: nanokube-log-${{ matrix.runner }}-smoke
+          artifact: ${{ fromJSON(needs.collect.outputs.artifacts)['ubuntu-24.04'] }}
+          log-name: nanokube-log-ubuntu-24.04-smoke
 
   release:
     needs: [collect, smoke]
@@ -81,7 +59,9 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - uses: ncipollo/release-action@v1
+      # TEMP: release disabled
+      - if: false
+        uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
           name: ${{ github.ref_name }}

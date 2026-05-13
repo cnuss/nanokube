@@ -3,12 +3,8 @@ name: Run Tests
 on:
   push:
     branches: ["1.35"]
-    paths-ignore:
-      - .github/workflows/inspect.yaml
   pull_request:
     branches: ["1.35"]
-    paths-ignore:
-      - .github/workflows/inspect.yaml
   workflow_dispatch:
 
 concurrency:
@@ -27,11 +23,7 @@ jobs:
           - macos-26-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-      - uses: ./.github/actions/build
+      - uses: cnuss/nanokube/.github/actions/build@github
         with:
           runner: ${{ matrix.runner }}
 
@@ -41,11 +33,8 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
       - id: collect
-        uses: ./.github/actions/collect
+        uses: cnuss/nanokube/.github/actions/collect@github
 
   test:
     needs: [collect]
@@ -62,13 +51,9 @@ jobs:
           - smoke
           # - sanity
     steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - uses: ./.github/actions/test
+      - uses: cnuss/nanokube/.github/actions/test@github
         with:
           suite: ${{ matrix.suite }}
           artifact: ${{ fromJSON(needs.collect.outputs.artifacts)[matrix.runner] }}
           log-name: nanokube-log-${{ matrix.runner }}-${{ matrix.suite }}
+          chainsaw-args: ${{ runner.os == 'macOS' && '--apply-timeout=1h --assert-timeout=1h --cleanup-timeout=1h --delete-timeout=1h --error-timeout=1h --exec-timeout=1h' || '' }}
