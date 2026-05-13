@@ -59,12 +59,16 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # TEMP: release disabled
-      - if: false
-        uses: ncipollo/release-action@v1
+      - id: version
+        run: |
+          BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
+          chmod +x "$BIN"
+          echo "version=$($BIN --version)" >> "$GITHUB_OUTPUT"
+
+      - uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
           allowUpdates: true
           removeArtifacts: true
           artifacts: artifacts/*

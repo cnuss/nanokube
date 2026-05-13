@@ -84,6 +84,8 @@ var _ v1.Kubelet = &KubeletImpl{}
 func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	ctx, cancel := context.WithCancelCause(context.Background())
 
+	cmd.SetVersionTemplate("{{.Version}}\n")
+
 	options := nanokube.NewOptions(cmd)
 
 	kubelet := &KubeletImpl{
@@ -268,7 +270,7 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		kubelet.Cancel(nanokube.NewError(err).WithCode(1))
 	} else if !ran {
-		kubelet.Cancel(nil)
+		os.Exit(0)
 	}
 
 	sigCh := make(chan os.Signal, 1)
