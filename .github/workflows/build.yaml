@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: nanokube-*
+          pattern: nanokube-${{ github.ref_name }}-*
           path: artifacts
           merge-multiple: true
 
