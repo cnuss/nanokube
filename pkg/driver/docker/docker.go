@@ -30,8 +30,8 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/emicklei/go-restful/v3"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	tools "k8s.io/cri-streaming/pkg/streaming/remotecommand"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	tools "k8s.io/cri-streaming/pkg/streaming/remotecommand"
 	utilexec "k8s.io/utils/exec"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"

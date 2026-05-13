@@ -691,7 +691,7 @@ func (c *managerImpl) UpdateAllocatedDevices() {
 }
 
 func (c *managerImpl) UpdateAllocatedResourcesStatus(pod *corev1.Pod, status *corev1.PodStatus) {
-	nanokube.Unimplemented()
+	// TODO(partial): surface device-plugin / DRA resource health into status.ContainerStatuses[].AllocatedResourcesStatus
 }
 
 func (c *managerImpl) UpdatePluginResources(*framework.NodeInfo, *lifecycle.PodAdmitAttributes) error {
@@ -736,7 +736,7 @@ func (c *managerImpl) GetAllPodsFromCgroups() (map[types.UID]cm.CgroupName, erro
 }
 
 func (c *managerImpl) GetPodCgroupConfig(pod *corev1.Pod, resource corev1.ResourceName) (*cm.ResourceConfig, error) {
-	return nil, nanokube.Unimplemented()
+	return nil, nil // TODO(partial): may need to probe VM cgroups via RunOnce
 }
 
 func (c *managerImpl) GetPodCgroupMemoryUsage(pod *corev1.Pod) (uint64, error) {
