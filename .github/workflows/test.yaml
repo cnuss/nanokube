@@ -37,19 +37,15 @@ jobs:
 
   collect:
     outputs:
-      artifacts: ${{ steps.artifacts.outputs.map }}
+      artifacts: ${{ steps.collect.outputs.artifacts }}
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
         with:
-          pattern: build-meta-*
-          path: meta
-          merge-multiple: true
-      - id: artifacts
-        run: |
-          map=$(jq -sc 'reduce .[] as $item ({}; . + {($item.runner): $item.artifact})' meta/*.json)
-          echo "map=$map" >> "$GITHUB_OUTPUT"
+          fetch-depth: 1
+      - id: collect
+        uses: ./.github/actions/collect
 
   linux:
     needs: collect
