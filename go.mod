@@ -1,6 +1,6 @@
 module github.com/cnuss/nanokube
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/breml/rootcerts v0.3.5

@@ -49,7 +49,6 @@ The 1.36 patch set still includes the apiserver↔kubelet streaming workarounds 
 - `kubectl logs` — both `--tail` (one-shot) and `-f` (follow), to cover the kubelet 206 + apiserver status-forward + Cloudflare flush path
 - `kubectl exec` — interactive `sh` + non-interactive `command` form, to cover the upgrade-aware proxy with `UseLocationHost = true`
 - `kubectl attach` — same code path as exec but the attach branch
-- `kubectl port-forward` — different upgrade-aware proxy invocation; covers PortForward
 - `kubectl get pods -w` — watch through the Cloudflare-fronted apiserver to cover the 5s timeout cap
 - A pod that sets `securityContext.runAsUser` (uniformly across containers) and mounts a projected/secret/configmap volume — exercises the `atomic_writer.lchown` path that section B parks a fix for, so the macOS chown failure surfaces in CI rather than silently breaking real workloads.
 
