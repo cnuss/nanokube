@@ -21,14 +21,17 @@ spec:
                 availableReplicas: 1
                 readyReplicas: 1
     - name: assert-pod-logs
-      description: |
-        Exercises kubectl logs end-to-end (kubelet 206 + apiserver
-        StatusCode forwarding + cloudflare-edge flush) by checking
-        the assert container's most recent log line.
+      description: kubectl logs end-to-end — one-shot tail and --follow.
       try:
         - script:
             content: |
               line=$(kubectl logs -n $NAMESPACE -l app=smoke-deploy -c assert --tail=1)
               test "$line" = "all checks passed, creating /mnt/pvc/ok"
+            check:
+              ($error == null): true
+        - script:
+            content: |
+              kubectl logs -n $NAMESPACE -l app=smoke-deploy -c httpd --follow --tail=0 \
+                | grep -m3 "response:200"
             check:
               ($error == null): true
