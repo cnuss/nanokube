@@ -65,8 +65,8 @@ func (s *StreamsImpl) Service() *restful.WebService {
 	}
 
 	ws.Path(s.driver.BaseURL().JoinPath("streams").Path).
-		Route(ws.POST("/{streamID}").To(handler)).
-		Route(ws.GET("/{streamID}").To(handler))
+		Route(ws.POST("/{streamID}").To(handler).Operation("connectPostStream")).
+		Route(ws.GET("/{streamID}").To(handler).Operation("connectGetStream"))
 
 	return ws
 }

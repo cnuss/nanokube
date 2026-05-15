@@ -73,21 +73,21 @@ func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
 	}
 }
 
-func (h *ApiServerImpl) Context() context.Context {
-	return h.ctx
+func (a *ApiServerImpl) Context() context.Context {
+	return a.ctx
 }
 
-func (h *ApiServerImpl) Ready() <-chan struct{} {
-	return h.ready
+func (a *ApiServerImpl) Ready() <-chan struct{} {
+	return a.ready
 }
 
-func (h *ApiServerImpl) Done() <-chan struct{} {
-	return h.done
+func (a *ApiServerImpl) Done() <-chan struct{} {
+	return a.done
 }
 
-func (h *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInformerFactory, *storage.DefaultStorageFactory) {
-	h.genericConfigOnce.Do(func() {
-		opts := h.kubelet.Kube().ApiServerOptions()
+func (a *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInformerFactory, *storage.DefaultStorageFactory) {
+	a.genericConfigOnce.Do(func() {
+		opts := a.kubelet.Kube().ApiServerOptions()
 		genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
 			opts.CompletedOptions,
 			[]*runtime.Scheme{legacyscheme.Scheme, apiextensionsapiserver.Scheme, aggregatorscheme.Scheme},
@@ -95,133 +95,141 @@ func (h *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInforme
 			generatedopenapi.GetOpenAPIDefinitions,
 		)
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to build generic config: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to build generic config: %w", err)))
 			return
 		}
-		h.serverConfig = genericConfig
-		h.sharedInformerFactory = versionedInformers
-		h.defaultStorageFactory = h.kubelet.Storage().WithFactory(storageFactory).Factory()
+		a.serverConfig = genericConfig
+		a.sharedInformerFactory = versionedInformers
+		a.defaultStorageFactory = a.kubelet.Storage().WithFactory(storageFactory).Factory()
 	})
-	return h.serverConfig, h.sharedInformerFactory, h.defaultStorageFactory
+	return a.serverConfig, a.sharedInformerFactory, a.defaultStorageFactory
 }
 
-func (h *ApiServerImpl) ServerConfig() *server.Config {
-	serverConfig, _, _ := h.genericConfig()
+func (a *ApiServerImpl) ServerConfig() *server.Config {
+	serverConfig, _, _ := a.genericConfig()
 	return serverConfig
 }
 
-func (h *ApiServerImpl) SharedInformerFactory() informers.SharedInformerFactory {
-	_, versionedInformers, _ := h.genericConfig()
+func (a *ApiServerImpl) SharedInformerFactory() informers.SharedInformerFactory {
+	_, versionedInformers, _ := a.genericConfig()
 	return versionedInformers
 }
 
-func (h *ApiServerImpl) DefaultStorageFactory() *storage.DefaultStorageFactory {
-	_, _, storageFactory := h.genericConfig()
-	return h.kubelet.Storage().WithFactory(storageFactory).Factory()
+func (a *ApiServerImpl) DefaultStorageFactory() *storage.DefaultStorageFactory {
+	_, _, storageFactory := a.genericConfig()
+	return a.kubelet.Storage().WithFactory(storageFactory).Factory()
 }
 
-func (h *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.ServiceResolver, []admission.PluginInitializer) {
-	h.kubeAPIServerConfigOnce.Do(func() {
-		opts := h.kubelet.Kube().ApiServerOptions()
-		controlplaneConfig, serviceResolver, pluginInitializers, err := app.CreateKubeAPIServerConfig(*opts, h.ServerConfig(), h.SharedInformerFactory(), h.DefaultStorageFactory())
+func (a *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.ServiceResolver, []admission.PluginInitializer) {
+	a.kubeAPIServerConfigOnce.Do(func() {
+		opts := a.kubelet.Kube().ApiServerOptions()
+		controlplaneConfig, serviceResolver, pluginInitializers, err := app.CreateKubeAPIServerConfig(*opts, a.ServerConfig(), a.SharedInformerFactory(), a.DefaultStorageFactory())
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
 			return
 		}
-		h.controlplaneConfig = controlplaneConfig
-		h.serviceResolver = serviceResolver
-		h.pluginInitializers = pluginInitializers
+		a.controlplaneConfig = controlplaneConfig
+		a.serviceResolver = serviceResolver
+		a.pluginInitializers = pluginInitializers
 	})
-	return h.controlplaneConfig, h.serviceResolver, h.pluginInitializers
+	return a.controlplaneConfig, a.serviceResolver, a.pluginInitializers
 }
 
-func (h *ApiServerImpl) ControlPlaneConfig() *controlplane.Config {
-	controlplaneConfig, _, _ := h.kubeAPIServerConfig()
-	controlplaneConfig.ControlPlane.StorageFactory = h.kubelet.Storage()
+func (a *ApiServerImpl) ControlPlaneConfig() *controlplane.Config {
+	controlplaneConfig, _, _ := a.kubeAPIServerConfig()
+	controlplaneConfig.ControlPlane.StorageFactory = a.kubelet.Storage()
 	return controlplaneConfig
 }
 
-func (h *ApiServerImpl) ServiceResolver() apiserver.ServiceResolver {
-	_, serviceResolver, _ := h.kubeAPIServerConfig()
+func (a *ApiServerImpl) ServiceResolver() apiserver.ServiceResolver {
+	_, serviceResolver, _ := a.kubeAPIServerConfig()
 	return serviceResolver
 }
 
-func (h *ApiServerImpl) PluginInitializers() []admission.PluginInitializer {
-	_, _, pluginInitializers := h.kubeAPIServerConfig()
+func (a *ApiServerImpl) PluginInitializers() []admission.PluginInitializer {
+	_, _, pluginInitializers := a.kubeAPIServerConfig()
 	return pluginInitializers
 }
 
-func (h *ApiServerImpl) ApiExtensions() *apiextensionsapiserver.Config {
-	h.apiExtensionsOnce.Do(func() {
-		opts := h.kubelet.Kube().ApiServerOptions()
-		apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*h.ControlPlaneConfig().ControlPlane.Generic, h.ControlPlaneConfig().ControlPlane.VersionedInformers, h.PluginInitializers(), opts.CompletedOptions, opts.MasterCount,
-			h.ServiceResolver(), webhook.NewDefaultAuthenticationInfoResolverWrapper(h.ControlPlaneConfig().ControlPlane.ProxyTransport, h.ControlPlaneConfig().ControlPlane.Generic.EgressSelector, h.ControlPlaneConfig().ControlPlane.Generic.LoopbackClientConfig, h.ControlPlaneConfig().ControlPlane.Generic.TracerProvider))
+func (a *ApiServerImpl) ApiExtensions() *apiextensionsapiserver.Config {
+	a.apiExtensionsOnce.Do(func() {
+		opts := a.kubelet.Kube().ApiServerOptions()
+		apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*a.ControlPlaneConfig().ControlPlane.Generic, a.ControlPlaneConfig().ControlPlane.VersionedInformers, a.PluginInitializers(), opts.CompletedOptions, opts.MasterCount,
+			a.ServiceResolver(), webhook.NewDefaultAuthenticationInfoResolverWrapper(a.ControlPlaneConfig().ControlPlane.ProxyTransport, a.ControlPlaneConfig().ControlPlane.Generic.EgressSelector, a.ControlPlaneConfig().ControlPlane.Generic.LoopbackClientConfig, a.ControlPlaneConfig().ControlPlane.Generic.TracerProvider))
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
 			return
 		}
-		h.apiExtensions = apiExtensions
+		a.apiExtensions = apiExtensions
 	})
-	return h.apiExtensions
+	return a.apiExtensions
 }
 
-func (h *ApiServerImpl) ApiServerConfig() *apiserver.Config {
-	h.apiServerConfigOnce.Do(func() {
-		opts := h.kubelet.Kube().ApiServerOptions()
-		apiServerConfig, err := controlplaneapiserver.CreateAggregatorConfig(*h.ControlPlaneConfig().ControlPlane.Generic, opts.CompletedOptions, h.ControlPlaneConfig().ControlPlane.VersionedInformers, h.ServiceResolver(), h.ControlPlaneConfig().ControlPlane.ProxyTransport, h.ControlPlaneConfig().ControlPlane.Extra.PeerProxy, h.PluginInitializers())
+func (a *ApiServerImpl) ApiServerConfig() *apiserver.Config {
+	a.apiServerConfigOnce.Do(func() {
+		opts := a.kubelet.Kube().ApiServerOptions()
+		apiServerConfig, err := controlplaneapiserver.CreateAggregatorConfig(*a.ControlPlaneConfig().ControlPlane.Generic, opts.CompletedOptions, a.ControlPlaneConfig().ControlPlane.VersionedInformers, a.ServiceResolver(), a.ControlPlaneConfig().ControlPlane.ProxyTransport, a.ControlPlaneConfig().ControlPlane.Extra.PeerProxy, a.PluginInitializers())
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
 			return
 		}
-		h.apiServerConfig = apiServerConfig
+		a.apiServerConfig = apiServerConfig
 	})
-	return h.apiServerConfig
+	return a.apiServerConfig
 }
 
-func (h *ApiServerImpl) Tunnel() v1.Tunnel {
-	return h.kubelet.Tunnel(v1.APIServerService)
+func (a *ApiServerImpl) Tunnel() v1.Tunnel {
+	return a.kubelet.Tunnel(v1.APIServerService)
 }
 
-func (h *ApiServerImpl) Client() v1.Client {
-	h.runOnce.Do(func() {
+func (a *ApiServerImpl) Client() v1.Client {
+	a.runOnce.Do(func() {
 		config := &app.Config{
-			Options:       *h.kubelet.Kube().ApiServerOptions(),
-			KubeAPIs:      h.ControlPlaneConfig(),
-			ApiExtensions: h.ApiExtensions(),
-			Aggregator:    h.ApiServerConfig(),
+			Options:       *a.kubelet.Kube().ApiServerOptions(),
+			KubeAPIs:      a.ControlPlaneConfig(),
+			ApiExtensions: a.ApiExtensions(),
+			Aggregator:    a.ApiServerConfig(),
 		}
 		completed, err := config.Complete()
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to complete API server config: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to complete API server config: %w", err)))
 			return
 		}
 
 		server, err := app.CreateServerChain(completed)
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to create API server: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create API server: %w", err)))
 			return
 		}
 
-		<-Await(h.ctx, h.kubelet.Storage().Ready())
+		container := server.GenericAPIServer.Handler.GoRestfulContainer
+		// ws := new(restful.WebService)
+		// mux := server.GenericAPIServer.Handler.NonGoRestfulMux
+		for _, ws := range a.kubelet.Services(a.Tunnel().URL()) {
+			container.Add(ws)
+			Log.Info("added API service", "rootPath", ws.RootPath())
+		}
+
+		<-Await(a.ctx, a.kubelet.Storage().Ready())
 
 		prepared, err := server.PrepareRun()
 		if err != nil {
-			h.kubelet.Cancel(NewError(fmt.Errorf("failed to prepare API server: %w", err)))
+			a.kubelet.Cancel(NewError(fmt.Errorf("failed to prepare API server: %w", err)))
 			return
 		}
 
 		loopback := prepared.GenericAPIServer.LoopbackClientConfig
-		h.client = NewClient(loopback)
+		a.client = NewClient(loopback)
 
 		go func() {
 			for {
-				if _, err := h.client.CoreV1().Namespaces().Get(h.ctx, "kube-system", metav1.GetOptions{}); err == nil {
+				if _, err := a.client.CoreV1().Namespaces().Get(a.ctx, "kube-system", metav1.GetOptions{}); err == nil {
 					Log.Info("apiserver is ready")
-					close(h.ready)
+					close(a.ready)
 					break
 				}
 				select {
-				case <-h.ctx.Done():
+				case <-a.ctx.Done():
 					return
 				case <-time.After(1 * time.Second):
 				}
@@ -229,22 +237,22 @@ func (h *ApiServerImpl) Client() v1.Client {
 		}()
 
 		go func() {
-			defer close(h.done)
-			if err := prepared.Run(h.ctx); err != nil {
-				h.kubelet.Cancel(NewError(fmt.Errorf("API server exited with error: %w", err)).WithCode(1))
+			defer close(a.done)
+			if err := prepared.Run(a.ctx); err != nil {
+				a.kubelet.Cancel(NewError(fmt.Errorf("API server exited with error: %w", err)).WithCode(1))
 			}
 			Log.Info("apiserver shut down")
 		}()
 	})
 
-	<-h.Ready()
-	return h.client
+	<-a.Ready()
+	return a.client
 }
 
-func (h *ApiServerImpl) CACerts() []*x509.Certificate {
-	h.caCertsOnce.Do(func() {
-		h.caCerts = h.kubelet.Tunnel(v1.APIServerService).CACerts()
+func (a *ApiServerImpl) CACerts() []*x509.Certificate {
+	a.caCertsOnce.Do(func() {
+		a.caCerts = a.kubelet.Tunnel(v1.APIServerService).CACerts()
 		// TODO(incomplete): add generated apiserver.crt to CA certs
 	})
-	return h.caCerts
+	return a.caCerts
 }
