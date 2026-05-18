@@ -157,7 +157,6 @@ type ApiServer interface {
 	Context() context.Context
 	Client() Client
 	Done() <-chan struct{}
-	Tunnel() Tunnel
 	CACerts() []*x509.Certificate
 }
 

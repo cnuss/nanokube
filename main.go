@@ -127,8 +127,8 @@ func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 			kubeconfig = clientcmdapi.NewConfig()
 		}
 
-		internal := kubelet.Client().WithTunnel(kubelet.ApiServer().Tunnel(), true)
-		external := kubelet.Client().WithTunnel(kubelet.ApiServer().Tunnel(), false)
+		internal := kubelet.Client().WithTunnel(kubelet.Tunnel(v1.APIServerTunnel), true)
+		external := kubelet.Client().WithTunnel(kubelet.Tunnel(v1.APIServerTunnel), false)
 
 		if err := internal.WriteKubeconfig(kubelet.Options().FilePathAt(v1.KubeconfigFile)); err != nil {
 			nanokube.Log.Error("failed to write internal kubeconfig", "path", string(kubelet.Options().DataDir())+string(v1.KubeconfigFile), "error", err)

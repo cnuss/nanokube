@@ -5,8 +5,8 @@ import (
 	"sync"
 )
 
-// Await returns a channel that closes when either ctx is done or any of sigs
-// closes, whichever fires first. Useful for "wait for one of these signals,
+// Await returns a channel that closes once all of sigs have closed, or
+// immediately if ctx is done. Useful for "wait for all of these signals,
 // but respect ctx" without scattering selects across call sites.
 func Await(ctx context.Context, sigs ...<-chan struct{}) <-chan struct{} {
 	out := make(chan struct{})
@@ -14,8 +14,15 @@ func Await(ctx context.Context, sigs ...<-chan struct{}) <-chan struct{} {
 	closeOut := func() { once.Do(func() { close(out) }) }
 
 	go func() { <-ctx.Done(); closeOut() }()
-	for _, sig := range sigs {
-		go func(s <-chan struct{}) { <-s; closeOut() }(sig)
-	}
+	go func() {
+		for _, sig := range sigs {
+			select {
+			case <-sig:
+			case <-ctx.Done():
+				return
+			}
+		}
+		closeOut()
+	}()
 	return out
 }

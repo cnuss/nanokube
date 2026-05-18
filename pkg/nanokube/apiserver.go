@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/storage"
@@ -32,15 +32,19 @@ type ApiServerImpl struct {
 	kubelet v1.Kubelet
 
 	appConfig     *app.Config
-	client        v1.Client
 	appConfigOnce sync.Once
 
 	caCerts     []*x509.Certificate
 	caCertsOnce sync.Once
 
-	runOnce sync.Once
-	ready   chan struct{}
-	done    chan struct{}
+	client      v1.Client
+	clientOnce  sync.Once
+	clientReady chan struct{}
+
+	ready     chan struct{}
+	readyOnce sync.Once
+
+	done chan struct{}
 
 	serverConfig          *server.Config
 	sharedInformerFactory informers.SharedInformerFactory
@@ -57,6 +61,9 @@ type ApiServerImpl struct {
 
 	apiServerConfig     *apiserver.Config
 	apiServerConfigOnce sync.Once
+
+	apiAggregator     *apiserver.APIAggregator
+	apiAggregatorOnce sync.Once
 }
 
 var _ v1.ApiServer = &ApiServerImpl{}
@@ -66,10 +73,11 @@ func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
 	context.AfterFunc(kubelet.Context(), cancel)
 
 	return &ApiServerImpl{
-		ctx:     ctx,
-		kubelet: kubelet,
-		ready:   make(chan struct{}),
-		done:    make(chan struct{}),
+		ctx:         ctx,
+		kubelet:     kubelet,
+		ready:       make(chan struct{}),
+		clientReady: make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 }
 
@@ -78,6 +86,23 @@ func (a *ApiServerImpl) Context() context.Context {
 }
 
 func (a *ApiServerImpl) Ready() <-chan struct{} {
+	a.readyOnce.Do(func() {
+		go func() {
+			<-Await(a.ctx, a.clientReady)
+			for {
+				if _, err := a.client.CoreV1().Namespaces().Get(a.ctx, "kube-system", metav1.GetOptions{}); err == nil {
+					Log.Info("apiserver is ready")
+					close(a.ready)
+					break
+				}
+				select {
+				case <-a.ctx.Done():
+					return
+				case <-time.After(1 * time.Second):
+				}
+			}
+		}()
+	})
 	return a.ready
 }
 
@@ -178,12 +203,8 @@ func (a *ApiServerImpl) ApiServerConfig() *apiserver.Config {
 	return a.apiServerConfig
 }
 
-func (a *ApiServerImpl) Tunnel() v1.Tunnel {
-	return a.kubelet.Tunnel(v1.KubeletTunnel)
-}
-
-func (a *ApiServerImpl) Client() v1.Client {
-	a.runOnce.Do(func() {
+func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
+	a.apiAggregatorOnce.Do(func() {
 		config := &app.Config{
 			Options:       *a.kubelet.Kube().ApiServerOptions(),
 			KubeAPIs:      a.ControlPlaneConfig(),
@@ -202,13 +223,13 @@ func (a *ApiServerImpl) Client() v1.Client {
 			return
 		}
 
-		container := server.GenericAPIServer.Handler.GoRestfulContainer
-		// ws := new(restful.WebService)
-		// mux := server.GenericAPIServer.Handler.NonGoRestfulMux
-		for _, ws := range a.kubelet.Services(a.Tunnel().URL()) {
-			container.Add(ws)
-			Log.Info("added API service", "rootPath", ws.RootPath())
-		}
+		// container := server.GenericAPIServer.Handler.GoRestfulContainer
+		// // ws := new(restful.WebService)
+		// // mux := server.GenericAPIServer.Handler.NonGoRestfulMux
+		// for _, ws := range a.kubelet.Services(a.Tunnel().URL()) {
+		// 	container.Add(ws)
+		// 	Log.Info("added API service", "rootPath", ws.RootPath())
+		// }
 
 		<-Await(a.ctx, a.kubelet.Storage().Ready())
 
@@ -218,24 +239,6 @@ func (a *ApiServerImpl) Client() v1.Client {
 			return
 		}
 
-		loopback := prepared.GenericAPIServer.LoopbackClientConfig
-		a.client = NewClient(loopback)
-
-		go func() {
-			for {
-				if _, err := a.client.CoreV1().Namespaces().Get(a.ctx, "kube-system", metav1.GetOptions{}); err == nil {
-					Log.Info("apiserver is ready")
-					close(a.ready)
-					break
-				}
-				select {
-				case <-a.ctx.Done():
-					return
-				case <-time.After(1 * time.Second):
-				}
-			}
-		}()
-
 		go func() {
 			defer close(a.done)
 			if err := prepared.Run(a.ctx); err != nil {
@@ -243,9 +246,20 @@ func (a *ApiServerImpl) Client() v1.Client {
 			}
 			Log.Info("apiserver shut down")
 		}()
+
+		a.apiAggregator = prepared.APIAggregator
+	})
+	return a.apiAggregator
+}
+
+func (a *ApiServerImpl) Client() v1.Client {
+	a.clientOnce.Do(func() {
+		loopback := a.APIAggregator().GenericAPIServer.LoopbackClientConfig
+		a.client = NewClient(loopback)
+		close(a.clientReady)
 	})
 
-	<-a.Ready()
+	<-Await(a.ctx, a.clientReady, a.Ready())
 	return a.client
 }
 

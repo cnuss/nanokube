@@ -360,7 +360,7 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 
 func (k *KubeImpl) Environ() []string {
 	return []string{
-		"KUBERNETES_SERVICE_HOST=" + k.Kubelet().ApiServer().Tunnel().FQDN(),
+		"KUBERNETES_SERVICE_HOST=" + k.Kubelet().Tunnel(v1.APIServerTunnel).FQDN(),
 		"KUBERNETES_SERVICE_PORT=443",
 	}
 }
