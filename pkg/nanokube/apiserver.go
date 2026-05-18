@@ -257,11 +257,6 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			gs.RunPostStartHooks(a.ctx)
 
 			<-a.ctx.Done()
-
-			if err := gs.RunPreShutdownHooks(); err != nil {
-				Log.Warn("apiserver pre-shutdown hooks failed", "error", err)
-			}
-
 			<-listenerStoppedCh
 			<-stoppedCh
 			Log.Info("apiserver shut down")

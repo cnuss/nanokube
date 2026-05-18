@@ -590,6 +590,7 @@ func (k *KubeletImpl) Run() v1.Kubelet {
 			KubeletConfiguration: *k.Kube().KubeletConfiguration(),
 		}, k.Kube().KubeletDependencies()); err != nil {
 			k.Cancel(nanokube.NewError(err).WithCode(1))
+			return
 		}
 	})
 	return k

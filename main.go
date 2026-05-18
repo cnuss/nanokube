@@ -57,6 +57,7 @@ func main() {
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
+		OnCancel(runPreShutdownHooks(kubelet)).
 		OnCancel(removeStaticPods(kubelet), cordonAndDrain(kubelet), stopSandboxes(kubelet)).
 		OnCancel(deleteNode(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
@@ -65,6 +66,13 @@ func main() {
 		Run().Done()
 
 	os.Exit(exitCode)
+}
+
+func runPreShutdownHooks(kubelet v1.Kubelet) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		gs := kubelet.ApiServer().APIAggregator().GenericAPIServer
+		gs.RunPreShutdownHooks()
+	}
 }
 
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {

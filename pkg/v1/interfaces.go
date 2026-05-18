@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	cri "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/kube-aggregator/pkg/apiserver"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet"
@@ -158,6 +159,8 @@ type ApiServer interface {
 	Client() Client
 	Done() <-chan struct{}
 	CACerts() []*x509.Certificate
+
+	APIAggregator() *apiserver.APIAggregator
 }
 
 type Storage interface {
