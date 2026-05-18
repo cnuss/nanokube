@@ -223,14 +223,6 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			return
 		}
 
-		// container := server.GenericAPIServer.Handler.GoRestfulContainer
-		// // ws := new(restful.WebService)
-		// // mux := server.GenericAPIServer.Handler.NonGoRestfulMux
-		// for _, ws := range a.kubelet.Services(a.Tunnel().URL()) {
-		// 	container.Add(ws)
-		// 	Log.Info("added API service", "rootPath", ws.RootPath())
-		// }
-
 		<-Await(a.ctx, a.kubelet.Storage().Ready())
 
 		prepared, err := server.PrepareRun()
@@ -239,15 +231,41 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			return
 		}
 
+		a.apiAggregator = prepared.APIAggregator
+
 		go func() {
 			defer close(a.done)
-			if err := prepared.Run(a.ctx); err != nil {
-				a.kubelet.Cancel(NewError(fmt.Errorf("API server exited with error: %w", err)).WithCode(1))
+			gs := a.apiAggregator.GenericAPIServer
+			defer gs.Destroy()
+
+			// TODO(partial):Inlined from preparedGenericAPIServer.RunWithContext. Skipped, all afe for single-replica no-LB no-audit:
+			// - ShutdownDelay: gives an upstream LB time to drain this replica before the listener closes.
+			// - SendRetryAfter: answers new requests with 429+Retry-After during drain instead of dropping.
+			// - Active-Watch Drain: rate-limits closing long-running watches to spread reconnect load across replicas.
+			// - MuxAndDiscoveryComplete: signal that all delegates have installed routes (closes a startup /apis 404 race).
+			// - Audit Backend: structured per-request audit logging to file/webhook.
+			// - UDS Profiling: pprof over a Unix-domain socket gated by filesystem ACLs.
+			internalStopCh := make(chan struct{})
+			stoppedCh, listenerStoppedCh, err := gs.SecureServingInfo.Serve(gs.Handler, gs.ShutdownTimeout, internalStopCh)
+			if err != nil {
+				close(internalStopCh)
+				a.kubelet.Cancel(NewError(fmt.Errorf("apiserver listener: %w", err)).WithCode(1))
+				return
 			}
+			go func() { <-a.ctx.Done(); close(internalStopCh) }()
+
+			gs.RunPostStartHooks(a.ctx)
+
+			<-a.ctx.Done()
+
+			if err := gs.RunPreShutdownHooks(); err != nil {
+				Log.Warn("apiserver pre-shutdown hooks failed", "error", err)
+			}
+
+			<-listenerStoppedCh
+			<-stoppedCh
 			Log.Info("apiserver shut down")
 		}()
-
-		a.apiAggregator = prepared.APIAggregator
 	})
 	return a.apiAggregator
 }
