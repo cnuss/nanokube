@@ -1,3 +1,25 @@
+diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
+index c245a648831..741125215f6 100644
+--- a/cmd/kubelet/app/server.go
++++ b/cmd/kubelet/app/server.go
+@@ -1260,7 +1260,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
+ 		kubeDeps.OSInterface = kubecontainer.RealOS{}
+ 	}
+ 
+-	k, err := createAndInitKubelet(ctx,
++	k, err := CreateAndInitKubelet(ctx,
+ 		kubeServer,
+ 		kubeDeps,
+ 		hostname,
+@@ -1303,7 +1303,7 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
+ 	go k.ListenAndServePods(ctx)
+ }
+ 
+-func createAndInitKubelet(
++func CreateAndInitKubelet(
+ 	ctx context.Context,
+ 	kubeServer *options.KubeletServer,
+ 	kubeDeps *kubelet.Dependencies,
 diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
 index d8cfd44222c..b2b1c9e71a3 100644
 --- a/pkg/controlplane/controller/kubernetesservice/controller.go
@@ -58,10 +80,18 @@ index b9d366ad462..045e062d751 100644
  	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
  	if port <= 0 {
 diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
-index 5bf378bab58..d05e30a402f 100644
+index 5bf378bab58..ca625ed3357 100644
 --- a/pkg/kubelet/kubelet.go
 +++ b/pkg/kubelet/kubelet.go
-@@ -572,7 +572,9 @@ func NewMainKubelet(ctx context.Context,
+@@ -65,6 +65,7 @@ import (
+ 	"k8s.io/apimachinery/pkg/util/wait"
+ 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+ 	"k8s.io/apiserver/pkg/server/flagz"
++	"k8s.io/apiserver/pkg/server/healthz"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+ 	coreinformersv1 "k8s.io/client-go/informers/core/v1"
+ 	clientset "k8s.io/client-go/kubernetes"
+@@ -572,7 +573,9 @@ func NewMainKubelet(ctx context.Context,
  				return nil, err
  			}
  		} else {
@@ -72,8 +102,29 @@ index 5bf378bab58..d05e30a402f 100644
  		}
  	}
  
+@@ -3300,6 +3303,20 @@ func (kl *Kubelet) ListenAndServe(ctx context.Context, kubeCfg *kubeletconfigint
+ 	server.ListenAndServeKubeletServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, kubeCfg, tlsConfig, auth, tp)
+ }
+ 
++// nanokube: accessors to enable building a *kubeletserver.Server outside the
++// kubelet package (kubeletserver.NewServer needs these private fields).
++
++// ResourceAnalyzer returns the kubelet's resource analyzer.
++func (kl *Kubelet) ResourceAnalyzer() serverstats.ResourceAnalyzer { return kl.resourceAnalyzer }
++
++// HealthCheckers returns the kubelet's container manager health checkers.
++func (kl *Kubelet) HealthCheckers() []healthz.HealthChecker {
++	return kl.containerManager.GetHealthCheckers()
++}
++
++// Flagz returns the kubelet's flagz reader.
++func (kl *Kubelet) Flagz() flagz.Reader { return kl.flagz }
++
+ // ListenAndServeReadOnly runs the kubelet HTTP server in read-only mode.
+ func (kl *Kubelet) ListenAndServeReadOnly(ctx context.Context, address net.IP, port uint, tp trace.TracerProvider) {
+ 	server.ListenAndServeKubeletReadOnlyServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, address, port, tp)
 diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
-index fe96a4ab366..cbb73de3eca 100644
+index fe96a4ab366..41d9ace4645 100644
 --- a/pkg/kubelet/server/server.go
 +++ b/pkg/kubelet/server/server.go
 @@ -878,6 +878,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
@@ -87,6 +138,22 @@ index fe96a4ab366..cbb73de3eca 100644
  	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
  		response.WriteError(http.StatusBadRequest, err)
  		return
+@@ -1278,6 +1282,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+ 	handler.ServeHTTP(w, req)
+ }
+ 
++// Add installs the given WebService on the kubelet's REST container. Embedders
++// can use this to mount additional WebServices (e.g. the kube-apiserver's) on
++// the kubelet's listener instead of standing up a second HTTP server.
++func (s *Server) Add(service *restful.WebService) { s.restfulCont.Add(service) }
++
++// Handle installs an http.Handler at the given path on the kubelet's REST
++// container; the container's filter chain still applies. Same use case as Add.
++func (s *Server) Handle(path string, handler http.Handler) { s.restfulCont.Handle(path, handler) }
++
+ // prometheusHostAdapter adapts the HostInterface to the interface expected by the
+ // cAdvisor prometheus collector.
+ type prometheusHostAdapter struct {
 diff --git a/pkg/registry/core/pod/rest/subresources.go b/pkg/registry/core/pod/rest/subresources.go
 index f5160574bb4..bb3a1c661b4 100644
 --- a/pkg/registry/core/pod/rest/subresources.go

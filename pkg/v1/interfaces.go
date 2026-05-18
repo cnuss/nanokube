@@ -247,7 +247,7 @@ type Kubelet interface {
 	Host() Host
 	Kube() Kube
 	Client() Client
-	Tunnel(name ServiceName) Tunnel
+	Tunnel(name TunnelName) Tunnel
 	StaticPods() []*corev1.Pod
 
 	Services(baseURL *url.URL) []*restful.WebService

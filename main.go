@@ -70,7 +70,7 @@ func main() {
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		nodes := kubelet.Client().CoreV1().Nodes()
-		tunnel := kubelet.Tunnel(v1.KubeletService)
+		tunnel := kubelet.Tunnel(v1.KubeletTunnel)
 
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			node, err := nodes.Get(kubelet.Context(), kubelet.Kube().KubeletHostname(), metav1.GetOptions{})

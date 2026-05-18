@@ -416,9 +416,9 @@ func (k *KubeletImpl) Version() string {
 	return k.version
 }
 
-func (k *KubeletImpl) Tunnel(service v1.ServiceName) v1.Tunnel {
-	tunnel, _ := k.tunnels.LoadOrStore(service, func() v1.Tunnel {
-		return NewTunnel(k, service)
+func (k *KubeletImpl) Tunnel(tunnelName v1.TunnelName) v1.Tunnel {
+	tunnel, _ := k.tunnels.LoadOrStore(tunnelName, func() v1.Tunnel {
+		return NewTunnel(k, tunnelName)
 	}())
 	return tunnel.(v1.Tunnel)
 }

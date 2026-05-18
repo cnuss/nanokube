@@ -179,7 +179,7 @@ func (a *ApiServerImpl) ApiServerConfig() *apiserver.Config {
 }
 
 func (a *ApiServerImpl) Tunnel() v1.Tunnel {
-	return a.kubelet.Tunnel(v1.APIServerService)
+	return a.kubelet.Tunnel(v1.KubeletTunnel)
 }
 
 func (a *ApiServerImpl) Client() v1.Client {
@@ -251,7 +251,7 @@ func (a *ApiServerImpl) Client() v1.Client {
 
 func (a *ApiServerImpl) CACerts() []*x509.Certificate {
 	a.caCertsOnce.Do(func() {
-		a.caCerts = a.kubelet.Tunnel(v1.APIServerService).CACerts()
+		a.caCerts = a.kubelet.Tunnel(v1.KubeletTunnel).CACerts()
 		// TODO(incomplete): add generated apiserver.crt to CA certs
 	})
 	return a.caCerts

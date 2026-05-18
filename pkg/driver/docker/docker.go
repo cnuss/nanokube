@@ -1698,7 +1698,7 @@ func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.P
 									WithKey("kubernetes.io/hostname").
 									WithOperator(corev1.NodeSelectorOpIn).
 									// TODO(incomplete): kublet hostname getter
-									WithValues(backend.Driver().Kubelet().Tunnel(v1.KubeletService).Hostname()),
+									WithValues(backend.Driver().Kubelet().Tunnel(v1.KubeletTunnel).Hostname()),
 							))))),
 			metav1.ApplyOptions{FieldManager: string(backend.Name())})
 		if err != nil {
@@ -1789,7 +1789,7 @@ func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1
 					if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn {
 						for _, v := range expr.Values {
 							// TODO(incomplete): kublet hostname getter
-							if v == backend.Driver().Kubelet().Tunnel(v1.KubeletService).Hostname() {
+							if v == backend.Driver().Kubelet().Tunnel(v1.KubeletTunnel).Hostname() {
 								return pv, nil
 							}
 						}

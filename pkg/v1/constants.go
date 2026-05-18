@@ -14,6 +14,9 @@ var (
 	PodmanBackend    BackendName   = "podman"
 	AWSLambdaBackend BackendName   = "awslambda"
 
+	APIServerTunnel TunnelName = "shared"
+	KubeletTunnel   TunnelName = "shared"
+
 	APIServerService         ServiceName = "apiserver"
 	KubeletService           ServiceName = "kubelet"
 	ControllerManagerService ServiceName = "controller-manager"

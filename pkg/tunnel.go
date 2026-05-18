@@ -51,9 +51,9 @@ const (
 var promMu sync.Mutex
 
 type TunnelImpl struct {
-	ctx         context.Context
-	kubelet     v1.Kubelet
-	serviceName v1.ServiceName
+	ctx        context.Context
+	kubelet    v1.Kubelet
+	tunnelName v1.TunnelName
 
 	localHost     net.IP
 	localHostOnce sync.Once
@@ -75,11 +75,11 @@ type TunnelImpl struct {
 
 var _ v1.Tunnel = &TunnelImpl{}
 
-func NewTunnel(kubelet v1.Kubelet, serviceName v1.ServiceName) v1.Tunnel {
+func NewTunnel(kubelet v1.Kubelet, tunnelName v1.TunnelName) v1.Tunnel {
 	return &TunnelImpl{
 		ctx:         kubelet.Context(),
 		kubelet:     kubelet,
-		serviceName: serviceName,
+		tunnelName:  tunnelName,
 		fqdnReady:   make(chan struct{}),
 		tunnelReady: make(chan struct{}),
 	}
@@ -167,7 +167,7 @@ func (t *TunnelImpl) FQDN() string {
 			}
 		}()
 
-		tunnel, err := newQuickTunnel(t, t.serviceName)
+		tunnel, err := newQuickTunnel(t, t.tunnelName)
 		if err != nil {
 			t.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create tunnel: %w", err)))
 			return
@@ -263,8 +263,8 @@ type quickTunnel struct {
 	Errors  []quickTunnelError `json:"errors"`
 }
 
-func newQuickTunnel(tunnel v1.Tunnel, serviceName v1.ServiceName) (*QuickTunnel, error) {
-	log := zerolog.New(io.Discard).With().Str("service", string(serviceName)).Str("component", "quicktunnel").Logger()
+func newQuickTunnel(tunnel v1.Tunnel, tunnelName v1.TunnelName) (*QuickTunnel, error) {
+	log := zerolog.New(io.Discard).With().Str("tunnel", string(tunnelName)).Str("component", "quicktunnel").Logger()
 
 	ctx, cancel := context.WithCancel(tunnel.Context())
 

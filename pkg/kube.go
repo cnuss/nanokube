@@ -146,7 +146,7 @@ func (k *KubeImpl) InformerFactory() informers.SharedInformerFactory {
 
 func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	k.apiServerOptionsOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.APIServerService)
+		tunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
 		opts := apiserveroptions.NewServerRunOptions()
 		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", tunnel.FQDN())}
 		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.Kubelet().Options().FilePathAt(v1.KeyFile)}
@@ -189,13 +189,13 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 }
 
 func (k *KubeImpl) KubeletHostname() string {
-	tunnel := k.Kubelet().Tunnel(v1.KubeletService)
+	tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
 	return tunnel.Hostname()
 }
 
 func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 	k.kubeletFlagsOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletService)
+		tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
 		k.kubeletFlags.CloudProvider = "external"
 		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
@@ -208,7 +208,7 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 
 func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 	k.kubeletConfigurationOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletService)
+		tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
 		if cfg, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
 			k.kubeletConfiguration = cfg
 		} else {
@@ -367,7 +367,7 @@ func (k *KubeImpl) Environ() []string {
 
 func (k *KubeImpl) recorder() record.EventRecorder {
 	k.proxiedRecorderOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletService)
+		tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
 		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Kubelet().Options().Name(), Host: tunnel.FQDN()})
 	})
 	return k.proxiedRecorder

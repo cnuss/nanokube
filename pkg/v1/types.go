@@ -12,5 +12,6 @@ type (
 	Path        string
 	NetworkType string
 	ServiceName string
+	TunnelName  string
 	Protocol    corev1.Protocol
 )
