@@ -2,11 +2,15 @@ package nanokube
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
+	"golang.org/x/net/http2"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 
@@ -14,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/kube-aggregator/pkg/apiserver"
@@ -217,7 +222,7 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			return
 		}
 
-		server, err := app.CreateServerChain(completed)
+		chain, err := app.CreateServerChain(completed)
 		if err != nil {
 			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create API server: %w", err)))
 			return
@@ -225,7 +230,7 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 
 		<-Await(a.ctx, a.kubelet.Storage().Ready())
 
-		prepared, err := server.PrepareRun()
+		prepared, err := chain.PrepareRun()
 		if err != nil {
 			a.kubelet.Cancel(NewError(fmt.Errorf("failed to prepare API server: %w", err)))
 			return
@@ -246,12 +251,97 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			// - Audit Backend: structured per-request audit logging to file/webhook.
 			// - UDS Profiling: pprof over a Unix-domain socket gated by filesystem ACLs.
 			internalStopCh := make(chan struct{})
-			stoppedCh, listenerStoppedCh, err := gs.SecureServingInfo.Serve(gs.Handler, gs.ShutdownTimeout, internalStopCh)
-			if err != nil {
-				close(internalStopCh)
-				a.kubelet.Cancel(NewError(fmt.Errorf("apiserver listener: %w", err)).WithCode(1))
-				return
+
+			// Inlined from SecureServingInfo.Serve (+ its private tlsConfig).
+			// Skipped vs upstream: ClientCA/client-cert auth (we don't set
+			// si.ClientCA), SNICerts (not set), CipherSuites/CurvePreferences
+			// (use Go defaults), tlsHandshakeErrorWriter (noisier TLS error
+			// logs — acceptable).
+			si := gs.SecureServingInfo
+			tlsConfig := &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				NextProtos: []string{"h2", "http/1.1"},
 			}
+			if si.DisableHTTP2 {
+				tlsConfig.NextProtos = []string{"http/1.1"}
+			}
+			if si.MinTLSVersion > 0 {
+				tlsConfig.MinVersion = si.MinTLSVersion
+			}
+
+			// Dynamic cert controller — handles cert hot-reload from disk and
+			// concurrent reads via GetConfigForClient.
+			dyn := dynamiccertificates.NewDynamicServingCertificateController(tlsConfig, nil, si.Cert, si.SNICerts, nil)
+			if si.Cert != nil {
+				si.Cert.AddListener(dyn)
+			}
+			dynCtx, dynCancel := context.WithCancel(context.Background())
+			go func() { <-internalStopCh; dynCancel() }()
+			if cr, ok := si.Cert.(dynamiccertificates.ControllerRunner); ok {
+				_ = cr.RunOnce(dynCtx)
+				go cr.Run(dynCtx, 1)
+			}
+			_ = dyn.RunOnce()
+			go dyn.Run(1, internalStopCh)
+			tlsConfig.GetConfigForClient = dyn.GetConfigForClient
+
+			secureServer := &http.Server{
+				Addr:              si.Listener.Addr().String(),
+				Handler:           gs.Handler,
+				MaxHeaderBytes:    1 << 20,
+				TLSConfig:         tlsConfig,
+				IdleTimeout:       90 * time.Second,
+				ReadHeaderTimeout: 32 * time.Second,
+			}
+			if !si.DisableHTTP2 {
+				const resourceBody99Percentile = 256 * 1024
+				http2Opts := &http2.Server{
+					IdleTimeout:              90 * time.Second,
+					MaxUploadBufferPerStream: resourceBody99Percentile,
+					MaxReadFrameSize:         resourceBody99Percentile,
+				}
+				if si.HTTP2MaxStreamsPerConnection > 0 {
+					http2Opts.MaxConcurrentStreams = uint32(si.HTTP2MaxStreamsPerConnection)
+				} else {
+					http2Opts.MaxConcurrentStreams = 100
+				}
+				http2Opts.MaxUploadBufferPerConnection = http2Opts.MaxUploadBufferPerStream * int32(http2Opts.MaxConcurrentStreams)
+				if err := http2.ConfigureServer(secureServer, http2Opts); err != nil {
+					close(internalStopCh)
+					a.kubelet.Cancel(NewError(fmt.Errorf("configure http2: %w", err)).WithCode(1))
+					return
+				}
+			}
+
+			// Inlined from server.RunServer. tcpKeepAliveListener is private
+			// so we wrap si.Listener manually with keep-alive in the Accept
+			// path; on shutdown we close it via server.Shutdown(ctx).
+			stoppedCh := make(chan struct{})
+			listenerStoppedCh := make(chan struct{})
+
+			go func() {
+				defer close(stoppedCh)
+				<-internalStopCh
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), gs.ShutdownTimeout)
+				defer cancel()
+				if err := secureServer.Shutdown(shutdownCtx); err != nil {
+					Log.Warn("apiserver Shutdown failed", "error", err)
+				}
+			}()
+
+			go func() {
+				defer close(listenerStoppedCh)
+				ln := keepAliveListener{Listener: si.Listener, period: 3 * time.Minute}
+				tlsLn := tls.NewListener(ln, secureServer.TLSConfig)
+				err := secureServer.Serve(tlsLn)
+				select {
+				case <-internalStopCh:
+					Log.Info("apiserver stopped listening", "addr", si.Listener.Addr())
+				default:
+					a.kubelet.Cancel(NewError(fmt.Errorf("apiserver Serve: %w", err)).WithCode(1))
+				}
+			}()
+
 			go func() { <-a.ctx.Done(); close(internalStopCh) }()
 
 			gs.RunPostStartHooks(a.ctx)
@@ -282,4 +372,24 @@ func (a *ApiServerImpl) CACerts() []*x509.Certificate {
 		// TODO(incomplete): add generated apiserver.crt to CA certs
 	})
 	return a.caCerts
+}
+
+// keepAliveListener mirrors the private tcpKeepAliveListener in
+// k8s.io/apiserver/pkg/server: enables TCP keep-alive on accepted
+// connections so half-dead clients get cleaned up.
+type keepAliveListener struct {
+	net.Listener
+	period time.Duration
+}
+
+func (ln keepAliveListener) Accept() (net.Conn, error) {
+	c, err := ln.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(ln.period)
+	}
+	return c, nil
 }
