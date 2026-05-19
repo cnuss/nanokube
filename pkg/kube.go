@@ -438,35 +438,21 @@ func (k *KubeImpl) TLSConfig() *tls.Config {
 		}
 		opts := k.TLSOptions()
 
-		k.tlsConfig = &tls.Config{
+		tlsConfig := &tls.Config{
 			MinVersion:       opts.MinVersion,
 			CipherSuites:     opts.CipherSuites,
 			CurvePreferences: opts.CurvePreferences,
 			NextProtos:       nextProtos,
 		}
 
-		// The apiserver's loopback client (used by PostStartHooks) dials with
-		// SNI=server.LoopbackClientServerNameOverride and trusts only the
-		// loopback CA — both set up by SecureServingOptionsWithLoopback in
-		// staging/.../options/serving_with_loopback.go. The loopback cert
-		// lands in SecureServingInfo.SNICerts[0]; the apiserver.crt is
-		// SecureServingInfo.Cert. The DynamicServingCertificateController
-		// builds a GetConfigForClient that selects between them by SNI,
-		// which is what makes the loopback client's TLS handshake succeed.
+		// TODO(partial): get rid of this. this makes the LookbackClient work
 		si := k.Kubelet().ApiServer().APIAggregator().GenericAPIServer.SecureServingInfo
-		dyn := dynamiccertificates.NewDynamicServingCertificateController(k.tlsConfig, nil, si.Cert, si.SNICerts, nil)
-		if si.Cert != nil {
-			si.Cert.AddListener(dyn)
-		}
-		dynCtx, dynCancel := context.WithCancel(context.Background())
-		go func() { <-k.Kubelet().Canceled(); dynCancel() }()
-		if cr, ok := si.Cert.(dynamiccertificates.ControllerRunner); ok {
-			_ = cr.RunOnce(dynCtx)
-			go cr.Run(dynCtx, 1)
-		}
-		_ = dyn.RunOnce()
-		go dyn.Run(1, k.Kubelet().Canceled())
-		k.tlsConfig.GetConfigForClient = dyn.GetConfigForClient
+		dyn := dynamiccertificates.NewDynamicServingCertificateController(tlsConfig, nil, si.Cert, si.SNICerts, nil)
+		si.Cert.AddListener(dyn)
+		dyn.RunOnce()
+
+		tlsConfig.GetConfigForClient = dyn.GetConfigForClient
+		k.tlsConfig = tlsConfig
 	})
 	return k.tlsConfig
 }
