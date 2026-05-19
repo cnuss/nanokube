@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/server/options"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
@@ -29,6 +31,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
+	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
@@ -218,6 +221,12 @@ type Kube interface {
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
 	KubeletDependencies() *kubelet.Dependencies
 	KubeletHostname() string // TODO: Remove
+
+	CertFilePath() string
+	KeyFilePath() string
+	TLSConfig() *tls.Config
+	TLSOptions() *kubeletserver.TLSOptions
+	SecureServing() *options.SecureServingOptionsWithLoopback
 
 	NodeReady() chan struct{}
 }

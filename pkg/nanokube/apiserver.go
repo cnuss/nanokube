@@ -252,22 +252,8 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			// - UDS Profiling: pprof over a Unix-domain socket gated by filesystem ACLs.
 			internalStopCh := make(chan struct{})
 
-			// Inlined from SecureServingInfo.Serve (+ its private tlsConfig).
-			// Skipped vs upstream: ClientCA/client-cert auth (we don't set
-			// si.ClientCA), SNICerts (not set), CipherSuites/CurvePreferences
-			// (use Go defaults), tlsHandshakeErrorWriter (noisier TLS error
-			// logs — acceptable).
 			si := gs.SecureServingInfo
-			tlsConfig := &tls.Config{
-				MinVersion: tls.VersionTLS12,
-				NextProtos: []string{"h2", "http/1.1"},
-			}
-			if si.DisableHTTP2 {
-				tlsConfig.NextProtos = []string{"http/1.1"}
-			}
-			if si.MinTLSVersion > 0 {
-				tlsConfig.MinVersion = si.MinTLSVersion
-			}
+			tlsConfig := a.kubelet.Kube().TLSConfig()
 
 			// Dynamic cert controller — handles cert hot-reload from disk and
 			// concurrent reads via GetConfigForClient.

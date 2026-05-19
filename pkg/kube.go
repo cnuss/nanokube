@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"os"
 	"runtime/debug"
 	"sort"
@@ -22,11 +23,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apifeatures "k8s.io/apiserver/pkg/features"
+	"k8s.io/apiserver/pkg/server/options"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/cert"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
@@ -36,7 +39,7 @@ import (
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
-	"k8s.io/kubernetes/pkg/kubelet/server"
+	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
@@ -96,6 +99,17 @@ type KubeImpl struct {
 
 	proxiedRecorder     record.EventRecorder
 	proxiedRecorderOnce sync.Once
+
+	tlsConfig     *tls.Config
+	tlsConfigOnce sync.Once
+
+	tlsOptions     *kubeletserver.TLSOptions
+	tlsOptionsOnce sync.Once
+
+	secureServing     *options.SecureServingOptionsWithLoopback
+	secureServingOnce sync.Once
+
+	certKeyOnce sync.Once
 }
 
 var _ v1.Kube = &KubeImpl{}
@@ -149,7 +163,7 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		tunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
 		opts := apiserveroptions.NewServerRunOptions()
 		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", tunnel.FQDN())}
-		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.Kubelet().Options().FilePathAt(v1.KeyFile)}
+		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.KeyFilePath()}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
 		opts.Etcd.StorageConfig.Transport.ServerList = k.Kubelet().Storage().ServerList()
@@ -164,11 +178,8 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 			// string(corev1.NodeInternalDNS),
 			// string(corev1.NodeHostName),
 		}
-		opts.SecureServing.BindAddress = tunnel.LocalIP()
-		opts.SecureServing.BindPort = int(tunnel.LocalPort())
-		opts.SecureServing.DisableHTTP2Serving = !v1.HTTP2
-		opts.SecureServing.ServerCert.CertDirectory = k.Kubelet().Options().DataDirAt(v1.DataDirCerts)
-		opts.ServiceAccountSigningKeyFile = k.Kubelet().Options().FilePathAt(v1.KeyFile)
+		opts.SecureServing = k.SecureServing()
+		opts.ServiceAccountSigningKeyFile = k.KeyFilePath()
 
 		complete, err := opts.Complete(k.Kubelet().Context())
 		if err != nil {
@@ -252,42 +263,13 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 			TracerProvider:            noopoteltrace.NewTracerProvider(),
 			Recorder:                  &record.FakeRecorder{},
 		}
-		// if !k.Kubelet().Options().Standalone() {
 		k.kubeletDependencies.KubeClient = k.Kubelet().Client()
 		k.kubeletDependencies.HeartbeatClient = k.Kubelet().Client()
-		// } else {
-		// 	k.kubeletDependencies.KubeClient = nil
-		// 	k.kubeletDependencies.HeartbeatClient = nil
-		// 	k.kubeletDependencies.EventClient = nil
-		// }
 		k.kubeletDependencies.RemoteRuntimeService = k.Kubelet().DefaultBackend().Driver()
 		k.kubeletDependencies.RemoteImageService = k.Kubelet().DefaultBackend().Driver()
 		k.kubeletDependencies.CAdvisorInterface = k.Kubelet().DefaultBackend()
 		k.kubeletDependencies.ContainerManager = k.Kubelet().DefaultBackend().Manager()
-		k.kubeletDependencies.TLSOptions = &server.TLSOptions{
-			MinVersion: func() uint16 {
-				if v, err := cliflag.TLSVersion(k.KubeletConfiguration().TLSMinVersion); err == nil {
-					return v
-				}
-				return cliflag.DefaultTLSVersion()
-			}(),
-			CipherSuites: func() []uint16 {
-				if v, err := cliflag.TLSCipherSuites(k.KubeletConfiguration().TLSCipherSuites); err == nil {
-					return v
-				}
-				return nil
-			}(),
-			CertFile: k.Kubelet().Options().FilePathAt(v1.CertFile),
-			KeyFile:  k.Kubelet().Options().FilePathAt(v1.KeyFile),
-		}
-		k.kubeletDependencies.TLSConfig = &tls.Config{
-			NextProtos: func() []string {
-				if !v1.HTTP2 {
-					return []string{"http/1.1"}
-				}
-				return []string{"h2", "http/1.1"}
-			}(),
-		}
+		k.kubeletDependencies.TLSOptions = k.TLSOptions()
 		k.kubeletDependencies.ProbeManager = nil
 		// TODO(1.36): Dependencies.Services field was removed; backend WebServices need a new mount point
 		k.kubeletDependencies.VolumePlugins = k.Kubelet().Host().VolumePlugins()
@@ -303,8 +285,8 @@ func (k *KubeImpl) KubeletDependencies() *kubelet.Dependencies {
 func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 	rootCaFile := func() string {
 		var buf bytes.Buffer
-		for _, cert := range k.Kubelet().ApiServer().CACerts() {
-			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
+		for _, c := range k.Kubelet().ApiServer().CACerts() {
+			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
 				k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to PEM-encode CA cert: %w", err)))
 				return ""
 			}
@@ -337,9 +319,9 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 			"--leader-elect=true",
 			"--controller-shutdown-timeout=0",
 			"--use-service-account-credentials=false",
-			"--tls-cert-file=" + mountPath + "/certs/apiserver.crt",
-			"--tls-private-key-file=" + mountPath + "/certs/apiserver.key",
-			"--service-account-private-key-file=" + mountPath + "/certs/apiserver.key",
+			"--tls-cert-file=" + mountPath + "/" + string(v1.CertFile),
+			"--tls-private-key-file=" + mountPath + "/" + string(v1.KeyFile),
+			"--service-account-private-key-file=" + mountPath + "/" + string(v1.KeyFile),
 			"--root-ca-file=" + mountPath + "/" + rootCaFile(),
 			featureGates,
 		}
@@ -350,8 +332,8 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 			"--authorization-kubeconfig=" + mountPath + "/.kube/config",
 			"--authentication-skip-lookup=true",
 			"--leader-elect=true",
-			"--tls-cert-file=" + mountPath + "/certs/apiserver.crt",
-			"--tls-private-key-file=" + mountPath + "/certs/apiserver.key",
+			"--tls-cert-file=" + mountPath + "/" + string(v1.CertFile),
+			"--tls-private-key-file=" + mountPath + "/" + string(v1.KeyFile),
 			featureGates,
 		}
 	}
@@ -427,4 +409,105 @@ func (k *KubeImpl) Logf(object runtime.Object, eventtype string, reason string, 
 
 func (k *KubeImpl) NodeReady() chan struct{} {
 	return k.nodeReady
+}
+
+func (k *KubeImpl) SecureServing() *options.SecureServingOptionsWithLoopback {
+	k.secureServingOnce.Do(func() {
+		tunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
+		ss := options.NewSecureServingOptions().WithLoopback()
+		ss.BindAddress = tunnel.LocalIP()
+		ss.BindPort = int(tunnel.LocalPort())
+		ss.DisableHTTP2Serving = !v1.HTTP2
+		ss.ServerCert.CertDirectory = k.Kubelet().Options().DataDirAt(v1.DataDirCerts)
+		k.secureServing = ss
+	})
+	return k.secureServing
+}
+
+func (k *KubeImpl) TLSConfig() *tls.Config {
+	k.tlsConfigOnce.Do(func() {
+		nextProtos := []string{"h2", "http/1.1"}
+		if !v1.HTTP2 {
+			nextProtos = []string{"http/1.1"}
+		}
+		opts := k.TLSOptions()
+		k.tlsConfig = &tls.Config{
+			MinVersion:       opts.MinVersion,
+			CipherSuites:     opts.CipherSuites,
+			CurvePreferences: opts.CurvePreferences,
+			NextProtos:       nextProtos,
+		}
+	})
+	return k.tlsConfig
+}
+
+func (k *KubeImpl) TLSOptions() *kubeletserver.TLSOptions {
+	k.tlsOptionsOnce.Do(func() {
+		k.tlsOptions = &kubeletserver.TLSOptions{
+			MinVersion: func() uint16 {
+				if v, err := cliflag.TLSVersion(k.KubeletConfiguration().TLSMinVersion); err == nil {
+					return v
+				}
+				return cliflag.DefaultTLSVersion()
+			}(),
+			CipherSuites: func() []uint16 {
+				if v, err := cliflag.TLSCipherSuites(k.KubeletConfiguration().TLSCipherSuites); err == nil {
+					return v
+				}
+				return nil
+			}(),
+			CertFile: k.CertFilePath(),
+			KeyFile:  k.KeyFilePath(),
+		}
+	})
+	return k.tlsOptions
+}
+
+func (k *KubeImpl) CertFilePath() string {
+	certPath, _ := k.ensureCertKey()
+	return certPath
+}
+
+func (k *KubeImpl) KeyFilePath() string {
+	_, keyPath := k.ensureCertKey()
+	return keyPath
+}
+
+func (k *KubeImpl) ensureCertKey() (string, string) {
+	certPath := k.Kubelet().Options().FilePathAt(v1.CertFile)
+	keyPath := k.Kubelet().Options().FilePathAt(v1.KeyFile)
+	k.certKeyOnce.Do(func() {
+		// Reuse an existing pair if both files are present (restart case).
+		if _, err := os.Stat(certPath); err == nil {
+			if _, err := os.Stat(keyPath); err == nil {
+				return
+			}
+		}
+
+		apiserverTunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
+		kubeletTunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
+		ips := []net.IP{net.IPv4(127, 0, 0, 1), apiserverTunnel.LocalIP()}
+		if ip := kubeletTunnel.LocalIP(); ip != nil && !ip.Equal(apiserverTunnel.LocalIP()) {
+			ips = append(ips, ip)
+		}
+		dns := []string{"localhost", apiserverTunnel.FQDN()}
+		if fqdn := kubeletTunnel.FQDN(); fqdn != apiserverTunnel.FQDN() {
+			dns = append(dns, fqdn)
+		}
+
+		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(apiserverTunnel.FQDN(), ips, dns)
+		if err != nil {
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("generate self-signed cert: %w", err)))
+			return
+		}
+		if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("write cert %s: %w", certPath, err)))
+			return
+		}
+		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("write key %s: %w", keyPath, err)))
+			return
+		}
+	})
+	return certPath, keyPath
 }
