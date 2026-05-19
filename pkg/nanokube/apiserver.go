@@ -252,15 +252,11 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			internalStopCh := make(chan struct{})
 
 			si := gs.SecureServingInfo
-			// TLSConfig() owns the dynamic-cert-controller setup now —
-			// dyn.GetConfigForClient is already wired on the returned config.
-			tlsConfig := a.kubelet.Kube().TLSConfig()
-
 			secureServer := &http.Server{
 				Addr:              si.Listener.Addr().String(),
 				Handler:           gs.Handler,
 				MaxHeaderBytes:    1 << 20,
-				TLSConfig:         tlsConfig,
+				TLSConfig:         a.kubelet.Kube().TLSConfig(),
 				IdleTimeout:       90 * time.Second,
 				ReadHeaderTimeout: 32 * time.Second,
 			}

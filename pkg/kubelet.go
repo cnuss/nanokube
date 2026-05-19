@@ -24,8 +24,13 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	nodeutil "k8s.io/component-helpers/node/util"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
+	"k8s.io/kubernetes/pkg/capabilities"
+	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
+	"k8s.io/kubernetes/pkg/util/rlimit"
 )
 
 const shutdownTimeout = 30 * time.Second
@@ -585,13 +590,60 @@ func (k *KubeletImpl) Run() v1.Kubelet {
 				return
 			}
 		}
-		if err := kubeletapp.RunKubelet(k.ctx, &kubeletoptions.KubeletServer{
+		// Inlined from kubeletapp.RunKubelet. Skipped vs upstream, all safe
+		// for nanokube's setup:
+		// - makeEventRecorder: no-op when kubeDeps.Recorder is non-nil; we
+		//   wire kube.KubeImpl as the Recorder in pkg/kube.go.
+		// - credentialprovider.SetPreferredDockercfgPath: only affects
+		//   docker-credential resolution; nanokube backends don't use it.
+		// - ListenAndServeReadOnly: kubeCfg.ReadOnlyPort is 0 by config.
+		server := &kubeletoptions.KubeletServer{
 			KubeletFlags:         *k.Kube().KubeletFlags(),
 			KubeletConfiguration: *k.Kube().KubeletConfiguration(),
-		}, k.Kube().KubeletDependencies()); err != nil {
-			k.Cancel(nanokube.NewError(err).WithCode(1))
+		}
+		kubeDeps := k.Kube().KubeletDependencies()
+
+		hostname, err := nodeutil.GetHostname(server.HostnameOverride)
+		if err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("resolve hostname: %w", err)).WithCode(1))
 			return
 		}
+		nodeName := types.NodeName(hostname)
+		nodeIPs, invalid, err := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
+		if err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("parse --node-ip %q: %w", server.NodeIP, err)).WithCode(1))
+			return
+		}
+		if len(invalid) > 0 {
+			nanokube.Log.Warn("ignoring invalid node IPs", "ips", invalid)
+		}
+
+		capabilities.Initialize(capabilities.Capabilities{AllowPrivileged: true})
+
+		if kubeDeps.OSInterface == nil {
+			kubeDeps.OSInterface = kubecontainer.RealOS{}
+		}
+
+		klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
+		if err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
+			return
+		}
+		if kubeDeps.PodConfig == nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("pod source config was nil after CreateAndInitKubelet")).WithCode(1))
+			return
+		}
+		if err := rlimit.SetNumFiles(uint64(server.MaxOpenFiles)); err != nil {
+			nanokube.Log.Warn("failed to set rlimit on max file handles", "error", err)
+		}
+
+		// Inlined from startKubelet — drops the ReadOnlyPort branch.
+		kubeCfg := &server.KubeletConfiguration
+		go klet.Run(k.ctx, kubeDeps.PodConfig.Updates())
+		go klet.ListenAndServe(k.ctx, kubeCfg, kubeDeps.TLSConfig, kubeDeps.Auth, kubeDeps.TracerProvider)
+		go klet.ListenAndServePodResources(k.ctx)
+		go klet.ListenAndServePods(k.ctx)
+		nanokube.Log.Info("kubelet started", "hostname", hostname)
 	})
 	return k
 }
