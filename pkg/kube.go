@@ -502,16 +502,12 @@ func (k *KubeImpl) ensureCertKey() (string, string) {
 
 		apiserverTunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
 		kubeletTunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
-		ips := []net.IP{net.IPv4(127, 0, 0, 1), apiserverTunnel.LocalIP()}
-		if ip := kubeletTunnel.LocalIP(); ip != nil && !ip.Equal(apiserverTunnel.LocalIP()) {
-			ips = append(ips, ip)
-		}
-		dns := []string{"localhost", apiserverTunnel.FQDN()}
-		if fqdn := kubeletTunnel.FQDN(); fqdn != apiserverTunnel.FQDN() {
-			dns = append(dns, fqdn)
-		}
 
-		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(apiserverTunnel.FQDN(), ips, dns)
+		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(
+			"localhost",
+			[]net.IP{net.IPv4(127, 0, 0, 1), apiserverTunnel.LocalIP(), kubeletTunnel.LocalIP()},
+			[]string{apiserverTunnel.FQDN(), apiserverTunnel.Hostname(), kubeletTunnel.FQDN(), kubeletTunnel.Hostname()},
+		)
 		if err != nil {
 			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("generate self-signed cert: %w", err)))
 			return
