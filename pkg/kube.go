@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apifeatures "k8s.io/apiserver/pkg/features"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/options"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -418,7 +419,12 @@ func (k *KubeImpl) SecureServing() *options.SecureServingOptionsWithLoopback {
 		ss.BindAddress = tunnel.LocalIP()
 		ss.BindPort = int(tunnel.LocalPort())
 		ss.DisableHTTP2Serving = !v1.HTTP2
-		ss.ServerCert.CertDirectory = k.Kubelet().Options().DataDirAt(v1.DataDirCerts)
+		ss.ServerCert = options.GeneratableKeyCert{
+			CertKey: options.CertKey{
+				CertFile: k.CertFilePath(),
+				KeyFile:  k.KeyFilePath(),
+			},
+		}
 		k.secureServing = ss
 	})
 	return k.secureServing
@@ -431,12 +437,36 @@ func (k *KubeImpl) TLSConfig() *tls.Config {
 			nextProtos = []string{"http/1.1"}
 		}
 		opts := k.TLSOptions()
+
 		k.tlsConfig = &tls.Config{
 			MinVersion:       opts.MinVersion,
 			CipherSuites:     opts.CipherSuites,
 			CurvePreferences: opts.CurvePreferences,
 			NextProtos:       nextProtos,
 		}
+
+		// The apiserver's loopback client (used by PostStartHooks) dials with
+		// SNI=server.LoopbackClientServerNameOverride and trusts only the
+		// loopback CA — both set up by SecureServingOptionsWithLoopback in
+		// staging/.../options/serving_with_loopback.go. The loopback cert
+		// lands in SecureServingInfo.SNICerts[0]; the apiserver.crt is
+		// SecureServingInfo.Cert. The DynamicServingCertificateController
+		// builds a GetConfigForClient that selects between them by SNI,
+		// which is what makes the loopback client's TLS handshake succeed.
+		si := k.Kubelet().ApiServer().APIAggregator().GenericAPIServer.SecureServingInfo
+		dyn := dynamiccertificates.NewDynamicServingCertificateController(k.tlsConfig, nil, si.Cert, si.SNICerts, nil)
+		if si.Cert != nil {
+			si.Cert.AddListener(dyn)
+		}
+		dynCtx, dynCancel := context.WithCancel(context.Background())
+		go func() { <-k.Kubelet().Canceled(); dynCancel() }()
+		if cr, ok := si.Cert.(dynamiccertificates.ControllerRunner); ok {
+			_ = cr.RunOnce(dynCtx)
+			go cr.Run(dynCtx, 1)
+		}
+		_ = dyn.RunOnce()
+		go dyn.Run(1, k.Kubelet().Canceled())
+		k.tlsConfig.GetConfigForClient = dyn.GetConfigForClient
 	})
 	return k.tlsConfig
 }

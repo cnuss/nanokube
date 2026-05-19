@@ -18,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/server"
-	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/kube-aggregator/pkg/apiserver"
@@ -253,23 +252,9 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			internalStopCh := make(chan struct{})
 
 			si := gs.SecureServingInfo
+			// TLSConfig() owns the dynamic-cert-controller setup now —
+			// dyn.GetConfigForClient is already wired on the returned config.
 			tlsConfig := a.kubelet.Kube().TLSConfig()
-
-			// Dynamic cert controller — handles cert hot-reload from disk and
-			// concurrent reads via GetConfigForClient.
-			dyn := dynamiccertificates.NewDynamicServingCertificateController(tlsConfig, nil, si.Cert, si.SNICerts, nil)
-			if si.Cert != nil {
-				si.Cert.AddListener(dyn)
-			}
-			dynCtx, dynCancel := context.WithCancel(context.Background())
-			go func() { <-internalStopCh; dynCancel() }()
-			if cr, ok := si.Cert.(dynamiccertificates.ControllerRunner); ok {
-				_ = cr.RunOnce(dynCtx)
-				go cr.Run(dynCtx, 1)
-			}
-			_ = dyn.RunOnce()
-			go dyn.Run(1, internalStopCh)
-			tlsConfig.GetConfigForClient = dyn.GetConfigForClient
 
 			secureServer := &http.Server{
 				Addr:              si.Listener.Addr().String(),
