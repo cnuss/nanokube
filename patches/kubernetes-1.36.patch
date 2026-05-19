@@ -124,10 +124,36 @@ index 5bf378bab58..ca625ed3357 100644
  func (kl *Kubelet) ListenAndServeReadOnly(ctx context.Context, address net.IP, port uint, tp trace.TracerProvider) {
  	server.ListenAndServeKubeletReadOnlyServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, address, port, tp)
 diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
-index fe96a4ab366..41d9ace4645 100644
+index fe96a4ab366..190486668ad 100644
 --- a/pkg/kubelet/server/server.go
 +++ b/pkg/kubelet/server/server.go
-@@ -878,6 +878,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
+@@ -469,14 +469,17 @@ func (s *Server) getMetricMethodBucket(method string) string {
+ // to this set. New handlers should be added under InstallAuthorizedHandlers.
+ func (s *Server) InstallAuthNotRequiredHandlers(ctx context.Context) {
+ 	logger := klog.FromContext(ctx)
+-	s.addMetricsBucketMatcher("healthz")
+-	checkers := []healthz.HealthChecker{
+-		healthz.PingHealthz,
+-		healthz.LogHealthz,
+-		healthz.NamedCheck("syncloop", s.host.SyncLoopHealthCheck),
+-	}
+-	checkers = append(checkers, s.extendedCheckers...)
+-	healthz.InstallHandler(s.restfulCont, checkers...)
++	// nanokube: skip kubelet's /healthz so the apiserver chain mounted on
++	// our listener can own it instead. Kubelet doesn't register /livez or
++	// /readyz, only /healthz.
++	// s.addMetricsBucketMatcher("healthz")
++	// checkers := []healthz.HealthChecker{
++	// 	healthz.PingHealthz,
++	// 	healthz.LogHealthz,
++	// 	healthz.NamedCheck("syncloop", s.host.SyncLoopHealthCheck),
++	// }
++	// checkers = append(checkers, s.extendedCheckers...)
++	// healthz.InstallHandler(s.restfulCont, checkers...)
+ 
+ 	slis.SLIMetricsWithReset{}.Install(s.restfulCont)
+ 
+@@ -878,6 +881,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
  	}
  
  	response.Header().Set("Transfer-Encoding", "chunked")
@@ -138,18 +164,15 @@ index fe96a4ab366..41d9ace4645 100644
  	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
  		response.WriteError(http.StatusBadRequest, err)
  		return
-@@ -1278,6 +1282,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+@@ -1278,6 +1285,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
  	handler.ServeHTTP(w, req)
  }
  
-+// Add installs the given WebService on the kubelet's REST container. Embedders
-+// can use this to mount additional WebServices (e.g. the kube-apiserver's) on
-+// the kubelet's listener instead of standing up a second HTTP server.
-+func (s *Server) Add(service *restful.WebService) { s.restfulCont.Add(service) }
-+
-+// Handle installs an http.Handler at the given path on the kubelet's REST
-+// container; the container's filter chain still applies. Same use case as Add.
-+func (s *Server) Handle(path string, handler http.Handler) { s.restfulCont.Handle(path, handler) }
++// Restful returns the kubelet's REST container. Embedders that built a
++// *Server outside this package use it to install additional WebServices
++// (Add) or raw http.Handlers (Handle) on the kubelet's listener. The
++// container's filter chain still applies.
++func (s *Server) Restful() containerInterface { return s.restfulCont }
 +
  // prometheusHostAdapter adapts the HostInterface to the interface expected by the
  // cAdvisor prometheus collector.

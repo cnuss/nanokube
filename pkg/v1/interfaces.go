@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -164,6 +165,7 @@ type ApiServer interface {
 	CACerts() []*x509.Certificate
 
 	APIAggregator() *apiserver.APIAggregator
+	Handler() http.Handler
 }
 
 type Storage interface {

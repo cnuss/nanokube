@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -29,8 +31,8 @@ import (
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/capabilities"
-	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/util/rlimit"
+	"k8s.io/kubernetes/pkg/kubelet"
+	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 )
 
 const shutdownTimeout = 30 * time.Second
@@ -82,6 +84,17 @@ type KubeletImpl struct {
 
 	pidfileWritten bool
 	detachOnce     sync.Once
+
+	httpServer     *http.Server
+	httpServerOnce sync.Once
+
+	listener     net.Listener
+	listenerOnce sync.Once
+
+	server     *kubeletserver.Server
+	serverOnce sync.Once
+
+	mux *http.ServeMux
 }
 
 var _ v1.Kubelet = &KubeletImpl{}
@@ -102,6 +115,7 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		cmd:               cmd,
 		apiserverProvided: make(chan struct{}),
 		storageProvided:   make(chan struct{}),
+		mux:               http.NewServeMux(),
 	}
 
 	// TODO: consider moving this goroutine into Done() behind a sync.Once so the exit-code orchestration lives next to the channel it publishes on.
@@ -590,78 +604,65 @@ func (k *KubeletImpl) Run() v1.Kubelet {
 				return
 			}
 		}
-		// Inlined from kubeletapp.RunKubelet. Skipped vs upstream, all safe
-		// for nanokube's setup:
-		// - makeEventRecorder: no-op when kubeDeps.Recorder is non-nil; we
-		//   wire kube.KubeImpl as the Recorder in pkg/kube.go.
-		// - credentialprovider.SetPreferredDockercfgPath: only affects
-		//   docker-credential resolution; nanokube backends don't use it.
-		// - ListenAndServeReadOnly: kubeCfg.ReadOnlyPort is 0 by config.
+
+		capabilities.Initialize(capabilities.Capabilities{AllowPrivileged: true})
+
+		go func() {
+			nanokube.Log.Info("starting kubelet HTTP server")
+			if err := k.HTTPServer().ServeTLS(k.Kube().SecureServing().Listener, k.Kube().CertFilePath(), k.Kube().KeyFilePath()); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				k.Cancel(nanokube.NewError(fmt.Errorf("kubelet HTTP server error: %w", err)).WithCode(1))
+			}
+			nanokube.Log.Info("kubelet HTTP server stopped")
+		}()
+	})
+	return k
+}
+
+func (k *KubeletImpl) Server() *kubeletserver.Server {
+	k.serverOnce.Do(func() {
+		kubeDeps := k.Kube().KubeletDependencies()
+
 		server := &kubeletoptions.KubeletServer{
 			KubeletFlags:         *k.Kube().KubeletFlags(),
 			KubeletConfiguration: *k.Kube().KubeletConfiguration(),
 		}
-		kubeDeps := k.Kube().KubeletDependencies()
 
-		hostname, err := nodeutil.GetHostname(server.HostnameOverride)
-		if err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("resolve hostname: %w", err)).WithCode(1))
-			return
-		}
+		hostname, _ := nodeutil.GetHostname(server.HostnameOverride)
 		nodeName := types.NodeName(hostname)
-		nodeIPs, invalid, err := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
-		if err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("parse --node-ip %q: %w", server.NodeIP, err)).WithCode(1))
-			return
-		}
-		if len(invalid) > 0 {
-			nanokube.Log.Warn("ignoring invalid node IPs", "ips", invalid)
-		}
-
-		capabilities.Initialize(capabilities.Capabilities{AllowPrivileged: true})
-
-		if kubeDeps.OSInterface == nil {
-			kubeDeps.OSInterface = kubecontainer.RealOS{}
-		}
+		nodeIPs, _, _ := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
 
 		klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
 		if err != nil {
 			k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
 			return
 		}
-		if kubeDeps.PodConfig == nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("pod source config was nil after CreateAndInitKubelet")).WithCode(1))
-			return
-		}
-		if err := rlimit.SetNumFiles(uint64(server.MaxOpenFiles)); err != nil {
-			nanokube.Log.Warn("failed to set rlimit on max file handles", "error", err)
-		}
 
-		// Inlined from startKubelet — drops the ReadOnlyPort branch.
-		kubeCfg := &server.KubeletConfiguration
+		kl := klet.(*kubelet.Kubelet)
+		ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), kubeDeps.Auth, &server.KubeletConfiguration)
+		ksrv.InstallTracingFilter(kubeDeps.TracerProvider)
+
+		// Install API Server Routes and Hooks
+		ksrv.Restful().Handle("/", k.ApiServer().Handler())
+
 		go klet.Run(k.ctx, kubeDeps.PodConfig.Updates())
-		go klet.ListenAndServe(k.ctx, kubeCfg, kubeDeps.TLSConfig, kubeDeps.Auth, kubeDeps.TracerProvider)
 		go klet.ListenAndServePodResources(k.ctx)
 		go klet.ListenAndServePods(k.ctx)
+		go k.ApiServer().APIAggregator().GenericAPIServer.RunPostStartHooks(k.ctx)
+
 		nanokube.Log.Info("kubelet started", "hostname", hostname)
+		k.server = &ksrv
 	})
-	return k
+	return k.server
 }
 
-// func volumePlugins() []volume.VolumePlugin {
-// 	allPlugins := []volume.VolumePlugin{}
-// 	allPlugins = append(allPlugins, emptydir.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, git_repo.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, hostpath.ProbeVolumePlugins(volume.VolumeConfig{})...)
-// 	allPlugins = append(allPlugins, nfs.ProbeVolumePlugins(volume.VolumeConfig{})...)
-// 	allPlugins = append(allPlugins, secret.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, iscsi.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, downwardapi.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, fc.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, configmap.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, projected.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, portworx.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, local.ProbeVolumePlugins()...)
-// 	allPlugins = append(allPlugins, csi.ProbeVolumePlugins()...)
-// 	return allPlugins
-// }
+func (k *KubeletImpl) HTTPServer() *http.Server {
+	k.httpServerOnce.Do(func() {
+		tunnel := k.Tunnel(v1.KubeletTunnel)
+		k.httpServer = &http.Server{
+			Addr:      net.JoinHostPort(tunnel.LocalIP().String(), strconv.FormatUint(uint64(tunnel.LocalPort()), 10)),
+			TLSConfig: k.Kube().TLSConfig(),
+			Handler:   k.Server(),
+		}
+	})
+	return k.httpServer
+}

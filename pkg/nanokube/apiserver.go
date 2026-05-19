@@ -236,90 +236,96 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 		}
 
 		a.apiAggregator = prepared.APIAggregator
-
-		go func() {
-			defer close(a.done)
-			gs := a.apiAggregator.GenericAPIServer
-			defer gs.Destroy()
-
-			// TODO(partial):Inlined from preparedGenericAPIServer.RunWithContext. Skipped, all afe for single-replica no-LB no-audit:
-			// - ShutdownDelay: gives an upstream LB time to drain this replica before the listener closes.
-			// - SendRetryAfter: answers new requests with 429+Retry-After during drain instead of dropping.
-			// - Active-Watch Drain: rate-limits closing long-running watches to spread reconnect load across replicas.
-			// - MuxAndDiscoveryComplete: signal that all delegates have installed routes (closes a startup /apis 404 race).
-			// - Audit Backend: structured per-request audit logging to file/webhook.
-			// - UDS Profiling: pprof over a Unix-domain socket gated by filesystem ACLs.
-			internalStopCh := make(chan struct{})
-
-			si := gs.SecureServingInfo
-			secureServer := &http.Server{
-				Addr:              si.Listener.Addr().String(),
-				Handler:           gs.Handler,
-				MaxHeaderBytes:    1 << 20,
-				TLSConfig:         a.kubelet.Kube().TLSConfig(),
-				IdleTimeout:       90 * time.Second,
-				ReadHeaderTimeout: 32 * time.Second,
-			}
-			if !si.DisableHTTP2 {
-				const resourceBody99Percentile = 256 * 1024
-				http2Opts := &http2.Server{
-					IdleTimeout:              90 * time.Second,
-					MaxUploadBufferPerStream: resourceBody99Percentile,
-					MaxReadFrameSize:         resourceBody99Percentile,
-				}
-				if si.HTTP2MaxStreamsPerConnection > 0 {
-					http2Opts.MaxConcurrentStreams = uint32(si.HTTP2MaxStreamsPerConnection)
-				} else {
-					http2Opts.MaxConcurrentStreams = 100
-				}
-				http2Opts.MaxUploadBufferPerConnection = http2Opts.MaxUploadBufferPerStream * int32(http2Opts.MaxConcurrentStreams)
-				if err := http2.ConfigureServer(secureServer, http2Opts); err != nil {
-					close(internalStopCh)
-					a.kubelet.Cancel(NewError(fmt.Errorf("configure http2: %w", err)).WithCode(1))
-					return
-				}
-			}
-
-			// Inlined from server.RunServer. tcpKeepAliveListener is private
-			// so we wrap si.Listener manually with keep-alive in the Accept
-			// path; on shutdown we close it via server.Shutdown(ctx).
-			stoppedCh := make(chan struct{})
-			listenerStoppedCh := make(chan struct{})
-
-			go func() {
-				defer close(stoppedCh)
-				<-internalStopCh
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), gs.ShutdownTimeout)
-				defer cancel()
-				if err := secureServer.Shutdown(shutdownCtx); err != nil {
-					Log.Warn("apiserver Shutdown failed", "error", err)
-				}
-			}()
-
-			go func() {
-				defer close(listenerStoppedCh)
-				ln := keepAliveListener{Listener: si.Listener, period: 3 * time.Minute}
-				tlsLn := tls.NewListener(ln, secureServer.TLSConfig)
-				err := secureServer.Serve(tlsLn)
-				select {
-				case <-internalStopCh:
-					Log.Info("apiserver stopped listening", "addr", si.Listener.Addr())
-				default:
-					a.kubelet.Cancel(NewError(fmt.Errorf("apiserver Serve: %w", err)).WithCode(1))
-				}
-			}()
-
-			go func() { <-a.ctx.Done(); close(internalStopCh) }()
-
-			gs.RunPostStartHooks(a.ctx)
-
-			<-a.ctx.Done()
-			<-listenerStoppedCh
-			<-stoppedCh
-			Log.Info("apiserver shut down")
-		}()
 	})
 	return a.apiAggregator
+}
+
+func (a *ApiServerImpl) Handler() http.Handler {
+	return a.APIAggregator().GenericAPIServer.Handler
+}
+
+func (a *ApiServerImpl) run() {
+	go func() {
+		defer close(a.done)
+		gs := a.apiAggregator.GenericAPIServer
+		defer gs.Destroy()
+
+		// TODO(partial):Inlined from preparedGenericAPIServer.RunWithContext. Skipped, all afe for single-replica no-LB no-audit:
+		// - ShutdownDelay: gives an upstream LB time to drain this replica before the listener closes.
+		// - SendRetryAfter: answers new requests with 429+Retry-After during drain instead of dropping.
+		// - Active-Watch Drain: rate-limits closing long-running watches to spread reconnect load across replicas.
+		// - MuxAndDiscoveryComplete: signal that all delegates have installed routes (closes a startup /apis 404 race).
+		// - Audit Backend: structured per-request audit logging to file/webhook.
+		// - UDS Profiling: pprof over a Unix-domain socket gated by filesystem ACLs.
+		internalStopCh := make(chan struct{})
+
+		si := gs.SecureServingInfo
+		secureServer := &http.Server{
+			Addr:              si.Listener.Addr().String(),
+			Handler:           gs.Handler,
+			MaxHeaderBytes:    1 << 20,
+			TLSConfig:         a.kubelet.Kube().TLSConfig(),
+			IdleTimeout:       90 * time.Second,
+			ReadHeaderTimeout: 32 * time.Second,
+		}
+		if !si.DisableHTTP2 {
+			const resourceBody99Percentile = 256 * 1024
+			http2Opts := &http2.Server{
+				IdleTimeout:              90 * time.Second,
+				MaxUploadBufferPerStream: resourceBody99Percentile,
+				MaxReadFrameSize:         resourceBody99Percentile,
+			}
+			if si.HTTP2MaxStreamsPerConnection > 0 {
+				http2Opts.MaxConcurrentStreams = uint32(si.HTTP2MaxStreamsPerConnection)
+			} else {
+				http2Opts.MaxConcurrentStreams = 100
+			}
+			http2Opts.MaxUploadBufferPerConnection = http2Opts.MaxUploadBufferPerStream * int32(http2Opts.MaxConcurrentStreams)
+			if err := http2.ConfigureServer(secureServer, http2Opts); err != nil {
+				close(internalStopCh)
+				a.kubelet.Cancel(NewError(fmt.Errorf("configure http2: %w", err)).WithCode(1))
+				return
+			}
+		}
+
+		// Inlined from server.RunServer. tcpKeepAliveListener is private
+		// so we wrap si.Listener manually with keep-alive in the Accept
+		// path; on shutdown we close it via server.Shutdown(ctx).
+		stoppedCh := make(chan struct{})
+		listenerStoppedCh := make(chan struct{})
+
+		go func() {
+			defer close(stoppedCh)
+			<-internalStopCh
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), gs.ShutdownTimeout)
+			defer cancel()
+			if err := secureServer.Shutdown(shutdownCtx); err != nil {
+				Log.Warn("apiserver Shutdown failed", "error", err)
+			}
+		}()
+
+		go func() {
+			defer close(listenerStoppedCh)
+			ln := keepAliveListener{Listener: si.Listener, period: 3 * time.Minute}
+			tlsLn := tls.NewListener(ln, secureServer.TLSConfig)
+			err := secureServer.Serve(tlsLn)
+			select {
+			case <-internalStopCh:
+				Log.Info("apiserver stopped listening", "addr", si.Listener.Addr())
+			default:
+				a.kubelet.Cancel(NewError(fmt.Errorf("apiserver Serve: %w", err)).WithCode(1))
+			}
+		}()
+
+		go func() { <-a.ctx.Done(); close(internalStopCh) }()
+
+		gs.RunPostStartHooks(a.ctx)
+
+		<-a.ctx.Done()
+		<-listenerStoppedCh
+		<-stoppedCh
+		Log.Info("apiserver shut down")
+	}()
 }
 
 func (a *ApiServerImpl) Client() v1.Client {
@@ -329,7 +335,7 @@ func (a *ApiServerImpl) Client() v1.Client {
 		close(a.clientReady)
 	})
 
-	<-Await(a.ctx, a.clientReady, a.Ready())
+	<-Await(a.ctx, a.clientReady)
 	return a.client
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,9 @@ type KubeImpl struct {
 
 	secureServing     *options.SecureServingOptionsWithLoopback
 	secureServingOnce sync.Once
+
+	listener     net.Listener
+	listenerOnce sync.Once
 
 	certKeyOnce sync.Once
 }
@@ -415,9 +419,16 @@ func (k *KubeImpl) NodeReady() chan struct{} {
 func (k *KubeImpl) SecureServing() *options.SecureServingOptionsWithLoopback {
 	k.secureServingOnce.Do(func() {
 		tunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
+		listener, err := net.Listen("tcp", net.JoinHostPort(tunnel.LocalIP().String(), strconv.FormatUint(uint64(tunnel.LocalPort()), 10)))
+		if err != nil {
+			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to create listener: %w", err)).WithCode(1))
+			return
+		}
+
 		ss := options.NewSecureServingOptions().WithLoopback()
 		ss.BindAddress = tunnel.LocalIP()
 		ss.BindPort = int(tunnel.LocalPort())
+		ss.Listener = listener
 		ss.DisableHTTP2Serving = !v1.HTTP2
 		ss.ServerCert = options.GeneratableKeyCert{
 			CertKey: options.CertKey{
