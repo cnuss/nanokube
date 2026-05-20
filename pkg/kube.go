@@ -21,6 +21,7 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apifeatures "k8s.io/apiserver/pkg/features"
@@ -234,6 +235,7 @@ func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 		k.kubeletConfiguration.ClusterDomain = tunnel.Domain()
 		// TODO(incomplete): probe a container to get resolv.conf
 		k.kubeletConfiguration.ClusterDNS = []string{"1.1.1.1"}
+		k.kubeletConfiguration.FileCheckFrequency = metav1.Duration{Duration: 1 * time.Second}
 		k.kubeletConfiguration.PodLogsDir = k.Kubelet().Options().DataDirAt(v1.DataDirLogs)
 		k.kubeletConfiguration.Port = tunnel.LocalPort()
 		k.kubeletConfiguration.ReadOnlyPort = 0

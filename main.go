@@ -57,8 +57,8 @@ func main() {
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
-		OnCancel(removeStaticPods(kubelet), cordonAndDrain(kubelet), stopSandboxes(kubelet)).
-		OnCancel(deleteNode(kubelet)).
+		OnCancel(removeStaticPods(kubelet), cordonAndDrain(kubelet)).
+		OnCancel(deleteNode(kubelet), stopSandboxes(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
 		OnCancel(removeSandboxes(kubelet)).
 		OnCancel(removeNetworks(kubelet)).

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
-	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -285,24 +284,4 @@ func (a *ApiServerImpl) CACerts() []*x509.Certificate {
 		// TODO(incomplete): add generated apiserver.crt to CA certs
 	})
 	return a.caCerts
-}
-
-// keepAliveListener mirrors the private tcpKeepAliveListener in
-// k8s.io/apiserver/pkg/server: enables TCP keep-alive on accepted
-// connections so half-dead clients get cleaned up.
-type keepAliveListener struct {
-	net.Listener
-	period time.Duration
-}
-
-func (ln keepAliveListener) Accept() (net.Conn, error) {
-	c, err := ln.Listener.Accept()
-	if err != nil {
-		return nil, err
-	}
-	if tc, ok := c.(*net.TCPConn); ok {
-		tc.SetKeepAlive(true)
-		tc.SetKeepAlivePeriod(ln.period)
-	}
-	return c, nil
 }

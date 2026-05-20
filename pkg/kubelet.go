@@ -98,6 +98,26 @@ type KubeletImpl struct {
 	bootstrapOnce sync.Once
 }
 
+// keepAliveListener mirrors the private tcpKeepAliveListener in
+// k8s.io/apiserver/pkg/server: enables TCP keep-alive on accepted
+// connections so half-dead clients get cleaned up.
+type keepAliveListener struct {
+	net.Listener
+	period time.Duration
+}
+
+func (ln keepAliveListener) Accept() (net.Conn, error) {
+	c, err := ln.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if tc, ok := c.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(ln.period)
+	}
+	return c, nil
+}
+
 var _ v1.Kubelet = &KubeletImpl{}
 
 func NewKubelet(cmd *cobra.Command) v1.Kubelet {
@@ -636,7 +656,8 @@ func (k *KubeletImpl) Run() v1.Kubelet {
 		capabilities.Initialize(capabilities.Capabilities{AllowPrivileged: true})
 
 		go func() {
-			if err := k.HTTPServer().ServeTLS(k.Kube().SecureServing().Listener, k.Kube().CertFilePath(), k.Kube().KeyFilePath()); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			ln := keepAliveListener{Listener: k.Kube().SecureServing().Listener, period: 1 * time.Minute}
+			if err := k.HTTPServer().ServeTLS(ln, k.Kube().CertFilePath(), k.Kube().KeyFilePath()); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				k.Cancel(nanokube.NewError(fmt.Errorf("kubelet HTTP server error: %w", err)).WithCode(1))
 			}
 		}()
