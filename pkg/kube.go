@@ -457,7 +457,7 @@ func (k *KubeImpl) TLSConfig() *tls.Config {
 		}
 
 		// TODO(partial): get rid of this. this makes the LookbackClient work
-		si := k.Kubelet().ApiServer().APIAggregator().GenericAPIServer.SecureServingInfo
+		si := k.Kubelet().ApiServer().Server().SecureServingInfo
 		dyn := dynamiccertificates.NewDynamicServingCertificateController(tlsConfig, nil, si.Cert, si.SNICerts, nil)
 		si.Cert.AddListener(dyn)
 		dyn.RunOnce()

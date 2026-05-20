@@ -57,21 +57,24 @@ func main() {
 		WithApiServer(nanokube.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
-		OnCancel(runPreShutdownHooks(kubelet)).
 		OnCancel(removeStaticPods(kubelet), cordonAndDrain(kubelet), stopSandboxes(kubelet)).
 		OnCancel(deleteNode(kubelet)).
 		OnCancel(snapshotStorage(kubelet), snapshotPods()).
 		OnCancel(removeSandboxes(kubelet)).
 		OnCancel(removeNetworks(kubelet)).
+		OnCancel(stopHttp(kubelet)).
 		Run().Done()
 
 	os.Exit(exitCode)
 }
 
-func runPreShutdownHooks(kubelet v1.Kubelet) func(ctx context.Context) {
+func stopHttp(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
-		gs := kubelet.ApiServer().APIAggregator().GenericAPIServer
-		gs.RunPreShutdownHooks()
+		nanokube.Log.Info("stopping http server")
+		if err := kubelet.HTTPServer().Shutdown(ctx); err != nil {
+			nanokube.Log.Warn("kubelet HTTP server shutdown failed", "error", err)
+		}
+		nanokube.Log.Info("http server stopped")
 	}
 }
 

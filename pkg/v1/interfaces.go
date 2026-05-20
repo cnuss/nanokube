@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/options"
 	storage "k8s.io/apiserver/pkg/server/storage"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -23,7 +24,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	cri "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	"k8s.io/kube-aggregator/pkg/apiserver"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet"
@@ -145,6 +145,7 @@ type Driver interface {
 }
 
 type Client interface {
+	Ready
 	client.Interface
 	Clientset() *client.Clientset
 	WithHeartbeat(interval time.Duration) Client
@@ -164,8 +165,9 @@ type ApiServer interface {
 	Done() <-chan struct{}
 	CACerts() []*x509.Certificate
 
-	APIAggregator() *apiserver.APIAggregator
 	Handler() http.Handler
+	Server() *server.GenericAPIServer
+	Destroy() error
 }
 
 type Storage interface {
@@ -262,6 +264,7 @@ type Kubelet interface {
 	Client() Client
 	Tunnel(name TunnelName) Tunnel
 	StaticPods() []*corev1.Pod
+	HTTPServer() *http.Server
 
 	Services(baseURL *url.URL) []*restful.WebService
 

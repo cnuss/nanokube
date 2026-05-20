@@ -1,6 +1,7 @@
 package nanokube
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 type ClientImpl struct {
 	client.Interface
+	ctx        context.Context
 	clientset  *client.Clientset
 	config     *rest.Config
 	httpClient *http.Client
@@ -22,7 +24,7 @@ type ClientImpl struct {
 
 var _ v1.Client = &ClientImpl{}
 
-func NewClient(config *rest.Config) v1.Client {
+func NewClient(ctx context.Context, config *rest.Config) v1.Client {
 	httpClient, err := rest.HTTPClientFor(config)
 	if err != nil {
 		panic(err)
@@ -32,11 +34,31 @@ func NewClient(config *rest.Config) v1.Client {
 		panic(err)
 	}
 	return &ClientImpl{
+		ctx:        ctx,
 		Interface:  cs,
 		clientset:  cs,
 		config:     config,
 		httpClient: httpClient,
 	}
+}
+
+func (c *ClientImpl) Ready() <-chan struct{} {
+	ready := make(chan struct{})
+	go func() {
+		defer close(ready)
+		for {
+			_, err := c.clientset.RESTClient().Get().AbsPath("/readyz").Do(c.ctx).Raw()
+			if err == nil {
+				return
+			}
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-c.ctx.Done():
+				return
+			}
+		}
+	}()
+	return ready
 }
 
 func (c *ClientImpl) Clientset() *client.Clientset {

@@ -94,7 +94,8 @@ type KubeletImpl struct {
 	server     *kubeletserver.Server
 	serverOnce sync.Once
 
-	mux *http.ServeMux
+	bootstrap     kubelet.Bootstrap
+	bootstrapOnce sync.Once
 }
 
 var _ v1.Kubelet = &KubeletImpl{}
@@ -115,7 +116,6 @@ func NewKubelet(cmd *cobra.Command) v1.Kubelet {
 		cmd:               cmd,
 		apiserverProvided: make(chan struct{}),
 		storageProvided:   make(chan struct{}),
-		mux:               http.NewServeMux(),
 	}
 
 	// TODO: consider moving this goroutine into Done() behind a sync.Once so the exit-code orchestration lives next to the channel it publishes on.
@@ -584,6 +584,30 @@ func (k *KubeletImpl) StaticPods() []*corev1.Pod {
 	return k.staticPods
 }
 
+func (k *KubeletImpl) Bootstrap() kubelet.Bootstrap {
+	k.bootstrapOnce.Do(func() {
+		kubeDeps := k.Kube().KubeletDependencies()
+
+		server := &kubeletoptions.KubeletServer{
+			KubeletFlags:         *k.Kube().KubeletFlags(),
+			KubeletConfiguration: *k.Kube().KubeletConfiguration(),
+		}
+
+		hostname, _ := nodeutil.GetHostname(server.HostnameOverride)
+		nodeName := types.NodeName(hostname)
+		nodeIPs, _, _ := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
+
+		klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
+		if err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
+			return
+		}
+
+		k.bootstrap = klet
+	})
+	return k.bootstrap
+}
+
 func (k *KubeletImpl) Run() v1.Kubelet {
 	k.runOnce.Do(func() {
 		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
@@ -608,48 +632,27 @@ func (k *KubeletImpl) Run() v1.Kubelet {
 		capabilities.Initialize(capabilities.Capabilities{AllowPrivileged: true})
 
 		go func() {
-			nanokube.Log.Info("starting kubelet HTTP server")
 			if err := k.HTTPServer().ServeTLS(k.Kube().SecureServing().Listener, k.Kube().CertFilePath(), k.Kube().KeyFilePath()); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				k.Cancel(nanokube.NewError(fmt.Errorf("kubelet HTTP server error: %w", err)).WithCode(1))
 			}
-			nanokube.Log.Info("kubelet HTTP server stopped")
 		}()
+		go k.Bootstrap().Run(k.ctx, k.Kube().KubeletDependencies().PodConfig.Updates())
+		go k.Bootstrap().ListenAndServePodResources(k.ctx)
+		go k.Bootstrap().ListenAndServePods(k.ctx)
 	})
 	return k
 }
 
 func (k *KubeletImpl) Server() *kubeletserver.Server {
 	k.serverOnce.Do(func() {
-		kubeDeps := k.Kube().KubeletDependencies()
-
-		server := &kubeletoptions.KubeletServer{
-			KubeletFlags:         *k.Kube().KubeletFlags(),
-			KubeletConfiguration: *k.Kube().KubeletConfiguration(),
-		}
-
-		hostname, _ := nodeutil.GetHostname(server.HostnameOverride)
-		nodeName := types.NodeName(hostname)
-		nodeIPs, _, _ := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
-
-		klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
-		if err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
-			return
-		}
-
-		kl := klet.(*kubelet.Kubelet)
-		ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), kubeDeps.Auth, &server.KubeletConfiguration)
-		ksrv.InstallTracingFilter(kubeDeps.TracerProvider)
-
-		// Install API Server Routes and Hooks
+		kl := k.Bootstrap().(*kubelet.Kubelet)
+		ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), k.Kube().KubeletDependencies().Auth, k.Kube().KubeletConfiguration())
+		ksrv.InstallTracingFilter(k.Kube().KubeletDependencies().TracerProvider)
+		//
+		// DEVNOTE: we combine the kubelet server and the kubernetes apiserver together
+		//          TODO(partial): add kubelet auth
+		//
 		ksrv.Restful().Handle("/", k.ApiServer().Handler())
-
-		go klet.Run(k.ctx, kubeDeps.PodConfig.Updates())
-		go klet.ListenAndServePodResources(k.ctx)
-		go klet.ListenAndServePods(k.ctx)
-		go k.ApiServer().APIAggregator().GenericAPIServer.RunPostStartHooks(k.ctx)
-
-		nanokube.Log.Info("kubelet started", "hostname", hostname)
 		k.server = &ksrv
 	})
 	return k.server
@@ -663,6 +666,11 @@ func (k *KubeletImpl) HTTPServer() *http.Server {
 			TLSConfig: k.Kube().TLSConfig(),
 			Handler:   k.Server(),
 		}
+		k.httpServer.RegisterOnShutdown(func() {
+			if err := k.ApiServer().Destroy(); err != nil {
+				nanokube.Log.Warn("failed to destroy API server", "error", err)
+			}
+		})
 	})
 	return k.httpServer
 }
