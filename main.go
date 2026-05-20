@@ -16,6 +16,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/awslambda"
 	"github.com/cnuss/nanokube/pkg/driver/docker"
 	"github.com/cnuss/nanokube/pkg/driver/podman"
+	"github.com/cnuss/nanokube/pkg/kubernetes"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
@@ -54,7 +55,7 @@ func main() {
 
 	exitCode := <-kubelet.
 		WithStorage(nanokube.NewStorage(kubelet)).
-		WithApiServer(nanokube.NewApiServer(kubelet)).
+		WithApiServer(kubernetes.NewApiServer(kubelet)).
 		OnReady(v1.APIServerService, updateKubeconfig(kubelet)).
 		OnReady(v1.Node, updateNode(kubelet), detach(kubelet)).
 		OnCancel(removeStaticPods(kubelet), cordonAndDrain(kubelet)).

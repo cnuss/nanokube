@@ -1,4 +1,4 @@
-package nanokube
+package kubernetes
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	controlplaneapiserver "k8s.io/kubernetes/pkg/controlplane/apiserver"
 	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
 
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
@@ -92,10 +93,10 @@ func (a *ApiServerImpl) Context() context.Context {
 func (a *ApiServerImpl) Ready() <-chan struct{} {
 	a.readyOnce.Do(func() {
 		go func() {
-			<-Await(a.ctx, a.clientReady)
+			<-nanokube.Await(a.ctx, a.clientReady)
 			for {
 				if _, err := a.client.CoreV1().Namespaces().Get(a.ctx, "kube-system", metav1.GetOptions{}); err == nil {
-					Log.Info("apiserver is ready")
+					nanokube.Log.Info("apiserver is ready")
 					close(a.ready)
 					break
 				}
@@ -124,7 +125,7 @@ func (a *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInforme
 			generatedopenapi.GetOpenAPIDefinitions,
 		)
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to build generic config: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to build generic config: %w", err)))
 			return
 		}
 		a.serverConfig = genericConfig
@@ -154,7 +155,7 @@ func (a *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.S
 		opts := a.kubelet.Kube().ApiServerOptions()
 		controlplaneConfig, serviceResolver, pluginInitializers, err := app.CreateKubeAPIServerConfig(*opts, a.ServerConfig(), a.SharedInformerFactory(), a.DefaultStorageFactory())
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
 			return
 		}
 		a.controlplaneConfig = controlplaneConfig
@@ -186,7 +187,7 @@ func (a *ApiServerImpl) ApiExtensions() *apiextensionsapiserver.Config {
 		apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*a.ControlPlaneConfig().ControlPlane.Generic, a.ControlPlaneConfig().ControlPlane.VersionedInformers, a.PluginInitializers(), opts.CompletedOptions, opts.MasterCount,
 			a.ServiceResolver(), webhook.NewDefaultAuthenticationInfoResolverWrapper(a.ControlPlaneConfig().ControlPlane.ProxyTransport, a.ControlPlaneConfig().ControlPlane.Generic.EgressSelector, a.ControlPlaneConfig().ControlPlane.Generic.LoopbackClientConfig, a.ControlPlaneConfig().ControlPlane.Generic.TracerProvider))
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
 			return
 		}
 		a.apiExtensions = apiExtensions
@@ -199,7 +200,7 @@ func (a *ApiServerImpl) ApiServerConfig() *apiserver.Config {
 		opts := a.kubelet.Kube().ApiServerOptions()
 		apiServerConfig, err := controlplaneapiserver.CreateAggregatorConfig(*a.ControlPlaneConfig().ControlPlane.Generic, opts.CompletedOptions, a.ControlPlaneConfig().ControlPlane.VersionedInformers, a.ServiceResolver(), a.ControlPlaneConfig().ControlPlane.ProxyTransport, a.ControlPlaneConfig().ControlPlane.Extra.PeerProxy, a.PluginInitializers())
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
 			return
 		}
 		a.apiServerConfig = apiServerConfig
@@ -217,21 +218,21 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 		}
 		completed, err := config.Complete()
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to complete API server config: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to complete API server config: %w", err)))
 			return
 		}
 
 		chain, err := app.CreateServerChain(completed)
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to create API server: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create API server: %w", err)))
 			return
 		}
 
-		<-Await(a.ctx, a.kubelet.Storage().Ready())
+		<-nanokube.Await(a.ctx, a.kubelet.Storage().Ready())
 
 		prepared, err := chain.PrepareRun()
 		if err != nil {
-			a.kubelet.Cancel(NewError(fmt.Errorf("failed to prepare API server: %w", err)))
+			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to prepare API server: %w", err)))
 			return
 		}
 
@@ -247,12 +248,12 @@ func (a *ApiServerImpl) Server() *server.GenericAPIServer {
 func (a *ApiServerImpl) Handler() http.Handler {
 	a.handlerOnce.Do(func() {
 		go func() {
-			// <-Await(a.ctx, a.Client().Ready()) // TODO(partial): wait for something?
+			// <-nanokube.Await(a.ctx, a.Client().Ready()) // TODO(partial): wait for something?
 			a.Server().RunPostStartHooks(a.ctx)
 			context.AfterFunc(a.ctx, func() {
 				err := a.Server().RunPreShutdownHooks()
 				if err != nil {
-					Log.Warn("apiserver pre-shutdown hooks failed", "error", err)
+					nanokube.Log.Warn("apiserver pre-shutdown hooks failed", "error", err)
 				}
 			})
 		}()
@@ -270,11 +271,11 @@ func (a *ApiServerImpl) Destroy() error {
 func (a *ApiServerImpl) Client() v1.Client {
 	a.clientOnce.Do(func() {
 		loopback := a.APIAggregator().GenericAPIServer.LoopbackClientConfig
-		a.client = NewClient(a.ctx, loopback)
+		a.client = nanokube.NewClient(a.ctx, loopback)
 		close(a.clientReady)
 	})
 
-	<-Await(a.ctx, a.clientReady)
+	<-nanokube.Await(a.ctx, a.clientReady)
 	return a.client
 }
 
