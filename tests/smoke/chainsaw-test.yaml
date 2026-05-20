@@ -10,6 +10,7 @@ spec:
         - apply:
             file: https://raw.githubusercontent.com/cnuss/chainsaw-kube/refs/heads/main/smoke/resources.yaml
     - name: assert-deployment-available
+      description: deployment assertions
       try:
         - assert:
             resource:
@@ -21,7 +22,7 @@ spec:
                 availableReplicas: 1
                 readyReplicas: 1
     - name: assert-pod-logs
-      description: kubectl logs end-to-end — one-shot tail and --follow.
+      description: kubectl logs assertions
       try:
         - script:
             content: |
@@ -35,7 +36,7 @@ spec:
             check:
               ($error == null): true
     - name: assert-exec
-      description: kubectl exec end-to-end.
+      description: kubectl exec assertions
       try:
         - script:
             content: |
@@ -58,7 +59,7 @@ spec:
             check:
               ($error == null): true
     - name: assert-attach
-      description: kubectl attach end-to-end.
+      description: kubectl attach assertions
       try:
         - script:
             content: |

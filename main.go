@@ -176,24 +176,40 @@ func cordonAndDrain(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		helper := &drain.Helper{
 			Ctx:                 ctx,
-			Client:              kubelet.Client().Clientset(),
+			Client:              kubelet.Client(),
 			Force:               true,
-			GracePeriodSeconds:  30,
+			GracePeriodSeconds:  0,
 			IgnoreAllDaemonSets: true,
 			DeleteEmptyDirData:  true,
-			Timeout:             60 * time.Second,
+			Timeout:             10 * time.Second,
 			Out:                 io.Discard,
 			ErrOut:              io.Discard,
+			OnPodDeletionOrEvictionStarted: func(pod *corev1.Pod, usingEviction bool) {
+				nanokube.Log.Info("pod eviction started", "name", pod.Name, "usingEviction", usingEviction)
+			},
+			OnPodDeletionOrEvictionFinished: func(pod *corev1.Pod, usingEviction bool, err error) {
+				if err != nil {
+					nanokube.Log.Warn("pod eviction failed", "name", pod.Name, "usingEviction", usingEviction, "error", err)
+				} else {
+					nanokube.Log.Info("pod eviction finished", "name", pod.Name, "usingEviction", usingEviction)
+				}
+			},
 		}
 		node, err := kubelet.Client().CoreV1().Nodes().Get(ctx, kubelet.Kube().KubeletHostname(), metav1.GetOptions{})
 		if err != nil {
 			nanokube.Log.Warn("failed to get node for draining", "name", kubelet.Kube().KubeletHostname(), "error", err)
 			return
 		}
-		drain.RunCordonOrUncordon(helper, node, true)
-		nanokube.Log.Info("node cordoned", "name", kubelet.Kube().KubeletHostname())
-		drain.RunNodeDrain(helper, kubelet.Kube().KubeletHostname())
-		nanokube.Log.Info("node drained", "name", kubelet.Kube().KubeletHostname())
+		nanokube.Log.Info("cordoning node", "name", node.GetObjectMeta().GetName())
+		if err := drain.RunCordonOrUncordon(helper, node, true); err != nil {
+			nanokube.Log.Warn("failed to cordon node", "name", kubelet.Kube().KubeletHostname(), "error", err)
+			return
+		}
+		nanokube.Log.Info("draining node", "name", node.GetObjectMeta().GetName())
+		if err := drain.RunNodeDrain(helper, kubelet.Kube().KubeletHostname()); err != nil {
+			nanokube.Log.Warn("failed to drain node", "name", kubelet.Kube().KubeletHostname(), "error", err)
+			return
+		}
 	}
 }
 
