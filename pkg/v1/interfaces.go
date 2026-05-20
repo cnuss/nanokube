@@ -262,7 +262,7 @@ type Kubelet interface {
 	Host() Host
 	Kube() Kube
 	Client() Client
-	Tunnel(name TunnelName) Tunnel
+	Tunnel() Tunnel
 	StaticPods() []*corev1.Pod
 	HTTPServer() *http.Server
 

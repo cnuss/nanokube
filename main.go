@@ -81,7 +81,7 @@ func stopHttp(kubelet v1.Kubelet) func(ctx context.Context) {
 func updateNode(kubelet v1.Kubelet) func(ctx context.Context) {
 	return func(ctx context.Context) {
 		nodes := kubelet.Client().CoreV1().Nodes()
-		tunnel := kubelet.Tunnel(v1.KubeletTunnel)
+		tunnel := kubelet.Tunnel()
 
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			node, err := nodes.Get(kubelet.Context(), kubelet.Kube().KubeletHostname(), metav1.GetOptions{})
@@ -138,8 +138,8 @@ func updateKubeconfig(kubelet v1.Kubelet) func(ctx context.Context) {
 			kubeconfig = clientcmdapi.NewConfig()
 		}
 
-		internal := kubelet.Client().WithTunnel(kubelet.Tunnel(v1.APIServerTunnel), true)
-		external := kubelet.Client().WithTunnel(kubelet.Tunnel(v1.APIServerTunnel), false)
+		internal := kubelet.Client().WithTunnel(kubelet.Tunnel(), true)
+		external := kubelet.Client().WithTunnel(kubelet.Tunnel(), false)
 
 		if err := internal.WriteKubeconfig(kubelet.Options().FilePathAt(v1.KubeconfigFile)); err != nil {
 			nanokube.Log.Error("failed to write internal kubeconfig", "path", string(kubelet.Options().DataDir())+string(v1.KubeconfigFile), "error", err)

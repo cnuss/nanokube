@@ -165,7 +165,7 @@ func (k *KubeImpl) InformerFactory() informers.SharedInformerFactory {
 
 func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 	k.apiServerOptionsOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
+		tunnel := k.Kubelet().Tunnel()
 		opts := apiserveroptions.NewServerRunOptions()
 		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", tunnel.FQDN())}
 		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.KeyFilePath()}
@@ -205,13 +205,13 @@ func (k *KubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 }
 
 func (k *KubeImpl) KubeletHostname() string {
-	tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
+	tunnel := k.Kubelet().Tunnel()
 	return tunnel.Hostname()
 }
 
 func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 	k.kubeletFlagsOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
+		tunnel := k.Kubelet().Tunnel()
 		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
 		k.kubeletFlags.CloudProvider = "external"
 		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
@@ -224,7 +224,7 @@ func (k *KubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 
 func (k *KubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
 	k.kubeletConfigurationOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
+		tunnel := k.Kubelet().Tunnel()
 		if cfg, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
 			k.kubeletConfiguration = cfg
 		} else {
@@ -347,14 +347,14 @@ func (k *KubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 
 func (k *KubeImpl) Environ() []string {
 	return []string{
-		"KUBERNETES_SERVICE_HOST=" + k.Kubelet().Tunnel(v1.APIServerTunnel).FQDN(),
+		"KUBERNETES_SERVICE_HOST=" + k.Kubelet().Tunnel().FQDN(),
 		"KUBERNETES_SERVICE_PORT=443",
 	}
 }
 
 func (k *KubeImpl) recorder() record.EventRecorder {
 	k.proxiedRecorderOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
+		tunnel := k.Kubelet().Tunnel()
 		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Kubelet().Options().Name(), Host: tunnel.FQDN()})
 	})
 	return k.proxiedRecorder
@@ -418,7 +418,7 @@ func (k *KubeImpl) NodeReady() chan struct{} {
 
 func (k *KubeImpl) SecureServing() *options.SecureServingOptionsWithLoopback {
 	k.secureServingOnce.Do(func() {
-		tunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
+		tunnel := k.Kubelet().Tunnel()
 		listener, err := net.Listen("tcp", net.JoinHostPort(tunnel.LocalIP().String(), strconv.FormatUint(uint64(tunnel.LocalPort()), 10)))
 		if err != nil {
 			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("failed to create listener: %w", err)).WithCode(1))
@@ -511,13 +511,12 @@ func (k *KubeImpl) ensureCertKey() (string, string) {
 			}
 		}
 
-		apiserverTunnel := k.Kubelet().Tunnel(v1.APIServerTunnel)
-		kubeletTunnel := k.Kubelet().Tunnel(v1.KubeletTunnel)
+		tunnel := k.Kubelet().Tunnel()
 
 		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(
 			"localhost",
-			[]net.IP{net.IPv4(127, 0, 0, 1), apiserverTunnel.LocalIP(), kubeletTunnel.LocalIP()},
-			[]string{apiserverTunnel.FQDN(), apiserverTunnel.Hostname(), kubeletTunnel.FQDN(), kubeletTunnel.Hostname()},
+			[]net.IP{net.IPv4(127, 0, 0, 1), tunnel.LocalIP()},
+			[]string{tunnel.FQDN(), tunnel.Hostname()},
 		)
 		if err != nil {
 			k.Kubelet().Cancel(nanokube.NewError(fmt.Errorf("generate self-signed cert: %w", err)))

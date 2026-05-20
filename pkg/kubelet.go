@@ -435,7 +435,11 @@ func (k *KubeletImpl) Version() string {
 	return k.version
 }
 
-func (k *KubeletImpl) Tunnel(tunnelName v1.TunnelName) v1.Tunnel {
+func (k *KubeletImpl) Tunnel() v1.Tunnel {
+	// DEVNOTE: Formerly had separate tunnels for the API server and kubelet
+	//          Leaving scaffolding in place to allow for multiple tunnels in the future, but for now just return a single shared tunnel.
+	tunnelName := v1.SharedTunnel
+
 	tunnel, _ := k.tunnels.LoadOrStore(tunnelName, func() v1.Tunnel {
 		return NewTunnel(k, tunnelName)
 	}())
@@ -660,7 +664,7 @@ func (k *KubeletImpl) Server() *kubeletserver.Server {
 
 func (k *KubeletImpl) HTTPServer() *http.Server {
 	k.httpServerOnce.Do(func() {
-		tunnel := k.Tunnel(v1.KubeletTunnel)
+		tunnel := k.Tunnel()
 		k.httpServer = &http.Server{
 			Addr:      net.JoinHostPort(tunnel.LocalIP().String(), strconv.FormatUint(uint64(tunnel.LocalPort()), 10)),
 			TLSConfig: k.Kube().TLSConfig(),
