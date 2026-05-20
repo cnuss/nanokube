@@ -42,7 +42,7 @@ endif
 
 clean:
 	@rm -f nanokube; true
-	@pkill -f '[.]\/nanokube' 2>/dev/null; true
+	@pkill -9 nanokube 2>/dev/null; true
 	@docker ps -aq | xargs -r docker rm -f 2>/dev/null; true
 	@docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null; true
 	@docker system prune -f >/dev/null 2>&1; true

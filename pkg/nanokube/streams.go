@@ -321,6 +321,9 @@ func (s *StreamImpl) ProxyStream(ctx context.Context, tty bool, stdin bool, in i
 			dst = res.Conn
 		}
 		io.Copy(dst, in)
+		if stdin {
+			res.CloseWrite()
+		}
 	}()
 
 	// output: sole reader of res.Reader. tty => raw single stream (no framing);

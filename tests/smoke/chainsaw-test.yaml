@@ -31,7 +31,29 @@ spec:
               ($error == null): true
         - script:
             content: |
-              kubectl logs -n $NAMESPACE -l app=smoke-deploy -c httpd --follow --tail=0 \
-                | grep -m3 "response:200"
+              kubectl logs -n $NAMESPACE -l app=smoke-deploy -c httpd --follow --tail=0 | grep -m3 "response:200"
+            check:
+              ($error == null): true
+    - name: assert-exec
+      description: kubectl exec end-to-end.
+      try:
+        - script:
+            content: |
+              kubectl exec -n $NAMESPACE deployment/smoke-deploy -c assert -- echo ok
+            check:
+              ($error == null): true
+        - script:
+            content: |
+              kubectl exec -n $NAMESPACE deployment/smoke-deploy -c assert -- sh -c '>&2 echo ok' 2>&1 >/dev/null
+            check:
+              ($error == null): true
+        - script:
+            content: |
+              echo ok | kubectl exec -i -n $NAMESPACE deployment/smoke-deploy -c assert -- cat
+            check:
+              ($error == null): true
+        - script:
+            content: |
+              kubectl exec -n $NAMESPACE deployment/smoke-deploy -c assert -- sh -c 'exit 7' || test $? -eq 7
             check:
               ($error == null): true

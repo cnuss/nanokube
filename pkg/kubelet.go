@@ -673,11 +673,23 @@ func (k *KubeletImpl) Server() *kubeletserver.Server {
 		kl := k.Bootstrap().(*kubelet.Kubelet)
 		ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), k.Kube().KubeletDependencies().Auth, k.Kube().KubeletConfiguration())
 		ksrv.InstallTracingFilter(k.Kube().KubeletDependencies().TracerProvider)
+
+		//
+		// DEVNOTE: add streaming handlers
+		//          TODO(partial): consider providing these directly and disable API Server management of /exec /attach /portforward
+		//
+		for _, ws := range k.Services(k.Tunnel().URL()) {
+			ksrv.Restful().Add(ws)
+			nanokube.Log.Info("registered service", "service", ws.RootPath())
+		}
+
 		//
 		// DEVNOTE: we combine the kubelet server and the kubernetes apiserver together
 		//          TODO(partial): add kubelet auth
 		//
 		ksrv.Restful().Handle("/", k.ApiServer().Handler())
+		nanokube.Log.Info("registered API server")
+
 		k.server = &ksrv
 	})
 	return k.server

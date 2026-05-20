@@ -65,6 +65,11 @@ var FeatureGates = map[string]bool{
 	string(apifeatures.WatchList):                          false,
 	string(features.TranslateStreamCloseWebsocketRequests): false,
 	string(features.PortForwardWebsockets):                 false,
+	// kubelet wraps the kubelet->streaming hop with a V5 WebSocket -> SPDY
+	// translator; cloudflared quick tunnels strip the SPDY upgrade headers
+	// and the second hop dies. Keep V5 end-to-end (server side accepts V5
+	// via the cri-streaming patch).
+	string(features.ExtendWebSocketsToKubelet): false,
 }
 
 type KubeImpl struct {
