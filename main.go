@@ -56,30 +56,26 @@ func main() {
 
 	g.Go(func() error {
 		return run(storage.Context(), storage.
-			Command,
+			WithFlag("backend", "etcd3"),
 		)
 	})
 	g.Go(func() error {
 		return run(apiserver.Context(), apiserver.
-			Command.
 			WithFlag("foo", "bar"),
 		)
 	})
 	g.Go(func() error {
 		return run(controller.Context(), controller.
-			Command.
 			WithFlag("foo", "bar"),
 		)
 	})
 	g.Go(func() error {
 		return run(scheduler.Context(), scheduler.
-			Command.
 			WithFlag("foo", "bar"),
 		)
 	})
 	g.Go(func() error {
 		return run(kubelet.Context(), kubelet.
-			Command.
 			WithFlag("cloud-provider", "external").
 			WithFlag("hostname-override", nano.KubeletHostname()). // TODO(incomplete): set NodeName
 			WithFlag("node-labels", "").                           // TODO(incomplete): moar labels
