@@ -45,7 +45,7 @@ func run(ctx context.Context, cmd *kubernetes.Command) error {
 
 func main() {
 	nano, cancel := pkg.NewNanokube(genericapiserver.SetupSignalContext())
-	g, ctx := errgroup.WithContext(nano)
+	g, _ := errgroup.WithContext(nano)
 	defer cancel(nil)
 
 	storage := kubernetes.NewStorageCommand(nano)
@@ -55,30 +55,30 @@ func main() {
 	kubelet := kubernetes.NewKubeletCommand(nano, apiserver)
 
 	g.Go(func() error {
-		return run(ctx, storage.
+		return run(storage.Context(), storage.
 			Command,
 		)
 	})
 	g.Go(func() error {
-		return run(ctx, apiserver.
+		return run(apiserver.Context(), apiserver.
 			Command.
 			WithFlag("foo", "bar"),
 		)
 	})
 	g.Go(func() error {
-		return run(ctx, controller.
+		return run(controller.Context(), controller.
 			Command.
 			WithFlag("foo", "bar"),
 		)
 	})
 	g.Go(func() error {
-		return run(ctx, scheduler.
+		return run(scheduler.Context(), scheduler.
 			Command.
 			WithFlag("foo", "bar"),
 		)
 	})
 	g.Go(func() error {
-		return run(ctx, kubelet.
+		return run(kubelet.Context(), kubelet.
 			Command.
 			WithFlag("cloud-provider", "external").
 			WithFlag("hostname-override", nano.KubeletHostname()). // TODO(incomplete): set NodeName

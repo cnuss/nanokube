@@ -10,22 +10,18 @@ import (
 
 type ControllerCommand struct {
 	*Command
-	ctx       v1.Nanokube
-	apiserver *ApiServerCommand
+	nano v1.Nanokube
 }
 
-func NewControllerCommand(ctx v1.Nanokube, apiserver *ApiServerCommand) *ControllerCommand {
-	c := &ControllerCommand{
-		ctx:       ctx,
-		apiserver: apiserver,
-	}
-	c.Command = newCommand(ctx, app.NewControllerManagerCommand(ctx, c.Run())).
+func NewControllerCommand(nano v1.Nanokube, apiserver *ApiServerCommand) *ControllerCommand {
+	c := &ControllerCommand{nano: nano}
+	c.Command = newCommand(nano, app.NewControllerManagerCommand(nano, c.Run())).
 		WithNeed(apiserver.Command)
 	return c
 }
 
 func (c *ControllerCommand) Run() func(context.Context, *config.CompletedConfig) error {
-	return func(_ context.Context, cc *config.CompletedConfig) error {
-		return app.Run(c.ctx, cc)
+	return func(ctx context.Context, cc *config.CompletedConfig) error {
+		return app.Run(ctx, cc)
 	}
 }

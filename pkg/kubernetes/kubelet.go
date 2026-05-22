@@ -16,43 +16,39 @@ import (
 
 type KubeletCommand struct {
 	*Command
-	ctx       v1.Nanokube
-	apiserver *ApiServerCommand
+	nano v1.Nanokube
 }
 
-func NewKubeletCommand(ctx v1.Nanokube, apiserver *ApiServerCommand) *KubeletCommand {
-	c := &KubeletCommand{
-		ctx:       ctx,
-		apiserver: apiserver,
-	}
+func NewKubeletCommand(nano v1.Nanokube, apiserver *ApiServerCommand) *KubeletCommand {
+	c := &KubeletCommand{nano: nano}
 	flagSet := pflag.NewFlagSet(server.ComponentKubelet, pflag.ContinueOnError)
-	c.Command = newCommand(ctx, app.NewKubeletCommand(ctx, flagSet, c.Run())).
-		WithNeed(apiserver.Command).
-		WithFlagSet(flagSet)
+	c.Command = newCommand(nano, app.NewKubeletCommand(nano, flagSet, c.Run())).
+		WithFlagSet(flagSet).
+		WithNeed(apiserver.Command)
 	return c
 }
 
 func (c *KubeletCommand) Run() func(context.Context, *options.KubeletServer, *kubelet.Dependencies, featuregate.FeatureGate) error {
-	return func(_ context.Context, ks *options.KubeletServer, d *kubelet.Dependencies, fg featuregate.FeatureGate) error {
-		ks.Address = c.ctx.Tunnel().LocalIP().String()
-		ks.ClusterDomain = c.ctx.Tunnel().Domain()
+	return func(ctx context.Context, ks *options.KubeletServer, d *kubelet.Dependencies, fg featuregate.FeatureGate) error {
+		ks.Address = c.nano.Tunnel().LocalIP().String()
+		ks.ClusterDomain = c.nano.Tunnel().Domain()
 		ks.ClusterDNS = []string{"1.1.1.1"}
 		ks.FileCheckFrequency = metav1.Duration{Duration: 1 * time.Second}
-		ks.PodLogsDir = c.ctx.Options().DataDirAt(v1.DataDirLogs)
-		ks.Port = c.ctx.Tunnel().LocalPort()
+		ks.PodLogsDir = c.nano.Options().DataDirAt(v1.DataDirLogs)
+		ks.Port = c.nano.Tunnel().LocalPort()
 		ks.ReadOnlyPort = 0
 		ks.RegisterNode = true
-		ks.StaticPodPath = c.ctx.Options().DataDirAt(v1.DataDirStaticPods)
-		d.RemoteImageService = c.ctx.DefaultBackend().Driver()
-		d.RemoteRuntimeService = c.ctx.DefaultBackend().Driver()
-		d.ContainerManager = c.ctx.DefaultBackend().Manager()
-		d.CAdvisorInterface = c.ctx.DefaultBackend()
-		d.VolumePlugins = c.ctx.Host().VolumePlugins()
-		d.OSInterface = c.ctx.Host()
-		d.Mounter = c.ctx.Host()
-		d.Subpather = c.ctx.Host()
-		d.HostUtil = c.ctx.Host()
-		d.Recorder = c.ctx
-		return app.Run(c.ctx, ks, d, fg)
+		ks.StaticPodPath = c.nano.Options().DataDirAt(v1.DataDirStaticPods)
+		d.RemoteImageService = c.nano.DefaultBackend().Driver()
+		d.RemoteRuntimeService = c.nano.DefaultBackend().Driver()
+		d.ContainerManager = c.nano.DefaultBackend().Manager()
+		d.CAdvisorInterface = c.nano.DefaultBackend()
+		d.VolumePlugins = c.nano.Host().VolumePlugins()
+		d.OSInterface = c.nano.Host()
+		d.Mounter = c.nano.Host()
+		d.Subpather = c.nano.Host()
+		d.HostUtil = c.nano.Host()
+		d.Recorder = c.nano
+		return app.Run(ctx, ks, d, fg)
 	}
 }

@@ -10,22 +10,18 @@ import (
 
 type ApiServerCommand struct {
 	*Command
-	ctx     v1.Nanokube
-	storage *StorageCommand
+	nano v1.Nanokube
 }
 
-func NewApiServerCommand(ctx v1.Nanokube, storage *StorageCommand) *ApiServerCommand {
-	c := &ApiServerCommand{
-		ctx:     ctx,
-		storage: storage,
-	}
-	c.Command = newCommand(ctx, app.NewAPIServerCommand(ctx, c.Run())).
+func NewApiServerCommand(nano v1.Nanokube, storage *StorageCommand) *ApiServerCommand {
+	c := &ApiServerCommand{nano: nano}
+	c.Command = newCommand(nano, app.NewAPIServerCommand(nano, c.Run())).
 		WithNeed(storage.Command)
 	return c
 }
 
 func (c *ApiServerCommand) Run() func(context.Context, options.CompletedOptions) error {
-	return func(_ context.Context, o options.CompletedOptions) error {
+	return func(ctx context.Context, o options.CompletedOptions) error {
 		config, err := app.NewConfig(o)
 		if err != nil {
 			return err
@@ -42,6 +38,6 @@ func (c *ApiServerCommand) Run() func(context.Context, options.CompletedOptions)
 		if err != nil {
 			return err
 		}
-		return prepared.Run(c.ctx)
+		return prepared.Run(ctx)
 	}
 }

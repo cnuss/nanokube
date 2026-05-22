@@ -48,6 +48,8 @@ type Nanokube interface {
 	Options() Options
 	Version() string
 
+	WithCancel() (context.Context, context.CancelFunc)
+
 	Cancel(reason Error)
 	Detach()
 	OnCancel(fns ...func(ctx context.Context)) Nanokube

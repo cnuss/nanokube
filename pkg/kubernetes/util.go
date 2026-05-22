@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,23 +17,29 @@ import (
 
 type Command struct {
 	*cobra.Command
-	ctx          v1.Nanokube
+	parent v1.Nanokube
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	flagSet      *pflag.FlagSet
 	flags        map[string]string
 	featureGates map[string]bool
-	needs        []*Command
 
-	starting chan struct{}
-	started  chan struct{}
-	stopping chan struct{}
-	stopped  chan struct{}
+	needs      []*Command
+	dependents []*Command
+
+	stopped chan struct{}
 }
 
-func newCommand(ctx v1.Nanokube, cmd *cobra.Command) *Command {
+func newCommand(parent v1.Nanokube, cobraCmd *cobra.Command) *Command {
+	ctx, cancel := parent.WithCancel()
 	c := &Command{
-		Command: cmd,
+		Command: cobraCmd,
+		parent:  parent,
 		ctx:     ctx,
-		flagSet: cmd.Flags(),
+		cancel:  cancel,
+		flagSet: cobraCmd.Flags(),
 		flags:   make(map[string]string),
 		featureGates: map[string]bool{
 			string(features.KubeletInUserNamespace): true,
@@ -43,18 +50,44 @@ func newCommand(ctx v1.Nanokube, cmd *cobra.Command) *Command {
 			// DEVNOTE: SSE not supported with Cloudflare Tunnels
 			string(apifeatures.WatchList): false,
 		},
-		needs:    make([]*Command, 0),
-		starting: make(chan struct{}),
-		started:  make(chan struct{}),
-		stopping: make(chan struct{}),
-		stopped:  make(chan struct{}),
+		needs:   make([]*Command, 0),
+		stopped: make(chan struct{}),
 	}
+	// Inject our per-command ctx so the cobra cmd's RunE picks it up via
+	// cmd.Context() (upstream cmds patched to prefer that over their closure ctx).
+	cobraCmd.SetContext(ctx)
 	c.Command.RunE = c.runE()
+
+	// Shutdown ordering: when the root context fires, wait for every command
+	// that depends on me to close `stopped`, then cancel my own ctx so the
+	// inner cobra command unwinds.
+	go func() {
+		<-parent.Done()
+		for _, dep := range c.dependents {
+			<-dep.stopped
+		}
+		c.cancel()
+	}()
+
 	return c
 }
 
+// Context returns this Command's lifecycle ctx — derived from the root
+// nanokube but only cancels after all dependents have closed `stopped`.
+func (c *Command) Context() context.Context {
+	return c.ctx
+}
+
+// Stopped returns a channel closed when this Command's RunE has returned.
+func (c *Command) Stopped() <-chan struct{} {
+	return c.stopped
+}
+
+// WithNeed records a forward edge (c needs `need`) and the reverse edge
+// (`need` is needed by c). The reverse edge is what drives shutdown order.
 func (c *Command) WithNeed(need *Command) *Command {
 	c.needs = append(c.needs, need)
+	need.dependents = append(need.dependents, c)
 	return c
 }
 
@@ -96,6 +129,8 @@ func (c *Command) runE() func(cmd *cobra.Command, args []string) error {
 
 	inner := c.Command.RunE
 	return func(cmd *cobra.Command, args []string) error {
+		defer close(c.stopped)
+
 		flags := []string{}
 		for _, k := range keys {
 			setting := settings[k]

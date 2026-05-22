@@ -66,6 +66,7 @@ func NewNanokube(ctx context.Context) (v1.Nanokube, context.CancelCauseFunc) {
 
 	nano := &nanokubeImpl{
 		ctx:               ctx,
+		cancel:            cancel,
 		options:           nanokube.NewOptions(),
 		canceled:          make(chan struct{}),
 		exitCode:          make(chan int, 1),
@@ -223,6 +224,10 @@ func (n *nanokubeImpl) Value(key any) any {
 
 func (n *nanokubeImpl) Options() v1.Options {
 	return n.options
+}
+
+func (n *nanokubeImpl) WithCancel() (context.Context, context.CancelFunc) {
+	return context.WithCancel(n)
 }
 
 //go:linkname nodeReadyGracePeriod k8s.io/kubernetes/pkg/kubelet.nodeReadyGracePeriod

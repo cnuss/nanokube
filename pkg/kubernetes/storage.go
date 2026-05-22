@@ -18,21 +18,18 @@ import (
 
 type StorageCommand struct {
 	*Command
-	ctx v1.Nanokube
+	nano v1.Nanokube
 
 	port     int
 	portOnce sync.Once
 }
 
-func NewStorageCommand(ctx v1.Nanokube) *StorageCommand {
-	c := &StorageCommand{
-		ctx: ctx,
-	}
-
+func NewStorageCommand(nano v1.Nanokube) *StorageCommand {
+	c := &StorageCommand{nano: nano}
 	command := &cobra.Command{
 		Use: "etcd",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dataDir := c.ctx.Options().DataDirAt(v1.DataDirEtcd)
+			dataDir := c.nano.Options().DataDirAt(v1.DataDirEtcd)
 			port := c.Port()
 			clientURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 			peerURL, _ := url.Parse("http://127.0.0.1:0")
@@ -54,20 +51,17 @@ func NewStorageCommand(ctx v1.Nanokube) *StorageCommand {
 				zapcore.FatalLevel,
 			)))
 
-			go func() {
-				server, err := embed.StartEtcd(cfg)
-				if err != nil {
-					panic(err)
-				}
-				<-server.Server.ReadyNotify()
-				<-c.ctx.Done()
-				server.Close()
-			}()
-
+			server, err := embed.StartEtcd(cfg)
+			if err != nil {
+				return err
+			}
+			<-server.Server.ReadyNotify()
+			<-cmd.Context().Done()
+			server.Close()
 			return nil
 		},
 	}
-	c.Command = newCommand(ctx, command)
+	c.Command = newCommand(nano, command)
 	return c
 }
 

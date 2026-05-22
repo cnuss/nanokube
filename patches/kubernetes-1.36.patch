@@ -1,5 +1,5 @@
 diff --git a/cmd/kube-apiserver/app/server.go b/cmd/kube-apiserver/app/server.go
-index a0ba37e0103..2f2f7487b44 100644
+index a0ba37e0103..0fc035fb4d9 100644
 --- a/cmd/kube-apiserver/app/server.go
 +++ b/cmd/kube-apiserver/app/server.go
 @@ -67,9 +67,9 @@ func init() {
@@ -14,7 +14,18 @@ index a0ba37e0103..2f2f7487b44 100644
  	featureGate := s.GenericServerRunOptions.ComponentGlobalsRegistry.FeatureGateFor(basecompatibility.DefaultKubeComponent)
  
  	cmd := &cobra.Command{
-@@ -114,7 +114,7 @@ cluster's shared state through which all other components interact.`,
+@@ -91,6 +91,10 @@ cluster's shared state through which all other components interact.`,
+ 			return nil
+ 		},
+ 		RunE: func(cmd *cobra.Command, args []string) error {
++			// Prefer the cmd's context (set by callers via cmd.SetContext) over the
++			// ctx captured by NewAPIServerCommand's closure, so per-command shutdown
++			// signaling actually reaches this RunE.
++			ctx := cmd.Context()
+ 			verflag.PrintAndExitIfRequested()
+ 			fs := cmd.Flags()
+ 			// Activate logging as soon as possible, after that
+@@ -114,7 +118,7 @@ cluster's shared state through which all other components interact.`,
  			featureGate.(featuregate.MutableFeatureGate).AddMetrics()
  			// add component version metrics
  			s.GenericServerRunOptions.ComponentGlobalsRegistry.AddMetrics()
@@ -24,7 +35,7 @@ index a0ba37e0103..2f2f7487b44 100644
  		Args: func(cmd *cobra.Command, args []string) error {
  			for _, arg := range args {
 diff --git a/cmd/kube-controller-manager/app/controllermanager.go b/cmd/kube-controller-manager/app/controllermanager.go
-index 016b00bb315..f6e5340fcf2 100644
+index 016b00bb315..acd32ab3df1 100644
 --- a/cmd/kube-controller-manager/app/controllermanager.go
 +++ b/cmd/kube-controller-manager/app/controllermanager.go
 @@ -106,7 +106,7 @@ const (
@@ -36,7 +47,23 @@ index 016b00bb315..f6e5340fcf2 100644
  	s, err := options.NewKubeControllerManagerOptions()
  	if err != nil {
  		klog.Background().Error(err, "Unable to initialize command options")
-@@ -159,7 +159,7 @@ controller, and serviceaccounts controller.`,
+@@ -141,10 +141,11 @@ controller, and serviceaccounts controller.`,
+ 			}
+ 			cliflag.PrintFlags(cmd.Flags())
+ 
+-			// We use context.Background() here still because using server.SetupSignalContext() would cause
+-			// components like the event broadcaster to terminate on signal immediately, which is not what we want.
+-			// Termination for that case is being handled explicitly in Run() later on.
+-			ctx := context.Background()
++			// Prefer the cmd's context (set by callers via cmd.SetContext) over the
++			// ctx captured by NewControllerManagerCommand's closure, so per-command
++			// shutdown signaling actually reaches this RunE. Falls back to the
++			// closure's ctx if the caller never set one.
++			ctx := cmd.Context()
+ 			c, err := s.Config(ctx, KnownControllers(), ControllersDisabledByDefault(), ControllerAliases())
+ 			if err != nil {
+ 				return err
+@@ -159,7 +160,7 @@ controller, and serviceaccounts controller.`,
  			if utilfeature.DefaultFeatureGate.Enabled(cmfeatures.ControllerManagerReleaseLeaderElectionLockOnExit) {
  				ctx = server.SetupSignalContext()
  			}
@@ -46,7 +73,7 @@ index 016b00bb315..f6e5340fcf2 100644
  		Args: func(cmd *cobra.Command, args []string) error {
  			for _, arg := range args {
 diff --git a/cmd/kube-scheduler/app/server.go b/cmd/kube-scheduler/app/server.go
-index 4d0ebfd19af..488e231f86f 100644
+index 4d0ebfd19af..075e0468619 100644
 --- a/cmd/kube-scheduler/app/server.go
 +++ b/cmd/kube-scheduler/app/server.go
 @@ -90,7 +90,7 @@ func init() {
@@ -58,17 +85,20 @@ index 4d0ebfd19af..488e231f86f 100644
  	opts := options.NewOptions()
  
  	cmd := &cobra.Command{
-@@ -108,7 +108,7 @@ for more information about scheduling and the kube-scheduler component.`,
+@@ -108,7 +108,10 @@ for more information about scheduling and the kube-scheduler component.`,
  			return opts.ComponentGlobalsRegistry.Set()
  		},
  		RunE: func(cmd *cobra.Command, args []string) error {
 -			return runCommand(cmd, opts, registryOptions...)
-+			return runFunc(ctx, opts, registryOptions...)
++			// Prefer the cmd's context (set by callers via cmd.SetContext) over the
++			// ctx captured by NewSchedulerCommand's closure, so per-command shutdown
++			// signaling actually reaches this RunE.
++			return runFunc(cmd.Context(), opts, registryOptions...)
  		},
  		Args: func(cmd *cobra.Command, args []string) error {
  			for _, arg := range args {
 diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
-index c245a648831..122686ba4ab 100644
+index c245a648831..0421e15513b 100644
 --- a/cmd/kubelet/app/server.go
 +++ b/cmd/kubelet/app/server.go
 @@ -65,7 +65,6 @@ import (
@@ -93,7 +123,18 @@ index c245a648831..122686ba4ab 100644
  	cleanFlagSet.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
  	kubeletFlags := options.NewKubeletFlags()
  
-@@ -301,11 +302,11 @@ is checked every 20 seconds (also configurable with a flag).`,
+@@ -180,6 +181,10 @@ is checked every 20 seconds (also configurable with a flag).`,
+ 		DisableFlagParsing: true,
+ 		SilenceUsage:       true,
+ 		RunE: func(cmd *cobra.Command, args []string) error {
++			// Prefer the cmd's context (set by callers via cmd.SetContext) over the
++			// ctx captured by NewKubeletCommand's closure, so per-command shutdown
++			// signaling actually reaches this RunE.
++			ctx := cmd.Context()
+ 			// initial flag parse, since we disable cobra's flag parsing
+ 			if err := cleanFlagSet.Parse(args); err != nil {
+ 				return fmt.Errorf("failed to parse kubelet flag: %w", err)
+@@ -301,11 +306,11 @@ is checked every 20 seconds (also configurable with a flag).`,
  			logger.V(5).Info("KubeletConfiguration", "configuration", klog.Format(config))
  
  			// set up signal context for kubelet shutdown
@@ -107,7 +148,7 @@ index c245a648831..122686ba4ab 100644
  		},
  	}
  
-@@ -532,7 +533,8 @@ func UnsecuredDependencies(ctx context.Context, s *options.KubeletServer, featur
+@@ -532,7 +537,8 @@ func UnsecuredDependencies(ctx context.Context, s *options.KubeletServer, featur
  		OSInterface:         kubecontainer.RealOS{},
  		VolumePlugins:       plugins,
  		DynamicPluginProber: GetDynamicPluginProber(ctx, s.VolumePluginDir, pluginRunner),
@@ -117,7 +158,7 @@ index c245a648831..122686ba4ab 100644
  }
  
  // Run runs the specified KubeletServer with the given Dependencies. This should never exit.
-@@ -912,7 +914,6 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
+@@ -912,7 +918,6 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
  			kubeDeps.Recorder,
  			kubeDeps.KubeClient,
  		)
@@ -125,7 +166,7 @@ index c245a648831..122686ba4ab 100644
  		if err != nil {
  			return err
  		}
-@@ -1260,7 +1261,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
+@@ -1260,7 +1265,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
  		kubeDeps.OSInterface = kubecontainer.RealOS{}
  	}
  
@@ -134,7 +175,7 @@ index c245a648831..122686ba4ab 100644
  		kubeServer,
  		kubeDeps,
  		hostname,
-@@ -1303,13 +1304,14 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
+@@ -1303,13 +1308,14 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
  	go k.ListenAndServePods(ctx)
  }
  
