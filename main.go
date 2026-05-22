@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -25,32 +26,69 @@ func init() {
 	v1.Backends = append(v1.Backends, awslambda.Detect)
 }
 
+func run(ctx context.Context, cmd *kubernetes.Command) error {
+	errCh := make(chan error, 1)
+	go func() {
+		if code := cli.Run(cmd.Command); code != 0 {
+			errCh <- fmt.Errorf("%s exited with code %d", cmd.Command.Name(), code)
+			return
+		}
+		errCh <- nil
+	}()
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
 func main() {
 	nano, cancel := pkg.NewNanokube(genericapiserver.SetupSignalContext())
+	g, ctx := errgroup.WithContext(nano)
 	defer cancel(nil)
-	g := new(errgroup.Group)
 
-	kubelet := kubernetes.NewKubeletCommand(nano)
-	apiserver := kubernetes.NewApiServerCommand(nano)
+	storage := kubernetes.NewStorageCommand(nano)
+	apiserver := kubernetes.NewApiServerCommand(nano, storage)
+	controller := kubernetes.NewControllerCommand(nano, apiserver)
+	scheduler := kubernetes.NewSchedulerCommand(nano, apiserver)
+	kubelet := kubernetes.NewKubeletCommand(nano, apiserver)
 
 	g.Go(func() error {
-		defer cancel(nil)
-		if code := cli.Run(kubelet.Command); code != 0 {
-			err := fmt.Errorf("kubelet exited with code %d", code)
-			cancel(err)
-			return err
-		}
-		return nil
+		return run(ctx, storage.
+			Command,
+		)
 	})
-
 	g.Go(func() error {
-		defer cancel(nil)
-		if code := cli.Run(apiserver.Command); code != 0 {
-			err := fmt.Errorf("apiserver exited with code %d", code)
-			cancel(err)
-			return err
-		}
-		return nil
+		return run(ctx, apiserver.
+			Command.
+			WithFlag("foo", "bar"),
+		)
+	})
+	g.Go(func() error {
+		return run(ctx, controller.
+			Command.
+			WithFlag("foo", "bar"),
+		)
+	})
+	g.Go(func() error {
+		return run(ctx, scheduler.
+			Command.
+			WithFlag("foo", "bar"),
+		)
+	})
+	g.Go(func() error {
+		return run(ctx, kubelet.
+			Command.
+			WithFlag("cloud-provider", "external").
+			WithFlag("hostname-override", nano.KubeletHostname()). // TODO(incomplete): set NodeName
+			WithFlag("node-labels", "").                           // TODO(incomplete): moar labels
+			WithFlag("node-ip", nano.Tunnel().LocalIP().String()).
+			WithFlag("root-dir", nano.Options().DataDirAt(v1.DataDirKubelet)).
+			WithFlag("cert-dir", nano.Options().DataDirAt(v1.DataDirCerts)).
+			WithFlag("tls-cert-file", nano.CertFilePath()).
+			WithFlag("tls-private-key-file", nano.KeyFilePath()),
+		)
 	})
 
 	if err := g.Wait(); err != nil {

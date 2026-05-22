@@ -23,6 +23,50 @@ index a0ba37e0103..2f2f7487b44 100644
  		},
  		Args: func(cmd *cobra.Command, args []string) error {
  			for _, arg := range args {
+diff --git a/cmd/kube-controller-manager/app/controllermanager.go b/cmd/kube-controller-manager/app/controllermanager.go
+index 016b00bb315..f6e5340fcf2 100644
+--- a/cmd/kube-controller-manager/app/controllermanager.go
++++ b/cmd/kube-controller-manager/app/controllermanager.go
+@@ -106,7 +106,7 @@ const (
+ )
+ 
+ // NewControllerManagerCommand creates a *cobra.Command object with default parameters
+-func NewControllerManagerCommand() *cobra.Command {
++func NewControllerManagerCommand(ctx context.Context, runFunc func(ctx context.Context, opts *config.CompletedConfig) error) *cobra.Command {
+ 	s, err := options.NewKubeControllerManagerOptions()
+ 	if err != nil {
+ 		klog.Background().Error(err, "Unable to initialize command options")
+@@ -159,7 +159,7 @@ controller, and serviceaccounts controller.`,
+ 			if utilfeature.DefaultFeatureGate.Enabled(cmfeatures.ControllerManagerReleaseLeaderElectionLockOnExit) {
+ 				ctx = server.SetupSignalContext()
+ 			}
+-			return Run(ctx, c.Complete())
++			return runFunc(ctx, c.Complete())
+ 		},
+ 		Args: func(cmd *cobra.Command, args []string) error {
+ 			for _, arg := range args {
+diff --git a/cmd/kube-scheduler/app/server.go b/cmd/kube-scheduler/app/server.go
+index 4d0ebfd19af..488e231f86f 100644
+--- a/cmd/kube-scheduler/app/server.go
++++ b/cmd/kube-scheduler/app/server.go
+@@ -90,7 +90,7 @@ func init() {
+ type Option func(runtime.Registry) error
+ 
+ // NewSchedulerCommand creates a *cobra.Command object with default parameters and registryOptions
+-func NewSchedulerCommand(registryOptions ...Option) *cobra.Command {
++func NewSchedulerCommand(ctx context.Context, runFunc func(ctx context.Context, opts *options.Options, registryOptions ...Option) error, registryOptions ...Option) *cobra.Command {
+ 	opts := options.NewOptions()
+ 
+ 	cmd := &cobra.Command{
+@@ -108,7 +108,7 @@ for more information about scheduling and the kube-scheduler component.`,
+ 			return opts.ComponentGlobalsRegistry.Set()
+ 		},
+ 		RunE: func(cmd *cobra.Command, args []string) error {
+-			return runCommand(cmd, opts, registryOptions...)
++			return runFunc(ctx, opts, registryOptions...)
+ 		},
+ 		Args: func(cmd *cobra.Command, args []string) error {
+ 			for _, arg := range args {
 diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
 index c245a648831..122686ba4ab 100644
 --- a/cmd/kubelet/app/server.go
