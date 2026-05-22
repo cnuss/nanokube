@@ -26,11 +26,25 @@ type OptionsImpl struct {
 
 var _ v1.Options = &OptionsImpl{}
 
-func NewOptions(cmd *cobra.Command) v1.Options {
-	options := &OptionsImpl{}
-	cmd.PersistentFlags().StringVar(&options.name, "name", "nanokube", "cluster name")
-	cmd.PersistentFlags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
-	return options.RunFlags(cmd)
+func NewOptions() v1.Options {
+	options := &OptionsImpl{
+		name: "nanokube",
+		dataDir: func() string {
+			cacheDir, _ := os.UserCacheDir()
+			os.Setenv("NANOKUBE_HOME", cacheDir)
+			return cacheDir
+		}(),
+		verbosity: 0,
+	}
+	// dataDir := func() string {
+	// 	cacheDir, _ := os.UserCacheDir()
+	// 	os.Setenv("NANOKUBE_HOME", cacheDir)
+	// 	return cacheDir
+	// }()
+	// cmd.PersistentFlags().StringVar(&options.name, "name", "nanokube", "cluster name")
+	// cmd.PersistentFlags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
+	// cmd.PersistentFlags().StringVar(&options.dataDir, "data", dataDir, "data directory")
+	return options
 }
 
 func (o *OptionsImpl) RunFlags(cmd *cobra.Command) v1.Options {

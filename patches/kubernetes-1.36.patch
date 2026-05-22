@@ -1,5 +1,5 @@
 diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
-index c245a648831..cd201a2b7fd 100644
+index c245a648831..122686ba4ab 100644
 --- a/cmd/kubelet/app/server.go
 +++ b/cmd/kubelet/app/server.go
 @@ -65,7 +65,6 @@ import (
@@ -48,20 +48,7 @@ index c245a648831..cd201a2b7fd 100644
  }
  
  // Run runs the specified KubeletServer with the given Dependencies. This should never exit.
-@@ -757,8 +759,10 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
- 		runAuthenticatorCAReload(ctx.Done())
- 	}
- 
--	if err := kubelet.PreInitRuntimeService(ctx, &s.KubeletConfiguration, kubeDeps); err != nil {
--		return err
-+	if kubeDeps.RemoteImageService != nil && kubeDeps.RemoteRuntimeService != nil {
-+		if err := kubelet.PreInitRuntimeService(ctx, &s.KubeletConfiguration, kubeDeps); err != nil {
-+			return err
-+		}
- 	}
- 
- 	// Get cgroup driver setting from CRI
-@@ -912,7 +916,6 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
+@@ -912,7 +914,6 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
  			kubeDeps.Recorder,
  			kubeDeps.KubeClient,
  		)
@@ -69,7 +56,7 @@ index c245a648831..cd201a2b7fd 100644
  		if err != nil {
  			return err
  		}
-@@ -1260,7 +1263,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
+@@ -1260,7 +1261,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
  		kubeDeps.OSInterface = kubecontainer.RealOS{}
  	}
  
@@ -78,7 +65,7 @@ index c245a648831..cd201a2b7fd 100644
  		kubeServer,
  		kubeDeps,
  		hostname,
-@@ -1303,13 +1306,14 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
+@@ -1303,13 +1304,14 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
  	go k.ListenAndServePods(ctx)
  }
  
@@ -155,7 +142,7 @@ index b9d366ad462..045e062d751 100644
  	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
  	if port <= 0 {
 diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
-index 5bf378bab58..ca625ed3357 100644
+index 5bf378bab58..4e324266021 100644
 --- a/pkg/kubelet/kubelet.go
 +++ b/pkg/kubelet/kubelet.go
 @@ -65,6 +65,7 @@ import (
@@ -166,7 +153,28 @@ index 5bf378bab58..ca625ed3357 100644
  	utilfeature "k8s.io/apiserver/pkg/util/feature"
  	coreinformersv1 "k8s.io/client-go/informers/core/v1"
  	clientset "k8s.io/client-go/kubernetes"
-@@ -572,7 +573,9 @@ func NewMainKubelet(ctx context.Context,
+@@ -408,11 +409,16 @@ func PreInitRuntimeService(ctx context.Context, kubeCfg *kubeletconfiginternal.K
+ 	}
+ 	var err error
+ 	useStreaming := utilfeature.DefaultFeatureGate.Enabled(features.CRIListStreaming)
+-	if kubeDeps.RemoteRuntimeService, err = remote.NewRemoteRuntimeService(ctx, kubeCfg.ContainerRuntimeEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
+-		return err
++	// Only construct the default CRI clients if the caller didn't already supply them.
++	if kubeDeps.RemoteRuntimeService == nil {
++		if kubeDeps.RemoteRuntimeService, err = remote.NewRemoteRuntimeService(ctx, kubeCfg.ContainerRuntimeEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
++			return err
++		}
+ 	}
+-	if kubeDeps.RemoteImageService, err = remote.NewRemoteImageService(ctx, remoteImageEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
+-		return err
++	if kubeDeps.RemoteImageService == nil {
++		if kubeDeps.RemoteImageService, err = remote.NewRemoteImageService(ctx, remoteImageEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
++			return err
++		}
+ 	}
+ 
+ 	kubeDeps.useLegacyCadvisorStats = cadvisor.UsingLegacyCadvisorStats(kubeCfg.ContainerRuntimeEndpoint)
+@@ -572,7 +578,9 @@ func NewMainKubelet(ctx context.Context,
  				return nil, err
  			}
  		} else {
@@ -177,7 +185,7 @@ index 5bf378bab58..ca625ed3357 100644
  		}
  	}
  
-@@ -3300,6 +3303,20 @@ func (kl *Kubelet) ListenAndServe(ctx context.Context, kubeCfg *kubeletconfigint
+@@ -3300,6 +3308,20 @@ func (kl *Kubelet) ListenAndServe(ctx context.Context, kubeCfg *kubeletconfigint
  	server.ListenAndServeKubeletServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, kubeCfg, tlsConfig, auth, tp)
  }
  

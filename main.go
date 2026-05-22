@@ -9,6 +9,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/podman"
 	"github.com/cnuss/nanokube/pkg/kubernetes"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
 )
 
@@ -23,8 +24,8 @@ func init() {
 }
 
 func main() {
-	nano := pkg.NewNanokube()
-	cmd := kubernetes.NewKubeletCommand(nano)
-	code := cli.Run(cmd)
+	nano := pkg.NewNanokube(genericapiserver.SetupSignalContext())
+	kubelet := kubernetes.NewKubeletCommand(nano)
+	code := cli.Run(kubelet)
 	os.Exit(code)
 }

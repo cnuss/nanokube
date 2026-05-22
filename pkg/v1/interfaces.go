@@ -43,6 +43,7 @@ import (
 type Nanokube interface {
 	context.Context
 	record.EventRecorder
+	record.EventRecorderLogger
 
 	Options() Options
 	Version() string

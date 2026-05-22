@@ -34,7 +34,6 @@ import (
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	apifeatures "k8s.io/apiserver/pkg/features"
-	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/options"
 	storage "k8s.io/apiserver/pkg/server/storage"
@@ -63,9 +62,10 @@ import (
 	"k8s.io/mount-utils"
 )
 
-func NewNanokube() v1.Nanokube {
+func NewNanokube(ctx context.Context) v1.Nanokube {
 	nano := &nanokubeImpl{
-		ctx:               genericapiserver.SetupSignalContext(),
+		ctx:               ctx,
+		options:           nanokube.NewOptions(),
 		canceled:          make(chan struct{}),
 		exitCode:          make(chan int, 1),
 		apiserverProvided: make(chan struct{}),
@@ -789,6 +789,7 @@ func (k *nanokubeImpl) Host() v1.Host {
 }
 
 func (k *nanokubeImpl) Client() v1.Client {
+	nanokube.Unimplemented()
 	return k.ApiServer().Client()
 }
 
