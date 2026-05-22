@@ -37,7 +37,6 @@ import (
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/options"
 	storage "k8s.io/apiserver/pkg/server/storage"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/cert"
@@ -72,6 +71,9 @@ func NewNanokube(ctx context.Context) v1.Nanokube {
 		storageProvided:   make(chan struct{}),
 		nodeReady:         make(chan struct{}),
 	}
+	nano.noopClient = sync.OnceValue(func() v1.Client {
+		return nanokube.NewNoopClient(nano)
+	})
 
 	// go func() {
 	// 	<-nano.ctx.Done()
@@ -125,6 +127,8 @@ type nanokubeImpl struct {
 
 	apiserver         v1.ApiServer
 	apiserverProvided chan struct{}
+
+	noopClient func() v1.Client
 
 	storage         v1.Storage
 	storageProvided chan struct{}
@@ -180,9 +184,6 @@ type nanokubeImpl struct {
 
 	nodeReady     chan struct{}
 	nodeReadyOnce sync.Once
-
-	informerFactory     informers.SharedInformerFactory
-	informerFactoryOnce sync.Once
 
 	proxiedRecorder     record.EventRecorder
 	proxiedRecorderOnce sync.Once
@@ -247,13 +248,6 @@ func (k *nanokubeImpl) Broadcaster() record.EventBroadcaster {
 		k.broadcaster = record.NewBroadcaster(record.WithContext(k))
 	})
 	return k.broadcaster
-}
-
-func (k *nanokubeImpl) InformerFactory() informers.SharedInformerFactory {
-	k.informerFactoryOnce.Do(func() {
-		k.informerFactory = informers.NewSharedInformerFactory(k.Client(), 0)
-	})
-	return k.informerFactory
 }
 
 func (k *nanokubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
@@ -789,8 +783,13 @@ func (k *nanokubeImpl) Host() v1.Host {
 }
 
 func (k *nanokubeImpl) Client() v1.Client {
-	nanokube.Unimplemented()
-	return k.ApiServer().Client()
+	select {
+	case <-k.apiserverProvided:
+		nanokube.Unimplemented() // TODO: remove
+		return k.apiserver.Client()
+	default:
+		return k.noopClient()
+	}
 }
 
 func (k *nanokubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Nanokube {

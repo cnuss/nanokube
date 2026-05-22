@@ -81,7 +81,6 @@ type Nanokube interface {
 	Args(service ServiceName, mountPath string) []string
 	Environ() []string
 	Broadcaster() record.EventBroadcaster
-	InformerFactory() informers.SharedInformerFactory
 	KubeletFlags() *kubeletoptions.KubeletFlags
 	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
 	KubeletDependencies() *kubelet.Dependencies
@@ -201,6 +200,7 @@ type Client interface {
 	Ready
 	client.Interface
 	Clientset() *client.Clientset
+	InformerFactory() informers.SharedInformerFactory
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client

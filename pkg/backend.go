@@ -220,11 +220,11 @@ func (b *BackendImpl) Ready() <-chan struct{} {
 
 func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
-		factory := b.Nanokube().InformerFactory()
+		factory := b.Nanokube().Client().InformerFactory()
 		factory.Core().V1().PersistentVolumeClaims().Informer().AddEventHandler(clientcache.ResourceEventHandlerFuncs{
-			AddFunc:    func(obj interface{}) { b.Reconcile(obj, false) },
-			UpdateFunc: func(_, obj interface{}) { b.Reconcile(obj, false) },
-			DeleteFunc: func(obj interface{}) { b.Reconcile(obj, true) },
+			AddFunc:    func(obj any) { b.Reconcile(obj, false) },
+			UpdateFunc: func(_, obj any) { b.Reconcile(obj, false) },
+			DeleteFunc: func(obj any) { b.Reconcile(obj, true) },
 		})
 		factory.Start(b.Context().Done())
 		// DEVNOTE: old cadvisor Start() was a no-op; real init happened in MachineInfo
@@ -240,15 +240,14 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 	}
 	switch v := obj.(type) {
 	case *corev1.PersistentVolumeClaim:
-		client := b.Nanokube().Client()
 		if deleted || v.DeletionTimestamp != nil {
-			if err := b.Driver().ReleaseVolume(b, client, v); err != nil {
+			if err := b.Driver().ReleaseVolume(b, b.Nanokube().Client(), v); err != nil {
 				nanokube.Log.Warn("unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
 				return
 			}
 			nanokube.Log.Info("released PVC", "name", v.Name, "namespace", v.Namespace)
-		} else if pvc := b.Driver().ClaimVolume(b, client, v); pvc != nil {
-			pvcs := client.CoreV1().PersistentVolumeClaims(v.Namespace)
+		} else if pvc := b.Driver().ClaimVolume(b, b.Nanokube().Client(), v); pvc != nil {
+			pvcs := b.Nanokube().Client().CoreV1().PersistentVolumeClaims(v.Namespace)
 			if _, err := pvcs.Apply(b.Context(), pvc, metav1.ApplyOptions{FieldManager: string(b.Name())}); err != nil {
 				nanokube.Log.Warn("unable to claim PVC", "name", v.Name, "namespace", v.Namespace, "error", err)
 				return
