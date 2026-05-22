@@ -6,7 +6,7 @@ import (
 
 type (
 	BackendName string
-	BackendFunc func(kubelet Kubelet) Backend
+	BackendFunc func(nano Nanokube) Backend
 	DataDir     string
 	FileName    string
 	Path        string

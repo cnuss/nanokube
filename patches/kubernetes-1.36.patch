@@ -1,8 +1,75 @@
 diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
-index c245a648831..741125215f6 100644
+index c245a648831..cd201a2b7fd 100644
 --- a/cmd/kubelet/app/server.go
 +++ b/cmd/kubelet/app/server.go
-@@ -1260,7 +1260,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
+@@ -65,7 +65,6 @@ import (
+ 	"k8s.io/apimachinery/pkg/util/validation/field"
+ 	utilversion "k8s.io/apimachinery/pkg/util/version"
+ 	"k8s.io/apimachinery/pkg/util/wait"
+-	genericapiserver "k8s.io/apiserver/pkg/server"
+ 	"k8s.io/apiserver/pkg/server/flagz"
+ 	"k8s.io/apiserver/pkg/server/healthz"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+@@ -139,9 +138,11 @@ func init() {
+ }
+ 
+ // NewKubeletCommand creates a *cobra.Command object with default parameters
+-func NewKubeletCommand(ctx context.Context) *cobra.Command {
++func NewKubeletCommand(ctx context.Context, cleanFlagSet *pflag.FlagSet, runFunc func(ctx context.Context, ks *options.KubeletServer, d *kubelet.Dependencies, fg featuregate.FeatureGate) error) *cobra.Command {
+ 	logger := klog.FromContext(ctx)
+-	cleanFlagSet := pflag.NewFlagSet(server.ComponentKubelet, pflag.ContinueOnError)
++	if cleanFlagSet == nil {
++		cleanFlagSet = pflag.NewFlagSet(server.ComponentKubelet, pflag.ContinueOnError)
++	}
+ 	cleanFlagSet.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
+ 	kubeletFlags := options.NewKubeletFlags()
+ 
+@@ -301,11 +302,11 @@ is checked every 20 seconds (also configurable with a flag).`,
+ 			logger.V(5).Info("KubeletConfiguration", "configuration", klog.Format(config))
+ 
+ 			// set up signal context for kubelet shutdown
+-			ctx := genericapiserver.SetupSignalContext()
++			// ctx := genericapiserver.SetupSignalContext()
+ 
+ 			utilfeature.DefaultMutableFeatureGate.AddMetrics()
+ 			// run the kubelet
+-			return Run(ctx, kubeletServer, kubeletDeps, utilfeature.DefaultFeatureGate)
++			return runFunc(ctx, kubeletServer, kubeletDeps, utilfeature.DefaultFeatureGate)
+ 		},
+ 	}
+ 
+@@ -532,7 +533,8 @@ func UnsecuredDependencies(ctx context.Context, s *options.KubeletServer, featur
+ 		OSInterface:         kubecontainer.RealOS{},
+ 		VolumePlugins:       plugins,
+ 		DynamicPluginProber: GetDynamicPluginProber(ctx, s.VolumePluginDir, pluginRunner),
+-		TLSOptions:          tlsOptions}, nil
++		TLSOptions:          tlsOptions,
++	}, nil
+ }
+ 
+ // Run runs the specified KubeletServer with the given Dependencies. This should never exit.
+@@ -757,8 +759,10 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
+ 		runAuthenticatorCAReload(ctx.Done())
+ 	}
+ 
+-	if err := kubelet.PreInitRuntimeService(ctx, &s.KubeletConfiguration, kubeDeps); err != nil {
+-		return err
++	if kubeDeps.RemoteImageService != nil && kubeDeps.RemoteRuntimeService != nil {
++		if err := kubelet.PreInitRuntimeService(ctx, &s.KubeletConfiguration, kubeDeps); err != nil {
++			return err
++		}
+ 	}
+ 
+ 	// Get cgroup driver setting from CRI
+@@ -912,7 +916,6 @@ func run(ctx context.Context, s *options.KubeletServer, kubeDeps *kubelet.Depend
+ 			kubeDeps.Recorder,
+ 			kubeDeps.KubeClient,
+ 		)
+-
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -1260,7 +1263,7 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
  		kubeDeps.OSInterface = kubecontainer.RealOS{}
  	}
  
@@ -11,7 +78,7 @@ index c245a648831..741125215f6 100644
  		kubeServer,
  		kubeDeps,
  		hostname,
-@@ -1303,7 +1303,7 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
+@@ -1303,13 +1306,14 @@ func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodCo
  	go k.ListenAndServePods(ctx)
  }
  
@@ -20,6 +87,14 @@ index c245a648831..741125215f6 100644
  	ctx context.Context,
  	kubeServer *options.KubeletServer,
  	kubeDeps *kubelet.Dependencies,
+ 	hostname string,
+ 	nodeName types.NodeName,
+-	nodeIPs []net.IP) (k kubelet.Bootstrap, err error) {
++	nodeIPs []net.IP,
++) (k kubelet.Bootstrap, err error) {
+ 	// TODO: block until all sources have delivered at least one update to the channel, or break the sync loop
+ 	// up into "per source" synchronizations
+ 
 diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
 index d8cfd44222c..b2b1c9e71a3 100644
 --- a/pkg/controlplane/controller/kubernetesservice/controller.go

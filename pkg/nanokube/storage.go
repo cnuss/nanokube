@@ -22,8 +22,7 @@ import (
 )
 
 type StorageFactoryImpl struct {
-	ctx     context.Context
-	kubelet v1.Kubelet
+	ctx v1.Nanokube
 
 	defaultStorageFactory *serverstorage.DefaultStorageFactory
 
@@ -37,17 +36,11 @@ type StorageFactoryImpl struct {
 
 var _ v1.Storage = &StorageFactoryImpl{}
 
-func NewStorage(kubelet v1.Kubelet) v1.Storage {
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-kubelet.ApiServer().Done()
-		cancel()
-	}()
+func NewStorage(parent v1.Nanokube) v1.Storage {
 	return &StorageFactoryImpl{
-		ctx:     ctx,
-		kubelet: kubelet,
-		ready:   make(chan struct{}),
-		done:    make(chan struct{}),
+		ctx:   parent,
+		ready: make(chan struct{}),
+		done:  make(chan struct{}),
 	}
 }
 
@@ -74,7 +67,7 @@ func (s *StorageFactoryImpl) Factory() *serverstorage.DefaultStorageFactory {
 
 func (s *StorageFactoryImpl) ServerList() []string {
 	s.runOnce.Do(func() {
-		dataDir := s.kubelet.Options().DataDirAt(v1.DataDirEtcd)
+		dataDir := s.ctx.Options().DataDirAt(v1.DataDirEtcd)
 		port := s.Port()
 
 		clientURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
@@ -96,11 +89,11 @@ func (s *StorageFactoryImpl) ServerList() []string {
 
 		var etcdLevel zapcore.Level
 		switch {
-		case s.kubelet.Options().Verbosity() >= 3:
+		case s.ctx.Options().Verbosity() >= 3:
 			etcdLevel = zapcore.DebugLevel
-		case s.kubelet.Options().Verbosity() >= 2:
+		case s.ctx.Options().Verbosity() >= 2:
 			etcdLevel = zapcore.InfoLevel
-		case s.kubelet.Options().Verbosity() >= 1:
+		case s.ctx.Options().Verbosity() >= 1:
 			etcdLevel = zapcore.WarnLevel
 		default:
 			etcdLevel = zapcore.FatalLevel
@@ -115,7 +108,7 @@ func (s *StorageFactoryImpl) ServerList() []string {
 			defer close(s.done)
 			server, err := embed.StartEtcd(cfg)
 			if err != nil {
-				s.kubelet.Cancel(NewError(fmt.Errorf("failed to start etcd: %w", err)))
+				s.ctx.Cancel(NewError(fmt.Errorf("failed to start etcd: %w", err)))
 				return
 			}
 			<-Await(s.ctx, server.Server.ReadyNotify())
@@ -137,7 +130,7 @@ func (s *StorageFactoryImpl) Port() int {
 	s.portOnce.Do(func() {
 		port, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			s.kubelet.Cancel(NewError(fmt.Errorf("failed to find free port for etcd: %w", err)))
+			s.ctx.Cancel(NewError(fmt.Errorf("failed to find free port for etcd: %w", err)))
 			return
 		}
 		s.port = port.Addr().(*net.TCPAddr).Port

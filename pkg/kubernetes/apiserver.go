@@ -30,8 +30,7 @@ import (
 )
 
 type ApiServerImpl struct {
-	ctx     context.Context
-	kubelet v1.Kubelet
+	ctx v1.Nanokube
 
 	appConfig     *app.Config
 	appConfigOnce sync.Once
@@ -73,13 +72,9 @@ type ApiServerImpl struct {
 
 var _ v1.ApiServer = &ApiServerImpl{}
 
-func NewApiServer(kubelet v1.Kubelet) v1.ApiServer {
-	ctx, cancel := context.WithCancel(context.Background())
-	context.AfterFunc(kubelet.Context(), cancel)
-
+func NewApiServer(parent v1.Nanokube) v1.ApiServer {
 	return &ApiServerImpl{
-		ctx:         ctx,
-		kubelet:     kubelet,
+		ctx:         parent,
 		ready:       make(chan struct{}),
 		clientReady: make(chan struct{}),
 		done:        make(chan struct{}),
@@ -117,7 +112,7 @@ func (a *ApiServerImpl) Done() <-chan struct{} {
 
 func (a *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInformerFactory, *storage.DefaultStorageFactory) {
 	a.genericConfigOnce.Do(func() {
-		opts := a.kubelet.Kube().ApiServerOptions()
+		opts := a.ctx.ApiServerOptions()
 		genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
 			opts.CompletedOptions,
 			[]*runtime.Scheme{legacyscheme.Scheme, apiextensionsapiserver.Scheme, aggregatorscheme.Scheme},
@@ -125,12 +120,12 @@ func (a *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInforme
 			generatedopenapi.GetOpenAPIDefinitions,
 		)
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to build generic config: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to build generic config: %w", err)))
 			return
 		}
 		a.serverConfig = genericConfig
 		a.sharedInformerFactory = versionedInformers
-		a.defaultStorageFactory = a.kubelet.Storage().WithFactory(storageFactory).Factory()
+		a.defaultStorageFactory = a.ctx.Storage().WithFactory(storageFactory).Factory()
 	})
 	return a.serverConfig, a.sharedInformerFactory, a.defaultStorageFactory
 }
@@ -147,15 +142,15 @@ func (a *ApiServerImpl) SharedInformerFactory() informers.SharedInformerFactory 
 
 func (a *ApiServerImpl) DefaultStorageFactory() *storage.DefaultStorageFactory {
 	_, _, storageFactory := a.genericConfig()
-	return a.kubelet.Storage().WithFactory(storageFactory).Factory()
+	return a.ctx.Storage().WithFactory(storageFactory).Factory()
 }
 
 func (a *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.ServiceResolver, []admission.PluginInitializer) {
 	a.kubeAPIServerConfigOnce.Do(func() {
-		opts := a.kubelet.Kube().ApiServerOptions()
+		opts := a.ctx.ApiServerOptions()
 		controlplaneConfig, serviceResolver, pluginInitializers, err := app.CreateKubeAPIServerConfig(*opts, a.ServerConfig(), a.SharedInformerFactory(), a.DefaultStorageFactory())
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to create kube-apiserver config: %w", err)))
 			return
 		}
 		a.controlplaneConfig = controlplaneConfig
@@ -167,7 +162,7 @@ func (a *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.S
 
 func (a *ApiServerImpl) ControlPlaneConfig() *controlplane.Config {
 	controlplaneConfig, _, _ := a.kubeAPIServerConfig()
-	controlplaneConfig.ControlPlane.StorageFactory = a.kubelet.Storage()
+	controlplaneConfig.ControlPlane.StorageFactory = a.ctx.Storage()
 	return controlplaneConfig
 }
 
@@ -183,11 +178,11 @@ func (a *ApiServerImpl) PluginInitializers() []admission.PluginInitializer {
 
 func (a *ApiServerImpl) ApiExtensions() *apiextensionsapiserver.Config {
 	a.apiExtensionsOnce.Do(func() {
-		opts := a.kubelet.Kube().ApiServerOptions()
+		opts := a.ctx.ApiServerOptions()
 		apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*a.ControlPlaneConfig().ControlPlane.Generic, a.ControlPlaneConfig().ControlPlane.VersionedInformers, a.PluginInitializers(), opts.CompletedOptions, opts.MasterCount,
 			a.ServiceResolver(), webhook.NewDefaultAuthenticationInfoResolverWrapper(a.ControlPlaneConfig().ControlPlane.ProxyTransport, a.ControlPlaneConfig().ControlPlane.Generic.EgressSelector, a.ControlPlaneConfig().ControlPlane.Generic.LoopbackClientConfig, a.ControlPlaneConfig().ControlPlane.Generic.TracerProvider))
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to create API extensions config: %w", err)))
 			return
 		}
 		a.apiExtensions = apiExtensions
@@ -197,10 +192,10 @@ func (a *ApiServerImpl) ApiExtensions() *apiextensionsapiserver.Config {
 
 func (a *ApiServerImpl) ApiServerConfig() *apiserver.Config {
 	a.apiServerConfigOnce.Do(func() {
-		opts := a.kubelet.Kube().ApiServerOptions()
+		opts := a.ctx.ApiServerOptions()
 		apiServerConfig, err := controlplaneapiserver.CreateAggregatorConfig(*a.ControlPlaneConfig().ControlPlane.Generic, opts.CompletedOptions, a.ControlPlaneConfig().ControlPlane.VersionedInformers, a.ServiceResolver(), a.ControlPlaneConfig().ControlPlane.ProxyTransport, a.ControlPlaneConfig().ControlPlane.Extra.PeerProxy, a.PluginInitializers())
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to create aggregator config: %w", err)))
 			return
 		}
 		a.apiServerConfig = apiServerConfig
@@ -211,28 +206,28 @@ func (a *ApiServerImpl) ApiServerConfig() *apiserver.Config {
 func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 	a.apiAggregatorOnce.Do(func() {
 		config := &app.Config{
-			Options:       *a.kubelet.Kube().ApiServerOptions(),
+			Options:       *a.ctx.ApiServerOptions(),
 			KubeAPIs:      a.ControlPlaneConfig(),
 			ApiExtensions: a.ApiExtensions(),
 			Aggregator:    a.ApiServerConfig(),
 		}
 		completed, err := config.Complete()
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to complete API server config: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to complete API server config: %w", err)))
 			return
 		}
 
 		chain, err := app.CreateServerChain(completed)
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to create API server: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to create API server: %w", err)))
 			return
 		}
 
-		<-nanokube.Await(a.ctx, a.kubelet.Storage().Ready())
+		<-nanokube.Await(a.ctx, a.ctx.Storage().Ready())
 
 		prepared, err := chain.PrepareRun()
 		if err != nil {
-			a.kubelet.Cancel(nanokube.NewError(fmt.Errorf("failed to prepare API server: %w", err)))
+			a.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to prepare API server: %w", err)))
 			return
 		}
 
@@ -281,7 +276,7 @@ func (a *ApiServerImpl) Client() v1.Client {
 
 func (a *ApiServerImpl) CACerts() []*x509.Certificate {
 	a.caCertsOnce.Do(func() {
-		a.caCerts = a.kubelet.Tunnel().CACerts()
+		a.caCerts = a.ctx.Tunnel().CACerts()
 		// TODO(incomplete): add generated apiserver.crt to CA certs
 	})
 	return a.caCerts

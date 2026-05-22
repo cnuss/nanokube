@@ -46,9 +46,9 @@ type fsCacheEntry struct {
 }
 
 type BackendImpl struct {
-	name    v1.BackendName
-	driver  v1.Driver
-	kubelet v1.Kubelet
+	name   v1.BackendName
+	driver v1.Driver
+	ctx    v1.Nanokube
 
 	manager     v1.Manager
 	managerOnce sync.Once
@@ -68,11 +68,11 @@ type BackendImpl struct {
 
 var _ v1.Backend = &BackendImpl{}
 
-func NewBackend(name v1.BackendName, driver v1.Driver, kubelet v1.Kubelet) v1.Backend {
+func NewBackend(name v1.BackendName, driver v1.Driver, ctx v1.Nanokube) v1.Backend {
 	return &BackendImpl{
 		name:    name,
 		driver:  driver,
-		kubelet: kubelet,
+		ctx:     ctx,
 		ready:   make(chan struct{}),
 		fsCache: make(map[string]fsCacheEntry),
 	}
@@ -82,12 +82,12 @@ func (b *BackendImpl) Name() v1.BackendName {
 	return b.name
 }
 
-func (b *BackendImpl) Context() context.Context {
-	return b.kubelet.Context()
+func (b *BackendImpl) Context() v1.Nanokube {
+	return b.ctx
 }
 
-func (b *BackendImpl) Kubelet() v1.Kubelet {
-	return b.kubelet
+func (b *BackendImpl) Nanokube() v1.Nanokube {
+	return b.ctx
 }
 
 func (b *BackendImpl) Driver() v1.Driver {
@@ -96,7 +96,7 @@ func (b *BackendImpl) Driver() v1.Driver {
 
 func (b *BackendImpl) Network() v1.Network {
 	b.networkOnce.Do(func() {
-		b.network = nanokube.NewNetwork(b.kubelet, b.driver)
+		b.network = nanokube.NewNetwork(b.ctx, b.driver)
 		b.driver.WithNetwork(b.network)
 	})
 	return b.network
@@ -220,7 +220,7 @@ func (b *BackendImpl) Ready() <-chan struct{} {
 
 func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
-		factory := b.kubelet.Kube().InformerFactory()
+		factory := b.Nanokube().InformerFactory()
 		factory.Core().V1().PersistentVolumeClaims().Informer().AddEventHandler(clientcache.ResourceEventHandlerFuncs{
 			AddFunc:    func(obj interface{}) { b.Reconcile(obj, false) },
 			UpdateFunc: func(_, obj interface{}) { b.Reconcile(obj, false) },
@@ -240,7 +240,7 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 	}
 	switch v := obj.(type) {
 	case *corev1.PersistentVolumeClaim:
-		client := b.kubelet.Client()
+		client := b.Nanokube().Client()
 		if deleted || v.DeletionTimestamp != nil {
 			if err := b.Driver().ReleaseVolume(b, client, v); err != nil {
 				nanokube.Log.Warn("unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
@@ -287,7 +287,7 @@ var _ v1.Manager = &managerImpl{}
 
 func newManager(backend v1.Backend) v1.Manager {
 	return &managerImpl{
-		ctx:     backend.Context(),
+		ctx:     backend.Nanokube(),
 		backend: backend,
 		ready:   make(chan struct{}),
 	}
@@ -318,7 +318,7 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	select {
-	case <-c.backend.Kubelet().Canceled():
+	case <-c.backend.Nanokube().Canceled():
 		return lifecycle.PodAdmitResult{
 			Admit:   false,
 			Reason:  "NodeShutdown",

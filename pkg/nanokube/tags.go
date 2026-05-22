@@ -78,7 +78,7 @@ type TagBuilder struct {
 
 func NewTagBuilder(driver v1.Driver) *TagBuilder {
 	b := &TagBuilder{
-		prefix: driver.Kubelet().Options().Name(),
+		prefix: driver.Context().(v1.Nanokube).Options().Name(),
 		tags:   make(map[string]string),
 	}
 	b.set(keyManagedBy, driver.Name())

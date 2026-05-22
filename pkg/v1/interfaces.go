@@ -22,7 +22,7 @@ import (
 	client "k8s.io/client-go/kubernetes"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
-	cri "k8s.io/cri-api/pkg/apis"
+	internalapi "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
@@ -39,6 +39,59 @@ import (
 	"k8s.io/mount-utils"
 	"k8s.io/utils/exec"
 )
+
+type Nanokube interface {
+	context.Context
+	record.EventRecorder
+
+	Options() Options
+	Version() string
+
+	Cancel(reason Error)
+	Detach()
+	OnCancel(fns ...func(ctx context.Context)) Nanokube
+	OnReady(service ServiceName, fns ...func(ctx context.Context)) Nanokube
+
+	Canceled() <-chan struct{}
+
+	WithApiServer(apiserver ApiServer) Nanokube
+	ApiServer() ApiServer
+
+	WithStorage(storage Storage) Nanokube
+	Storage() Storage
+
+	WithBackend(name BackendName, backend Backend) Nanokube
+	Backends() map[BackendName]Backend
+	Backend(name BackendName) Backend
+	DefaultBackend() Backend
+
+	Host() Host
+	Client() Client
+	Tunnel() Tunnel
+	StaticPods() []*corev1.Pod
+	HTTPServer() *http.Server
+
+	Services(baseURL *url.URL) []*restful.WebService
+
+	Run() Nanokube
+
+	// folded from former Kube interface
+	ApiServerOptions() *apiserveroptions.CompletedOptions
+	Args(service ServiceName, mountPath string) []string
+	Environ() []string
+	Broadcaster() record.EventBroadcaster
+	InformerFactory() informers.SharedInformerFactory
+	KubeletFlags() *kubeletoptions.KubeletFlags
+	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
+	KubeletDependencies() *kubelet.Dependencies
+	KubeletHostname() string
+	CertFilePath() string
+	KeyFilePath() string
+	TLSConfig() *tls.Config
+	TLSOptions() *kubeletserver.TLSOptions
+	SecureServing() *options.SecureServingOptionsWithLoopback
+	NodeReady() chan struct{}
+}
 
 type Ready interface {
 	Ready() <-chan struct{}
@@ -121,13 +174,12 @@ type Network interface {
 }
 
 type Driver interface {
-	cri.ImageManagerService
-	cri.RuntimeService
+	internalapi.ImageManagerService
+	internalapi.RuntimeService
 	NetworkService
 	VolumeService
 
 	Context() context.Context
-	Kubelet() Kubelet
 	Name() string
 
 	ExecOnHost(ctx context.Context, image string, cmd []string, mounts []Path) (string, error)
@@ -196,8 +248,7 @@ type Backend interface {
 
 	cadvisor.Interface
 
-	Context() context.Context
-	Kubelet() Kubelet
+	Nanokube() Nanokube
 	Name() BackendName
 
 	Driver() Driver
@@ -208,67 +259,6 @@ type Backend interface {
 	WithBaseURL(baseURL *url.URL) Backend
 
 	Reconcile(obj interface{}, deleted bool)
-}
-
-type Kube interface {
-	record.EventRecorder
-	Kubelet() Kubelet
-
-	ApiServerOptions() *apiserveroptions.CompletedOptions
-	Args(service ServiceName, mountPath string) []string
-
-	Environ() []string
-	Broadcaster() record.EventBroadcaster
-	InformerFactory() informers.SharedInformerFactory
-
-	KubeletFlags() *kubeletoptions.KubeletFlags
-	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
-	KubeletDependencies() *kubelet.Dependencies
-	KubeletHostname() string // TODO: Remove
-
-	CertFilePath() string
-	KeyFilePath() string
-	TLSConfig() *tls.Config
-	TLSOptions() *kubeletserver.TLSOptions
-	SecureServing() *options.SecureServingOptionsWithLoopback
-
-	NodeReady() chan struct{}
-}
-
-type Kubelet interface {
-	Context() context.Context
-	Options() Options
-	Version() string
-
-	Cancel(reason Error)
-	Detach()
-	OnCancel(fns ...func(ctx context.Context)) Kubelet
-	OnReady(service ServiceName, fns ...func(ctx context.Context)) Kubelet
-
-	Canceled() <-chan struct{}
-	Done() <-chan int
-
-	WithApiServer(apiserver ApiServer) Kubelet
-	ApiServer() ApiServer
-
-	WithStorage(storage Storage) Kubelet
-	Storage() Storage
-
-	WithBackend(name BackendName, backend Backend) Kubelet
-	Backends() map[BackendName]Backend
-	Backend(name BackendName) Backend
-	DefaultBackend() Backend
-
-	Host() Host
-	Kube() Kube
-	Client() Client
-	Tunnel() Tunnel
-	StaticPods() []*corev1.Pod
-	HTTPServer() *http.Server
-
-	Services(baseURL *url.URL) []*restful.WebService
-
-	Run() Kubelet
 }
 
 type PortMap interface {
@@ -293,6 +283,5 @@ type Host interface {
 	subpath.Interface
 	mount.Interface
 
-	Kubelet() Kubelet
 	VolumePlugins() []volume.VolumePlugin
 }

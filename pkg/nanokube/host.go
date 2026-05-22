@@ -27,7 +27,7 @@ import (
 var PluginName = "nanokube"
 
 type HostImpl struct {
-	kubelet v1.Kubelet
+	ctx v1.Nanokube
 
 	volumeHost         volume.VolumeHost
 	volumeHostOnce     sync.Once
@@ -42,15 +42,11 @@ type HostImpl struct {
 
 var _ v1.Host = &HostImpl{}
 
-func NewHost(kubelet v1.Kubelet) v1.Host {
+func NewHost(ctx v1.Nanokube) v1.Host {
 	return &HostImpl{
-		kubelet:            kubelet,
+		ctx:                ctx,
 		volumeHostProvided: make(chan struct{}),
 	}
-}
-
-func (h *HostImpl) Kubelet() v1.Kubelet {
-	return h.kubelet
 }
 
 func (h *HostImpl) CanSafelySkipMountPointCheck() bool {
@@ -68,7 +64,7 @@ func (h *HostImpl) GetMountRefs(pathname string) ([]string, error) {
 }
 
 func (h *HostImpl) IsLikelyNotMountPoint(file string) (bool, error) {
-	if h.Kubelet().Options().InDataDir(file) {
+	if h.ctx.Options().InDataDir(file) {
 		return true, nil
 	}
 	Log.Error("IsLikelyNotMountPoint", "file", file)
@@ -323,7 +319,7 @@ func (m *mounterImpl) TearDown() error {
 	}
 	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
 		// TODO(incomplete): emit events to args.GetEventRecorder() about volume creation
-		backend := m.host.Kubelet().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
+		backend := m.host.ctx.Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
 		if backend == nil {
 			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)
 		}
@@ -398,7 +394,7 @@ func (m *mounterImpl) SetUp(args volume.MounterArgs) error {
 	}
 	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
 		// TODO(incomplete): emit events to args.GetEventRecorder() about volume creation
-		backend := m.host.Kubelet().Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
+		backend := m.host.ctx.Backend(v1.BackendName(*m.spec.PersistentVolume.Spec.Local.FSType))
 		if backend == nil {
 			return fmt.Errorf("no backend found for local volume with fstype %s", *m.spec.PersistentVolume.Spec.Local.FSType)
 		}

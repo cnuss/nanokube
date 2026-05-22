@@ -13,7 +13,7 @@ import (
 )
 
 type NetworkImpl struct {
-	kubelet v1.Kubelet
+	ctx     v1.Nanokube
 	service v1.NetworkService
 
 	defaultNet     v1.AllocatedNetwork
@@ -27,9 +27,9 @@ type NetworkImpl struct {
 
 var _ v1.Network = &NetworkImpl{}
 
-func NewNetwork(kubelet v1.Kubelet, service v1.NetworkService) v1.Network {
+func NewNetwork(ctx v1.Nanokube, service v1.NetworkService) v1.Network {
 	return &NetworkImpl{
-		kubelet: kubelet,
+		ctx:     ctx,
 		service: service,
 	}
 }
@@ -40,17 +40,17 @@ func (n *NetworkImpl) Default(ctx context.Context) v1.AllocatedNetwork {
 
 		id, err := n.service.CreateNetwork(ctx, "bridge", nil, nil)
 		if err != nil {
-			n.kubelet.Cancel(NewError(fmt.Errorf("failed to reserve bridge network: %w", err)))
+			n.ctx.Cancel(NewError(fmt.Errorf("failed to reserve bridge network: %w", err)))
 			return
 		}
 		_, _, reservedNet, err := n.service.GetNetwork(ctx, id)
 		if err != nil {
-			n.kubelet.Cancel(NewError(fmt.Errorf("failed to get reserved bridge network: %w", err)))
+			n.ctx.Cancel(NewError(fmt.Errorf("failed to get reserved bridge network: %w", err)))
 			return
 		}
 		err = n.service.RemoveNetwork(ctx, id)
 		if err != nil {
-			n.kubelet.Cancel(NewError(fmt.Errorf("failed to remove reserved bridge network: %w", err)))
+			n.ctx.Cancel(NewError(fmt.Errorf("failed to remove reserved bridge network: %w", err)))
 			return
 		}
 
@@ -71,13 +71,13 @@ func (n *NetworkImpl) Default(ctx context.Context) v1.AllocatedNetwork {
 
 		id, err = n.service.CreateNetwork(ctx, "bridge", ipNet, &gateway)
 		if err != nil {
-			n.kubelet.Cancel(NewError(fmt.Errorf("failed to create default bridge network: %w", err)))
+			n.ctx.Cancel(NewError(fmt.Errorf("failed to create default bridge network: %w", err)))
 			return
 		}
 
 		n.defaultNet, err = newAllocatedNetwork(ctx, id, n)
 		if err != nil {
-			n.kubelet.Cancel(NewError(fmt.Errorf("failed to create static network: %w", err)))
+			n.ctx.Cancel(NewError(fmt.Errorf("failed to create static network: %w", err)))
 			return
 		}
 
@@ -96,7 +96,7 @@ func (n *NetworkImpl) Default(ctx context.Context) v1.AllocatedNetwork {
 	})
 
 	if n.defaultNet == nil {
-		n.kubelet.Cancel(NewError(fmt.Errorf("default network not initialized")))
+		n.ctx.Cancel(NewError(fmt.Errorf("default network not initialized")))
 		return nil
 	}
 	return n.defaultNet

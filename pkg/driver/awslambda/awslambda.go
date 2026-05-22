@@ -15,23 +15,23 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
-func Detect(kubelet v1.Kubelet) v1.Backend {
+func Detect(ctx v1.Nanokube) v1.Backend {
 	return nil
 }
 
-func NewBackend(kubelet v1.Kubelet) (v1.Backend, error) {
-	_, cancel := context.WithTimeout(kubelet.Context(), 5*time.Second)
+func NewBackend(ctx v1.Nanokube) (v1.Backend, error) {
+	_, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// TODO: Setup client and ping
 
-	driver := &driver{kubelet: kubelet}
+	driver := &driver{ctx: ctx}
 
-	return pkg.NewBackend(v1.AWSLambdaBackend, driver, kubelet), nil
+	return pkg.NewBackend(v1.AWSLambdaBackend, driver, ctx), nil
 }
 
 type driver struct {
-	kubelet v1.Kubelet
+	ctx v1.Nanokube
 }
 
 var _ v1.Driver = &driver{}
@@ -41,11 +41,7 @@ func (d *driver) Name() string {
 }
 
 func (d *driver) Context() context.Context {
-	return d.kubelet.Context()
-}
-
-func (d *driver) Kubelet() v1.Kubelet {
-	return d.kubelet
+	return d.ctx
 }
 
 func (d *driver) Service() *restful.WebService {
