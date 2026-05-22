@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/cnuss/nanokube/pkg"
@@ -9,6 +10,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/podman"
 	"github.com/cnuss/nanokube/pkg/kubernetes"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"golang.org/x/sync/errgroup"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
 )
@@ -24,8 +26,35 @@ func init() {
 }
 
 func main() {
-	nano := pkg.NewNanokube(genericapiserver.SetupSignalContext())
+	nano, cancel := pkg.NewNanokube(genericapiserver.SetupSignalContext())
+	defer cancel(nil)
+	g := new(errgroup.Group)
+
 	kubelet := kubernetes.NewKubeletCommand(nano)
-	code := cli.Run(kubelet)
-	os.Exit(code)
+	apiserver := kubernetes.NewApiServerCommand(nano)
+
+	g.Go(func() error {
+		defer cancel(nil)
+		if code := cli.Run(kubelet.Command); code != 0 {
+			err := fmt.Errorf("kubelet exited with code %d", code)
+			cancel(err)
+			return err
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		defer cancel(nil)
+		if code := cli.Run(apiserver.Command); code != 0 {
+			err := fmt.Errorf("apiserver exited with code %d", code)
+			cancel(err)
+			return err
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

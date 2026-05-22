@@ -61,7 +61,9 @@ import (
 	"k8s.io/mount-utils"
 )
 
-func NewNanokube(ctx context.Context) v1.Nanokube {
+func NewNanokube(ctx context.Context) (v1.Nanokube, context.CancelCauseFunc) {
+	ctx, cancel := context.WithCancelCause(ctx)
+
 	nano := &nanokubeImpl{
 		ctx:               ctx,
 		options:           nanokube.NewOptions(),
@@ -71,6 +73,7 @@ func NewNanokube(ctx context.Context) v1.Nanokube {
 		storageProvided:   make(chan struct{}),
 		nodeReady:         make(chan struct{}),
 	}
+
 	nano.noopClient = sync.OnceValue(func() v1.Client {
 		return nanokube.NewNoopClient(nano)
 	})
@@ -99,7 +102,7 @@ func NewNanokube(ctx context.Context) v1.Nanokube {
 	// 	})
 	// }()
 
-	return nano
+	return nano, cancel
 }
 
 type nanokubeImpl struct {
