@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -17,7 +18,7 @@ import (
 
 type Command struct {
 	*cobra.Command
-	parent v1.Nanokube
+	nano v1.Nanokube
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -32,11 +33,11 @@ type Command struct {
 	stopped chan struct{}
 }
 
-func newCommand(parent v1.Nanokube, cobraCmd *cobra.Command) *Command {
-	ctx, cancel := parent.WithCancel()
+func newCommand(nano v1.Nanokube, cobraCmd *cobra.Command) *Command {
+	ctx, cancel := nano.WithCancel()
 	c := &Command{
 		Command: cobraCmd,
-		parent:  parent,
+		nano:    nano,
 		ctx:     ctx,
 		cancel:  cancel,
 		flagSet: cobraCmd.Flags(),
@@ -62,7 +63,7 @@ func newCommand(parent v1.Nanokube, cobraCmd *cobra.Command) *Command {
 	// that depends on me to close `stopped`, then cancel my own ctx so the
 	// inner cobra command unwinds.
 	go func() {
-		<-parent.Done()
+		<-nano.Done()
 		for _, dep := range c.dependents {
 			<-dep.stopped
 		}
@@ -103,33 +104,38 @@ func (c *Command) WithFlagSet(flagSet *pflag.FlagSet) *Command {
 
 func (c *Command) runE() func(cmd *cobra.Command, args []string) error {
 	logger := klog.FromContext(c.ctx)
-	settings := make(map[string]string)
-
-	for k, v := range c.featureGates {
-		c.flagSet.Set("feature-gates", func() string {
-			if v {
-				return fmt.Sprintf("%s=true", k)
-			}
-			return fmt.Sprintf("%s=false", k)
-		}())
-	}
-
-	for k, v := range c.flags {
-		c.flagSet.Set(k, v)
-	}
-
-	c.flagSet.VisitAll(func(f *pflag.Flag) {
-		if f.Name == "help" {
-			return
-		}
-		settings[f.Name] = f.Value.String()
-		c.flagSet.MarkHidden(f.Name)
-	})
-	keys := slices.Sorted(maps.Keys(settings))
-
 	inner := c.Command.RunE
 	return func(cmd *cobra.Command, args []string) error {
 		defer close(c.stopped)
+
+		// Apply feature gates and flags at run time — the callers' WithFlag /
+		// WithFeatureGate calls happen after newCommand returns, so this must
+		// not run at construction time.
+		for k, v := range c.featureGates {
+			value := fmt.Sprintf("%s=false", k)
+			if v {
+				value = fmt.Sprintf("%s=true", k)
+			}
+			if err := c.flagSet.Set("feature-gates", value); err != nil {
+				logger.Error(err, "failed to set feature-gate", "gate", k)
+			}
+		}
+
+		for k, v := range c.flags {
+			if err := c.flagSet.Set(k, v); err != nil {
+				logger.Error(err, "failed to set flag", "flag", k)
+			}
+		}
+
+		settings := make(map[string]string)
+		c.flagSet.VisitAll(func(f *pflag.Flag) {
+			if f.Name == "help" {
+				return
+			}
+			settings[f.Name] = f.Value.String()
+			c.flagSet.MarkHidden(f.Name)
+		})
+		keys := slices.Sorted(maps.Keys(settings))
 
 		flags := []string{}
 		for _, k := range keys {
@@ -146,6 +152,7 @@ func (c *Command) runE() func(cmd *cobra.Command, args []string) error {
 		logger.Info("running", "command", command)
 
 		if err := inner(cmd, args); err != nil {
+			c.nano.Cancel(nanokube.NewError(fmt.Errorf("%s failed: %w", cmd.Name(), err)))
 			return err
 		}
 		return nil

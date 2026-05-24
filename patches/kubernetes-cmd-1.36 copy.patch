@@ -1,0 +1,352 @@
+diff --git a/cmd/genkubedocs/gen_kube_docs.go b/cmd/genkubedocs/gen_kube_docs.go
+index af674f3bf7d..bb7d7e37431 100644
+--- a/cmd/genkubedocs/gen_kube_docs.go
++++ b/cmd/genkubedocs/gen_kube_docs.go
+@@ -56,19 +56,19 @@ func main() {
+ 	switch module {
+ 	case "kube-apiserver":
+ 		// generate docs for kube-apiserver
+-		apiserver := apiservapp.NewAPIServerCommand()
++		apiserver := apiservapp.NewAPIServerCommand(ctx)
+ 		doc.GenMarkdownTree(apiserver, outDir)
+ 	case "kube-controller-manager":
+ 		// generate docs for kube-controller-manager
+-		controllermanager := cmapp.NewControllerManagerCommand()
++		controllermanager := cmapp.NewControllerManagerCommand(ctx)
+ 		doc.GenMarkdownTree(controllermanager, outDir)
+ 	case "kube-proxy":
+ 		// generate docs for kube-proxy
+-		proxy := proxyapp.NewProxyCommand()
++		proxy := proxyapp.NewProxyCommand(ctx)
+ 		doc.GenMarkdownTree(proxy, outDir)
+ 	case "kube-scheduler":
+ 		// generate docs for kube-scheduler
+-		scheduler := schapp.NewSchedulerCommand()
++		scheduler := schapp.NewSchedulerCommand(ctx)
+ 		doc.GenMarkdownTree(scheduler, outDir)
+ 	case "kubelet":
+ 		// generate docs for kubelet
+diff --git a/cmd/genman/gen_kube_man.go b/cmd/genman/gen_kube_man.go
+index 47f0fc1d0a0..0c86bbf8ab7 100644
+--- a/cmd/genman/gen_kube_man.go
++++ b/cmd/genman/gen_kube_man.go
+@@ -64,28 +64,28 @@ func main() {
+ 	switch module {
+ 	case "kube-apiserver":
+ 		// generate manpage for kube-apiserver
+-		apiserver := apiservapp.NewAPIServerCommand()
++		apiserver := apiservapp.NewAPIServerCommand(ctx)
+ 		genMarkdown(apiserver, "", outDir)
+ 		for _, c := range apiserver.Commands() {
+ 			genMarkdown(c, "kube-apiserver", outDir)
+ 		}
+ 	case "kube-controller-manager":
+ 		// generate manpage for kube-controller-manager
+-		controllermanager := cmapp.NewControllerManagerCommand()
++		controllermanager := cmapp.NewControllerManagerCommand(ctx)
+ 		genMarkdown(controllermanager, "", outDir)
+ 		for _, c := range controllermanager.Commands() {
+ 			genMarkdown(c, "kube-controller-manager", outDir)
+ 		}
+ 	case "kube-proxy":
+ 		// generate manpage for kube-proxy
+-		proxy := proxyapp.NewProxyCommand()
++		proxy := proxyapp.NewProxyCommand(ctx)
+ 		genMarkdown(proxy, "", outDir)
+ 		for _, c := range proxy.Commands() {
+ 			genMarkdown(c, "kube-proxy", outDir)
+ 		}
+ 	case "kube-scheduler":
+ 		// generate manpage for kube-scheduler
+-		scheduler := schapp.NewSchedulerCommand()
++		scheduler := schapp.NewSchedulerCommand(ctx)
+ 		genMarkdown(scheduler, "", outDir)
+ 		for _, c := range scheduler.Commands() {
+ 			genMarkdown(c, "kube-scheduler", outDir)
+diff --git a/cmd/kube-apiserver/apiserver.go b/cmd/kube-apiserver/apiserver.go
+index 1bf05bc5684..cbdf683d6d8 100644
+--- a/cmd/kube-apiserver/apiserver.go
++++ b/cmd/kube-apiserver/apiserver.go
+@@ -22,6 +22,7 @@ import (
+ 	"os"
+ 	_ "time/tzdata" // for timeZone support in CronJob
+ 
++	genericapiserver "k8s.io/apiserver/pkg/server"
+ 	"k8s.io/component-base/cli"
+ 	_ "k8s.io/component-base/logs/json/register"          // for JSON log format registration
+ 	_ "k8s.io/component-base/metrics/prometheus/clientgo" // load all the prometheus client-go plugins
+@@ -30,7 +31,7 @@ import (
+ )
+ 
+ func main() {
+-	command := app.NewAPIServerCommand()
++	command := app.NewAPIServerCommand(genericapiserver.SetupSignalContext())
+ 	code := cli.Run(command)
+ 	os.Exit(code)
+ }
+diff --git a/cmd/kube-apiserver/app/server.go b/cmd/kube-apiserver/app/server.go
+index a0ba37e0103..63a31d9e0d3 100644
+--- a/cmd/kube-apiserver/app/server.go
++++ b/cmd/kube-apiserver/app/server.go
+@@ -67,9 +67,8 @@ func init() {
+ }
+ 
+ // NewAPIServerCommand creates a *cobra.Command object with default parameters
+-func NewAPIServerCommand() *cobra.Command {
++func NewAPIServerCommand(ctx context.Context) *cobra.Command {
+ 	s := options.NewServerRunOptions()
+-	ctx := genericapiserver.SetupSignalContext()
+ 	featureGate := s.GenericServerRunOptions.ComponentGlobalsRegistry.FeatureGateFor(basecompatibility.DefaultKubeComponent)
+ 
+ 	cmd := &cobra.Command{
+@@ -101,7 +100,7 @@ cluster's shared state through which all other components interact.`,
+ 			cliflag.PrintFlags(fs)
+ 
+ 			// set default options
+-			completedOptions, err := s.Complete(ctx)
++			completedOptions, err := s.Complete(cmd.Context())
+ 			if err != nil {
+ 				return err
+ 			}
+@@ -114,7 +113,7 @@ cluster's shared state through which all other components interact.`,
+ 			featureGate.(featuregate.MutableFeatureGate).AddMetrics()
+ 			// add component version metrics
+ 			s.GenericServerRunOptions.ComponentGlobalsRegistry.AddMetrics()
+-			return Run(ctx, completedOptions)
++			return Run(cmd.Context(), completedOptions)
+ 		},
+ 		Args: func(cmd *cobra.Command, args []string) error {
+ 			for _, arg := range args {
+diff --git a/cmd/kube-controller-manager/app/controllermanager.go b/cmd/kube-controller-manager/app/controllermanager.go
+index 016b00bb315..50a22e0ce3d 100644
+--- a/cmd/kube-controller-manager/app/controllermanager.go
++++ b/cmd/kube-controller-manager/app/controllermanager.go
+@@ -106,7 +106,7 @@ const (
+ )
+ 
+ // NewControllerManagerCommand creates a *cobra.Command object with default parameters
+-func NewControllerManagerCommand() *cobra.Command {
++func NewControllerManagerCommand(ctx context.Context) *cobra.Command {
+ 	s, err := options.NewKubeControllerManagerOptions()
+ 	if err != nil {
+ 		klog.Background().Error(err, "Unable to initialize command options")
+@@ -141,10 +141,10 @@ controller, and serviceaccounts controller.`,
+ 			}
+ 			cliflag.PrintFlags(cmd.Flags())
+ 
+-			// We use context.Background() here still because using server.SetupSignalContext() would cause
++			// The caller passes context.Background() because using server.SetupSignalContext() would cause
+ 			// components like the event broadcaster to terminate on signal immediately, which is not what we want.
+ 			// Termination for that case is being handled explicitly in Run() later on.
+-			ctx := context.Background()
++			ctx := cmd.Context()
+ 			c, err := s.Config(ctx, KnownControllers(), ControllersDisabledByDefault(), ControllerAliases())
+ 			if err != nil {
+ 				return err
+@@ -183,6 +183,8 @@ controller, and serviceaccounts controller.`,
+ 	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
+ 	cliflag.SetUsageAndHelpFunc(cmd, namedFlagSets, cols)
+ 
++	cmd.SetContext(ctx)
++
+ 	return cmd
+ }
+ 
+diff --git a/cmd/kube-controller-manager/controller-manager.go b/cmd/kube-controller-manager/controller-manager.go
+index 77bc10a3517..8df2475474a 100644
+--- a/cmd/kube-controller-manager/controller-manager.go
++++ b/cmd/kube-controller-manager/controller-manager.go
+@@ -21,6 +21,7 @@ limitations under the License.
+ package main
+ 
+ import (
++	"context"
+ 	"os"
+ 	_ "time/tzdata" // for CronJob Time Zone support
+ 
+@@ -32,7 +33,7 @@ import (
+ )
+ 
+ func main() {
+-	command := app.NewControllerManagerCommand()
++	command := app.NewControllerManagerCommand(context.Background())
+ 	code := cli.Run(command)
+ 	os.Exit(code)
+ }
+diff --git a/cmd/kube-proxy/app/server.go b/cmd/kube-proxy/app/server.go
+index 2deae1f8893..f3554d3f7e1 100644
+--- a/cmd/kube-proxy/app/server.go
++++ b/cmd/kube-proxy/app/server.go
+@@ -97,7 +97,7 @@ type proxyRun interface {
+ }
+ 
+ // NewProxyCommand creates a *cobra.Command object with default parameters
+-func NewProxyCommand() *cobra.Command {
++func NewProxyCommand(ctx context.Context) *cobra.Command {
+ 	opts := NewOptions()
+ 
+ 	cmd := &cobra.Command{
+@@ -132,7 +132,7 @@ with the apiserver API to configure the proxy.`,
+ 			}
+ 			// add feature enablement metrics
+ 			utilfeature.DefaultMutableFeatureGate.AddMetrics()
+-			if err := opts.Run(context.Background()); err != nil {
++			if err := opts.Run(cmd.Context()); err != nil {
+ 				opts.logger.Error(err, "Error running ProxyServer")
+ 				return err
+ 			}
+@@ -155,6 +155,8 @@ with the apiserver API to configure the proxy.`,
+ 
+ 	_ = cmd.MarkFlagFilename("config", "yaml", "yml", "json")
+ 
++	cmd.SetContext(ctx)
++
+ 	return cmd
+ }
+ 
+diff --git a/cmd/kube-proxy/proxy.go b/cmd/kube-proxy/proxy.go
+index e167484781a..731741f618f 100644
+--- a/cmd/kube-proxy/proxy.go
++++ b/cmd/kube-proxy/proxy.go
+@@ -17,6 +17,7 @@ limitations under the License.
+ package main
+ 
+ import (
++	"context"
+ 	"os"
+ 
+ 	"k8s.io/component-base/cli"
+@@ -27,7 +28,7 @@ import (
+ )
+ 
+ func main() {
+-	command := app.NewProxyCommand()
++	command := app.NewProxyCommand(context.Background())
+ 	code := cli.Run(command)
+ 	os.Exit(code)
+ }
+diff --git a/cmd/kube-scheduler/app/server.go b/cmd/kube-scheduler/app/server.go
+index 4d0ebfd19af..5d1f6947d28 100644
+--- a/cmd/kube-scheduler/app/server.go
++++ b/cmd/kube-scheduler/app/server.go
+@@ -36,7 +36,6 @@ import (
+ 	"k8s.io/apiserver/pkg/authorization/authorizer"
+ 	genericapifilters "k8s.io/apiserver/pkg/endpoints/filters"
+ 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
+-	"k8s.io/apiserver/pkg/server"
+ 	genericfilters "k8s.io/apiserver/pkg/server/filters"
+ 	"k8s.io/apiserver/pkg/server/flagz"
+ 	"k8s.io/apiserver/pkg/server/healthz"
+@@ -90,7 +89,7 @@ func init() {
+ type Option func(runtime.Registry) error
+ 
+ // NewSchedulerCommand creates a *cobra.Command object with default parameters and registryOptions
+-func NewSchedulerCommand(registryOptions ...Option) *cobra.Command {
++func NewSchedulerCommand(ctx context.Context, registryOptions ...Option) *cobra.Command {
+ 	opts := options.NewOptions()
+ 
+ 	cmd := &cobra.Command{
+@@ -135,6 +134,8 @@ for more information about scheduling and the kube-scheduler component.`,
+ 		klog.Background().Error(err, "Failed to mark flag filename")
+ 	}
+ 
++	cmd.SetContext(ctx)
++
+ 	return cmd
+ }
+ 
+@@ -150,13 +151,8 @@ func runCommand(cmd *cobra.Command, opts *options.Options, registryOptions ...Op
+ 	}
+ 	cliflag.PrintFlags(cmd.Flags())
+ 
+-	ctx, cancel := context.WithCancel(context.Background())
++	ctx, cancel := context.WithCancel(cmd.Context())
+ 	defer cancel()
+-	go func() {
+-		stopCh := server.SetupSignalHandler()
+-		<-stopCh
+-		cancel()
+-	}()
+ 
+ 	cc, sched, err := Setup(ctx, opts, registryOptions...)
+ 	if err != nil {
+diff --git a/cmd/kube-scheduler/scheduler.go b/cmd/kube-scheduler/scheduler.go
+index 71739808dd2..60bb501a1f7 100644
+--- a/cmd/kube-scheduler/scheduler.go
++++ b/cmd/kube-scheduler/scheduler.go
+@@ -19,6 +19,7 @@ package main
+ import (
+ 	"os"
+ 
++	genericapiserver "k8s.io/apiserver/pkg/server"
+ 	"k8s.io/component-base/cli"
+ 	_ "k8s.io/component-base/logs/json/register" // for JSON log format registration
+ 	_ "k8s.io/component-base/metrics/prometheus/clientgo"
+@@ -27,7 +28,7 @@ import (
+ )
+ 
+ func main() {
+-	command := app.NewSchedulerCommand()
++	command := app.NewSchedulerCommand(genericapiserver.SetupSignalContext())
+ 	code := cli.Run(command)
+ 	os.Exit(code)
+ }
+diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
+index c245a648831..9a17e0b17af 100644
+--- a/cmd/kubelet/app/server.go
++++ b/cmd/kubelet/app/server.go
+@@ -65,7 +65,6 @@ import (
+ 	"k8s.io/apimachinery/pkg/util/validation/field"
+ 	utilversion "k8s.io/apimachinery/pkg/util/version"
+ 	"k8s.io/apimachinery/pkg/util/wait"
+-	genericapiserver "k8s.io/apiserver/pkg/server"
+ 	"k8s.io/apiserver/pkg/server/flagz"
+ 	"k8s.io/apiserver/pkg/server/healthz"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+@@ -300,12 +299,9 @@ is checked every 20 seconds (also configurable with a flag).`,
+ 			// log the kubelet's config for inspection
+ 			logger.V(5).Info("KubeletConfiguration", "configuration", klog.Format(config))
+ 
+-			// set up signal context for kubelet shutdown
+-			ctx := genericapiserver.SetupSignalContext()
+-
+ 			utilfeature.DefaultMutableFeatureGate.AddMetrics()
+ 			// run the kubelet
+-			return Run(ctx, kubeletServer, kubeletDeps, utilfeature.DefaultFeatureGate)
++			return Run(cmd.Context(), kubeletServer, kubeletDeps, utilfeature.DefaultFeatureGate)
+ 		},
+ 	}
+ 
+@@ -325,6 +321,8 @@ is checked every 20 seconds (also configurable with a flag).`,
+ 		fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine(), cleanFlagSet.FlagUsagesWrapped(2))
+ 	})
+ 
++	cmd.SetContext(ctx)
++
+ 	return cmd
+ }
+ 
+diff --git a/cmd/kubelet/kubelet.go b/cmd/kubelet/kubelet.go
+index 114cbd4aabc..a0c858c2a08 100644
+--- a/cmd/kubelet/kubelet.go
++++ b/cmd/kubelet/kubelet.go
+@@ -22,9 +22,9 @@ limitations under the License.
+ package main
+ 
+ import (
+-	"context"
+ 	"os"
+ 
++	genericapiserver "k8s.io/apiserver/pkg/server"
+ 	"k8s.io/component-base/cli"
+ 	_ "k8s.io/component-base/logs/json/register"          // for JSON log format registration
+ 	_ "k8s.io/component-base/metrics/prometheus/clientgo" // for client metric registration
+@@ -33,7 +33,7 @@ import (
+ )
+ 
+ func main() {
+-	command := app.NewKubeletCommand(context.Background())
++	command := app.NewKubeletCommand(genericapiserver.SetupSignalContext())
+ 	code := cli.Run(command)
+ 	os.Exit(code)
+ }

@@ -1,0 +1,193 @@
+diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
+index d8cfd44222c..b2b1c9e71a3 100644
+--- a/pkg/controlplane/controller/kubernetesservice/controller.go
++++ b/pkg/controlplane/controller/kubernetesservice/controller.go
+@@ -85,6 +85,12 @@ func New(config Config, client kubernetes.Interface, serviceInformer v1informers
+ // Start begins the core controller loops that must exist for bootstrapping
+ // a cluster.
+ func (c *Controller) Start(stopCh <-chan struct{}) {
++	// nanokube: skip bootstrap of the default "kubernetes" Service and its
++	// endpoint reconciliation. The controller is left constructed so Stop()
++	// can be called safely, but no work is performed.
++	klog.Info("nanokube: kubernetesservice.Controller.Start is a no-op")
++	return
++
+ 	if !cache.WaitForCacheSync(stopCh, c.serviceSynced) {
+ 		runtime.HandleError(fmt.Errorf("timed out waiting for caches to sync"))
+ 		return
+@@ -111,6 +117,10 @@ func (c *Controller) Start(stopCh <-chan struct{}) {
+ 
+ // Stop cleans up this API Servers endpoint reconciliation leases so another master can take over more quickly.
+ func (c *Controller) Stop() {
++	// nanokube: matched no-op for Start; nothing was started, nothing to stop.
++	klog.Info("nanokube: kubernetesservice.Controller.Stop is a no-op")
++	return
++
+ 	c.lock.Lock()
+ 	defer c.lock.Unlock()
+ 
+diff --git a/pkg/kubelet/client/kubelet_client.go b/pkg/kubelet/client/kubelet_client.go
+index b9d366ad462..045e062d751 100644
+--- a/pkg/kubelet/client/kubelet_client.go
++++ b/pkg/kubelet/client/kubelet_client.go
+@@ -19,6 +19,7 @@ package client
+ import (
+ 	"context"
+ 	"fmt"
++	"net"
+ 	"net/http"
+ 	"strconv"
+ 	"time"
+@@ -198,6 +199,18 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
+ 		return nil, err
+ 	}
+ 
++	// nanokube: if the selected address already carries a port (e.g. "fqdn:443"
++	// from an external address), honor it and ignore DaemonEndpoints.
++	if h, p, splitErr := net.SplitHostPort(host); splitErr == nil {
++		return &ConnectionInfo{
++			Scheme:                         k.scheme,
++			Hostname:                       h,
++			Port:                           p,
++			Transport:                      k.transport,
++			InsecureSkipTLSVerifyTransport: k.insecureSkipTLSVerifyTransport,
++		}, nil
++	}
++
+ 	// Use the kubelet-reported port, if present
+ 	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
+ 	if port <= 0 {
+diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
+index 5bf378bab58..4e324266021 100644
+--- a/pkg/kubelet/kubelet.go
++++ b/pkg/kubelet/kubelet.go
+@@ -65,6 +65,7 @@ import (
+ 	"k8s.io/apimachinery/pkg/util/wait"
+ 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+ 	"k8s.io/apiserver/pkg/server/flagz"
++	"k8s.io/apiserver/pkg/server/healthz"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+ 	coreinformersv1 "k8s.io/client-go/informers/core/v1"
+ 	clientset "k8s.io/client-go/kubernetes"
+@@ -408,11 +409,16 @@ func PreInitRuntimeService(ctx context.Context, kubeCfg *kubeletconfiginternal.K
+ 	}
+ 	var err error
+ 	useStreaming := utilfeature.DefaultFeatureGate.Enabled(features.CRIListStreaming)
+-	if kubeDeps.RemoteRuntimeService, err = remote.NewRemoteRuntimeService(ctx, kubeCfg.ContainerRuntimeEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
+-		return err
++	// Only construct the default CRI clients if the caller didn't already supply them.
++	if kubeDeps.RemoteRuntimeService == nil {
++		if kubeDeps.RemoteRuntimeService, err = remote.NewRemoteRuntimeService(ctx, kubeCfg.ContainerRuntimeEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
++			return err
++		}
+ 	}
+-	if kubeDeps.RemoteImageService, err = remote.NewRemoteImageService(ctx, remoteImageEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
+-		return err
++	if kubeDeps.RemoteImageService == nil {
++		if kubeDeps.RemoteImageService, err = remote.NewRemoteImageService(ctx, remoteImageEndpoint, kubeCfg.RuntimeRequestTimeout.Duration, kubeDeps.TracerProvider, useStreaming); err != nil {
++			return err
++		}
+ 	}
+ 
+ 	kubeDeps.useLegacyCadvisorStats = cadvisor.UsingLegacyCadvisorStats(kubeCfg.ContainerRuntimeEndpoint)
+@@ -572,7 +578,9 @@ func NewMainKubelet(ctx context.Context,
+ 				return nil, err
+ 			}
+ 		} else {
+-			return nil, err
++			// nanokube: oomWatcher creation fails on macOS (no /proc); ignore.
++			logger.V(2).Info("Failed to create an oomWatcher (ignoring)", "err", err)
++			oomWatcher = nil
+ 		}
+ 	}
+ 
+@@ -3300,6 +3308,20 @@ func (kl *Kubelet) ListenAndServe(ctx context.Context, kubeCfg *kubeletconfigint
+ 	server.ListenAndServeKubeletServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, kubeCfg, tlsConfig, auth, tp)
+ }
+ 
++// nanokube: accessors to enable building a *kubeletserver.Server outside the
++// kubelet package (kubeletserver.NewServer needs these private fields).
++
++// ResourceAnalyzer returns the kubelet's resource analyzer.
++func (kl *Kubelet) ResourceAnalyzer() serverstats.ResourceAnalyzer { return kl.resourceAnalyzer }
++
++// HealthCheckers returns the kubelet's container manager health checkers.
++func (kl *Kubelet) HealthCheckers() []healthz.HealthChecker {
++	return kl.containerManager.GetHealthCheckers()
++}
++
++// Flagz returns the kubelet's flagz reader.
++func (kl *Kubelet) Flagz() flagz.Reader { return kl.flagz }
++
+ // ListenAndServeReadOnly runs the kubelet HTTP server in read-only mode.
+ func (kl *Kubelet) ListenAndServeReadOnly(ctx context.Context, address net.IP, port uint, tp trace.TracerProvider) {
+ 	server.ListenAndServeKubeletReadOnlyServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, address, port, tp)
+diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
+index fe96a4ab366..190486668ad 100644
+--- a/pkg/kubelet/server/server.go
++++ b/pkg/kubelet/server/server.go
+@@ -469,14 +469,17 @@ func (s *Server) getMetricMethodBucket(method string) string {
+ // to this set. New handlers should be added under InstallAuthorizedHandlers.
+ func (s *Server) InstallAuthNotRequiredHandlers(ctx context.Context) {
+ 	logger := klog.FromContext(ctx)
+-	s.addMetricsBucketMatcher("healthz")
+-	checkers := []healthz.HealthChecker{
+-		healthz.PingHealthz,
+-		healthz.LogHealthz,
+-		healthz.NamedCheck("syncloop", s.host.SyncLoopHealthCheck),
+-	}
+-	checkers = append(checkers, s.extendedCheckers...)
+-	healthz.InstallHandler(s.restfulCont, checkers...)
++	// nanokube: skip kubelet's /healthz so the apiserver chain mounted on
++	// our listener can own it instead. Kubelet doesn't register /livez or
++	// /readyz, only /healthz.
++	// s.addMetricsBucketMatcher("healthz")
++	// checkers := []healthz.HealthChecker{
++	// 	healthz.PingHealthz,
++	// 	healthz.LogHealthz,
++	// 	healthz.NamedCheck("syncloop", s.host.SyncLoopHealthCheck),
++	// }
++	// checkers = append(checkers, s.extendedCheckers...)
++	// healthz.InstallHandler(s.restfulCont, checkers...)
+ 
+ 	slis.SLIMetricsWithReset{}.Install(s.restfulCont)
+ 
+@@ -878,6 +881,10 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
+ 	}
+ 
+ 	response.Header().Set("Transfer-Encoding", "chunked")
++	// nanokube: return 206 Partial Content to bypass Cloudflare edge's
++	// 128KB chunked-response buffer. apiserver proxies kubelet's response
++	// body through unchanged, so the 206 propagates end-to-end.
++	response.WriteHeader(http.StatusPartialContent)
+ 	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
+ 		response.WriteError(http.StatusBadRequest, err)
+ 		return
+@@ -1278,6 +1285,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+ 	handler.ServeHTTP(w, req)
+ }
+ 
++// Restful returns the kubelet's REST container. Embedders that built a
++// *Server outside this package use it to install additional WebServices
++// (Add) or raw http.Handlers (Handle) on the kubelet's listener. The
++// container's filter chain still applies.
++func (s *Server) Restful() containerInterface { return s.restfulCont }
++
+ // prometheusHostAdapter adapts the HostInterface to the interface expected by the
+ // cAdvisor prometheus collector.
+ type prometheusHostAdapter struct {
+diff --git a/pkg/registry/core/pod/rest/subresources.go b/pkg/registry/core/pod/rest/subresources.go
+index f5160574bb4..bb3a1c661b4 100644
+--- a/pkg/registry/core/pod/rest/subresources.go
++++ b/pkg/registry/core/pod/rest/subresources.go
+@@ -309,6 +309,10 @@ func (r *PortForwardREST) Connect(ctx context.Context, name string, opts runtime
+ func newThrottledUpgradeAwareProxyHandler(location *url.URL, transport http.RoundTripper, wrapTransport, upgradeRequired bool, responder rest.Responder) http.Handler {
+ 	handler := proxy.NewUpgradeAwareHandler(location, transport, wrapTransport, upgradeRequired, proxy.NewErrorResponder(responder))
+ 	handler.MaxBytesPerSec = capabilities.Get().PerConnectionBandwidthLimitBytesPerSec
++	// nanokube: rewrite outgoing Host header to match the backend URL. Without
++	// this, the incoming Host (apiserver's cloudflare FQDN) is forwarded and
++	// cloudflare routes the apiserver→kubelet subrequest back to the apiserver.
++	handler.UseLocationHost = true
+ 	return handler
+ }
+ 

@@ -32,7 +32,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	apifeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/options"
@@ -41,10 +40,8 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/cert"
 	cliflag "k8s.io/component-base/cli/flag"
-	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
-	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/capabilities"
 	"k8s.io/kubernetes/pkg/features"
@@ -926,24 +923,24 @@ func (k *nanokubeImpl) StaticPods() []*corev1.Pod {
 
 func (k *nanokubeImpl) Bootstrap() kubelet.Bootstrap {
 	k.bootstrapOnce.Do(func() {
-		kubeDeps := k.KubeletDependencies()
+		// kubeDeps := k.KubeletDependencies()
 
-		server := &kubeletoptions.KubeletServer{
-			KubeletFlags:         *k.KubeletFlags(),
-			KubeletConfiguration: *k.KubeletConfiguration(),
-		}
+		// server := &kubeletoptions.KubeletServer{
+		// 	KubeletFlags:         *k.KubeletFlags(),
+		// 	KubeletConfiguration: *k.KubeletConfiguration(),
+		// }
 
-		hostname, _ := nodeutil.GetHostname(server.HostnameOverride)
-		nodeName := types.NodeName(hostname)
-		nodeIPs, _, _ := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
+		// hostname, _ := nodeutil.GetHostname(server.HostnameOverride)
+		// nodeName := types.NodeName(hostname)
+		// nodeIPs, _, _ := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
 
-		klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
-		if err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
-			return
-		}
+		// klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
+		// if err != nil {
+		// 	k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
+		// 	return
+		// }
 
-		k.bootstrap = klet
+		// k.bootstrap = klet
 	})
 	return k.bootstrap
 }
@@ -986,27 +983,27 @@ func (k *nanokubeImpl) Run() v1.Nanokube {
 
 func (k *nanokubeImpl) Server() *kubeletserver.Server {
 	k.serverOnce.Do(func() {
-		kl := k.Bootstrap().(*kubelet.Kubelet)
-		ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), k.KubeletDependencies().Auth, k.KubeletConfiguration())
-		ksrv.InstallTracingFilter(k.KubeletDependencies().TracerProvider)
+		// kl := k.Bootstrap().(*kubelet.Kubelet)
+		// ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), k.KubeletDependencies().Auth, k.KubeletConfiguration())
+		// ksrv.InstallTracingFilter(k.KubeletDependencies().TracerProvider)
 
-		//
-		// DEVNOTE: add streaming handlers
-		//          TODO(partial): consider providing these directly and disable API Server management of /exec /attach /portforward
-		//
-		for _, ws := range k.Services(k.Tunnel().URL()) {
-			ksrv.Restful().Add(ws)
-			nanokube.Log.Info("registered service", "service", ws.RootPath())
-		}
+		// //
+		// // DEVNOTE: add streaming handlers
+		// //          TODO(partial): consider providing these directly and disable API Server management of /exec /attach /portforward
+		// //
+		// for _, ws := range k.Services(k.Tunnel().URL()) {
+		// 	ksrv.Restful().Add(ws)
+		// 	nanokube.Log.Info("registered service", "service", ws.RootPath())
+		// }
 
-		//
-		// DEVNOTE: we combine the kubelet server and the kubernetes apiserver together
-		//          TODO(partial): add kubelet auth
-		//
-		ksrv.Restful().Handle("/", k.ApiServer().Handler())
-		nanokube.Log.Info("registered API server")
+		// //
+		// // DEVNOTE: we combine the kubelet server and the kubernetes apiserver together
+		// //          TODO(partial): add kubelet auth
+		// //
+		// ksrv.Restful().Handle("/", k.ApiServer().Handler())
+		// nanokube.Log.Info("registered API server")
 
-		k.server = &ksrv
+		// k.server = &ksrv
 	})
 	return k.server
 }

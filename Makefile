@@ -14,19 +14,23 @@ VERSION_LDFLAGS := \
 
 CHAINSAW := go tool -modfile=tools/go.mod chainsaw
 
-KUBE_PATCH := patches/kubernetes-$(KUBE_MAJOR).$(KUBE_MINOR).patch
+KUBE_PATCH_CMD := patches/kubernetes-cmd-$(KUBE_MAJOR).$(KUBE_MINOR).patch
+KUBE_PATCH_PKG := patches/kubernetes-pkg-$(KUBE_MAJOR).$(KUBE_MINOR).patch
 
 patch:
 	@cd kubernetes && git reset --hard HEAD
-	@cd kubernetes && git apply ../$(KUBE_PATCH)
+	@cd kubernetes && git apply ../$(KUBE_PATCH_CMD)
+	@cd kubernetes && git apply ../$(KUBE_PATCH_PKG)
 
 init:
 	@git submodule update --init --recursive --depth 1
 	@$(MAKE) patch
 
 patch-save:
-	@cd kubernetes && git diff > ../$(KUBE_PATCH)
-	@echo "Patch saved to $(KUBE_PATCH)"
+	@cd kubernetes && git diff -- cmd > ../$(KUBE_PATCH_CMD)
+	@cd kubernetes && git diff -- pkg > ../$(KUBE_PATCH_PKG)
+	@echo "Patch saved to $(KUBE_PATCH_CMD)"
+	@echo "Patch saved to $(KUBE_PATCH_PKG)"
 
 ARTIFACT ?=
 
