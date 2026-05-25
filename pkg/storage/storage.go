@@ -36,8 +36,6 @@ type StorageImpl struct {
 	inner         generic.RESTOptionsGetter
 	innerProvided chan struct{}
 
-	clients sync.Map // schema.GroupResource -> StorageClient
-
 	servers     []string
 	serversOnce sync.Once
 
@@ -90,21 +88,11 @@ func (s *StorageImpl) SetConfig(config *server.Config) *server.Config {
 }
 
 func (s *StorageImpl) WithResource(inner kubestorage.Interface, resource schema.GroupResource) v1.StorageClient {
-	actual, loaded := s.clients.Load(resource)
-	if loaded {
-		klog.Infof("Reusing existing StorageClient for %s", resource)
-		return actual.(v1.StorageClient)
-	}
-	client := &StorageClientImpl{
+	return &StorageClientImpl{
 		storage:  s,
 		inner:    inner,
 		resource: resource,
 	}
-	actual, loaded = s.clients.LoadOrStore(resource, client)
-	if loaded {
-		return actual.(v1.StorageClient)
-	}
-	return client
 }
 
 func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runtime.Object) (generic.RESTOptions, error) {
@@ -256,7 +244,6 @@ func (sc *StorageClientImpl) Stats(ctx context.Context) (storage.Stats, error) {
 }
 
 func (sc *StorageClientImpl) ReadinessCheck() error {
-	// klog.Infof("Storage.ReadinessCheck %s", sc.resource)
 	return sc.inner.ReadinessCheck()
 }
 

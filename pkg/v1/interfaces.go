@@ -21,6 +21,7 @@ import (
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
@@ -88,6 +89,8 @@ type Nanokube interface {
 	KubeletHostname() string
 	CertFilePath() string
 	KeyFilePath() string
+	RootCaFilePath() string
+	KubeconfigPath(loopback *rest.Config) string
 	TLSConfig() *tls.Config
 	TLSOptions() *kubeletserver.TLSOptions
 	SecureServing() *options.SecureServingOptionsWithLoopback

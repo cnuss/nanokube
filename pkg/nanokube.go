@@ -38,6 +38,9 @@ import (
 	"k8s.io/apiserver/pkg/server/options"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/cert"
 	cliflag "k8s.io/component-base/cli/flag"
@@ -618,6 +621,46 @@ func (k *nanokubeImpl) KeyFilePath() string {
 	return keyPath
 }
 
+// RootCaFilePath returns the path to the CA bundle that signs the apiserver's
+// serving cert. Today the apiserver cert is self-signed, so the cert file is
+// its own CA bundle — same file as CertFilePath. If we ever generate a
+// separate CA, this is the seam to change.
+func (k *nanokubeImpl) RootCaFilePath() string {
+	return k.CertFilePath()
+}
+
+// KubeconfigPath materializes a kubeconfig file pointing at the apiserver via
+// the supplied loopback rest.Config and returns its disk path. Callers (e.g.
+// controller-manager's --kubeconfig flag) typically receive `loopback` inside
+// a PostStartHook as ctx.LoopbackClientConfig.
+func (k *nanokubeImpl) KubeconfigPath(loopback *rest.Config) string {
+	ctxName := loopback.Host
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters[ctxName] = &clientcmdapi.Cluster{
+		Server:                   loopback.Host,
+		CertificateAuthorityData: loopback.CAData,
+		InsecureSkipTLSVerify:    loopback.Insecure,
+		TLSServerName:            loopback.TLSClientConfig.ServerName,
+	}
+	cfg.AuthInfos[ctxName] = &clientcmdapi.AuthInfo{
+		ClientCertificateData: loopback.CertData,
+		ClientKeyData:         loopback.KeyData,
+		Token:                 loopback.BearerToken,
+	}
+	cfg.Contexts[ctxName] = &clientcmdapi.Context{
+		Cluster:  ctxName,
+		AuthInfo: ctxName,
+	}
+	cfg.CurrentContext = ctxName
+
+	path := k.Options().FilePathAt(v1.KubeconfigFile)
+	if err := clientcmd.WriteToFile(*cfg, path); err != nil {
+		k.Cancel(nanokube.NewError(fmt.Errorf("write kubeconfig %s: %w", path, err)))
+		return ""
+	}
+	return path
+}
+
 func (k *nanokubeImpl) ensureCertKey() (string, string) {
 	certPath := k.Options().FilePathAt(v1.CertFile)
 	keyPath := k.Options().FilePathAt(v1.KeyFile)
@@ -633,7 +676,7 @@ func (k *nanokubeImpl) ensureCertKey() (string, string) {
 
 		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(
 			"localhost",
-			[]net.IP{net.IPv4(127, 0, 0, 1), tunnel.LocalIP()},
+			[]net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback, tunnel.LocalIP()},
 			[]string{tunnel.FQDN(), tunnel.Hostname()},
 		)
 		if err != nil {

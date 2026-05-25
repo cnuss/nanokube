@@ -50,13 +50,11 @@ func run(ctx context.Context, cmd *kubernetes.Command) error {
 }
 
 func main() {
-	command := pkg.NewNanokubeCommand(genericapiserver.SetupSignalContext())
-	command.AddCommand(
-		kubelet.NewKubeletCommand(context.Background()),
-		apiserver.NewAPIServerCommand(context.Background()),
-		controllermanager.NewControllerManagerCommand(context.Background()),
-		scheduler.NewSchedulerCommand(context.Background()),
-	)
+	command := pkg.NewNanokubeCommand(genericapiserver.SetupSignalContext()).
+		WithRunCommand(kubelet.NewKubeletCommand(context.Background())).
+		WithRunCommand(apiserver.NewAPIServerCommand(context.Background())).
+		WithRunCommand(controllermanager.NewControllerManagerCommand(context.Background())).
+		WithRunCommand(scheduler.NewSchedulerCommand(context.Background()))
 	code := cli.Run(command.Command)
 	os.Exit(code)
 }
