@@ -2,35 +2,64 @@ package pkg
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
+	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apiserver/pkg/util/webhook"
+	"k8s.io/component-base/featuregate"
+	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
+	"k8s.io/kubernetes/cmd/kube-apiserver/app"
+	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
+	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
+	controllermanager "k8s.io/kubernetes/cmd/kube-controller-manager/app"
+	controllermanagerconfig "k8s.io/kubernetes/cmd/kube-controller-manager/app/config"
+	scheduler "k8s.io/kubernetes/cmd/kube-scheduler/app"
+	schedulerappconfig "k8s.io/kubernetes/cmd/kube-scheduler/app/config"
+	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
+	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	"k8s.io/kubernetes/pkg/controlplane"
+	controlplaneapiserver "k8s.io/kubernetes/pkg/controlplane/apiserver"
+	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
+	kubeletcore "k8s.io/kubernetes/pkg/kubelet"
+	sched "k8s.io/kubernetes/pkg/scheduler"
 )
 
 type Command struct {
 	*cobra.Command
 
-	nano   v1.Nanokube
-	cancel context.CancelFunc
+	ctx    v1.Nanokube
+	cancel context.CancelCauseFunc
 
 	byName    map[string]*cobra.Command
 	deps      map[*cobra.Command][]*cobra.Command
 	inner     map[*cobra.Command]func(*cobra.Command, []string) error
 	cancelFor map[*cobra.Command]context.CancelFunc
 	stopped   map[*cobra.Command]chan struct{}
+
+	apiserverRunOnce         sync.Once
+	kubeletRunOnce           sync.Once
+	controllerManagerRunOnce sync.Once
+	schedulerRunOnce         sync.Once
 }
 
 func NewNanokubeCommand(ctx context.Context) *Command {
-	ctx, cancel := context.WithCancel(ctx)
+	nano, cancel := NewNanokube(ctx)
 	cmd := &cobra.Command{
 		Use:  "nanokube",
 		Long: "all-in-one kubernetes binary",
 	}
-	cmd.SetContext(ctx)
+	cmd.SetContext(nano)
 
 	c := &Command{
 		Command:   cmd,
+		ctx:       nano,
 		cancel:    cancel,
 		byName:    map[string]*cobra.Command{},
 		deps:      map[*cobra.Command][]*cobra.Command{},
@@ -49,6 +78,10 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	}
 
 	return c
+}
+
+func (c *Command) Nano() v1.Nanokube {
+	return c.ctx
 }
 
 // dependentsOf returns commands that have `cmd` in their deps. Computed at
@@ -82,58 +115,93 @@ func (c *Command) AddCommand(cmds ...*cobra.Command) {
 		switch name {
 		case "kube-controller-manager":
 			c.deps[cmd] = []*cobra.Command{c.byName["kube-apiserver"]}
-			// TODO hide everything by default and only unhide a curated subset
-			cmd.Flags().Lookup("version").Hidden = true
+			c.controllerManagerRunOnce.Do(func() {
+				run := controllermanager.Run
+				controllermanager.Run = func(ctx context.Context, cfg *controllermanagerconfig.CompletedConfig) error {
+					fmt.Printf("controllermanager run")
+					return run(ctx, cfg)
+				}
+			})
 		case "kube-scheduler":
 			c.deps[cmd] = []*cobra.Command{c.byName["kube-apiserver"]}
-			// TODO hide everything by default and only unhide a curated subset
-			cmd.Flags().Lookup("version").Hidden = true
+			c.schedulerRunOnce.Do(func() {
+				run := scheduler.Run
+				scheduler.Run = func(ctx context.Context, cc *schedulerappconfig.CompletedConfig, sched *sched.Scheduler) error {
+					fmt.Printf("!!! scheduler run")
+					return run(ctx, cc, sched)
+				}
+			})
 		case "kube-apiserver":
-			// TODO hide everything by default and only unhide a curated subset
-			cmd.Flags().Lookup("advertise-address").Hidden = true
-			cmd.Flags().Lookup("allow-privileged").DefValue = "true"
-			cmd.Flags().Lookup("cert-dir").Hidden = true
-			cmd.Flags().Lookup("disable-http2-serving").Hidden = true
-			cmd.Flags().Lookup("endpoint-reconciler-type").DefValue = "none"
-			cmd.Flags().Lookup("external-hostname").Hidden = true // TODO Set at runtime
-			cmd.Flags().Lookup("etcd-cafile").Hidden = true
-			cmd.Flags().Lookup("etcd-certfile").Hidden = true
-			cmd.Flags().Lookup("etcd-compaction-interval").Hidden = true
-			cmd.Flags().Lookup("etcd-compaction-interval").DefValue = "0"
-			cmd.Flags().Lookup("etcd-count-metric-poll-period").Hidden = true
-			cmd.Flags().Lookup("etcd-count-metric-poll-period").DefValue = "0"
-			cmd.Flags().Lookup("etcd-db-metric-poll-interval").Hidden = true
-			cmd.Flags().Lookup("etcd-db-metric-poll-interval").DefValue = "0"
-			cmd.Flags().Lookup("etcd-healthcheck-timeout").Hidden = true
-			cmd.Flags().Lookup("etcd-healthcheck-timeout").DefValue = "30s"
-			cmd.Flags().Lookup("etcd-keyfile").Hidden = true
-			cmd.Flags().Lookup("etcd-prefix").Hidden = true
-			cmd.Flags().Lookup("etcd-readycheck-timeout").Hidden = true
-			cmd.Flags().Lookup("etcd-readycheck-timeout").DefValue = "30s"
-			cmd.Flags().Lookup("etcd-servers").Hidden = true // TODO Set at runtime
-			cmd.Flags().Lookup("etcd-servers-overrides").Hidden = true
-			cmd.Flags().Lookup("http2-max-streams-per-connection").Hidden = true
-			cmd.Flags().Lookup("kubelet-preferred-address-types").DefValue = "ExternalDNS"
-			cmd.Flags().Lookup("kubernetes-service-node-port").DefValue = "443"
-			cmd.Flags().Lookup("permit-address-sharing").Hidden = true
-			cmd.Flags().Lookup("permit-port-sharing").Hidden = true
-			cmd.Flags().Lookup("peer-advertise-ip").Hidden = true
-			cmd.Flags().Lookup("peer-advertise-port").Hidden = true
-			cmd.Flags().Lookup("peer-ca-file").Hidden = true
-			cmd.Flags().Lookup("proxy-client-cert-file").Hidden = true
-			cmd.Flags().Lookup("proxy-client-key-file").Hidden = true
-			cmd.Flags().Lookup("secure-port").Hidden = true // TODO Set at runtime
-			cmd.Flags().Lookup("storage-backend").Hidden = true
-			cmd.Flags().Lookup("tls-cert-file").Hidden = true // TODO Set at runtime
-			cmd.Flags().Lookup("tls-cipher-suites").Hidden = true
-			cmd.Flags().Lookup("tls-curve-preferences").Hidden = true
-			cmd.Flags().Lookup("tls-min-version").Hidden = true
-			cmd.Flags().Lookup("tls-private-key-file").Hidden = true // TODO Set at runtime
-			cmd.Flags().Lookup("tls-sni-cert-key").Hidden = true
-			cmd.Flags().Lookup("version").Hidden = true
+			cmd.Flag("api-audiences").Value.Set("https://kubernetes.default.svc") // TODO: fix
+			cmd.Flag("authorization-mode").Value.Set("RBAC,Node")
+			cmd.Flag("etcd-servers").Value.Set(strings.Join(c.Nano().Storage().Servers(), ","))
+			cmd.Flag("service-account-key-file").Value.Set(c.Nano().KeyFilePath())         // TODO: fix
+			cmd.Flag("service-account-signing-key-file").Value.Set(c.Nano().KeyFilePath()) // TODO: fix
+			cmd.Flag("service-account-issuer").Value.Set("https://kubernetes.default.svc") // TODO: fix
+			cmd.Flag("storage-media-type").Value.Set("application/json")
+			cmd.Flag("tls-cert-file").Value.Set(c.Nano().CertFilePath())
+			cmd.Flag("tls-private-key-file").Value.Set(c.Nano().KeyFilePath())
+			c.apiserverRunOnce.Do(func() {
+				apiserver.Run = func(ctx context.Context, opts apiserveroptions.CompletedOptions) error {
+					config := &apiserver.Config{
+						Options: opts,
+					}
+
+					genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
+						opts.CompletedOptions,
+						[]*runtime.Scheme{legacyscheme.Scheme, apiextensionsapiserver.Scheme, aggregatorscheme.Scheme},
+						controlplane.DefaultAPIResourceConfigSource(),
+						generatedopenapi.GetOpenAPIDefinitions,
+					)
+					if err != nil {
+						return err
+					}
+
+					kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(opts, c.Nano().Storage().SetConfig(genericConfig), c.Nano().SetSharedInformerFactory(versionedInformers), storageFactory)
+					if err != nil {
+						return err
+					}
+					config.KubeAPIs = kubeAPIs
+
+					apiExtensions, err := controlplaneapiserver.CreateAPIExtensionsConfig(*kubeAPIs.ControlPlane.Generic, kubeAPIs.ControlPlane.VersionedInformers, pluginInitializer, opts.CompletedOptions, opts.MasterCount,
+						serviceResolver, webhook.NewDefaultAuthenticationInfoResolverWrapper(kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Generic.EgressSelector, kubeAPIs.ControlPlane.Generic.LoopbackClientConfig, kubeAPIs.ControlPlane.Generic.TracerProvider))
+					if err != nil {
+						return err
+					}
+					config.ApiExtensions = apiExtensions
+
+					aggregator, err := controlplaneapiserver.CreateAggregatorConfig(*kubeAPIs.ControlPlane.Generic, opts.CompletedOptions, kubeAPIs.ControlPlane.VersionedInformers, serviceResolver, kubeAPIs.ControlPlane.ProxyTransport, kubeAPIs.ControlPlane.Extra.PeerProxy, pluginInitializer)
+					if err != nil {
+						return err
+					}
+					config.Aggregator = aggregator
+
+					completed, err := config.Complete()
+					if err != nil {
+						return err
+					}
+
+					server, err := apiserver.CreateServerChain(completed)
+					if err != nil {
+						return err
+					}
+
+					prepared, err := server.PrepareRun()
+					if err != nil {
+						return err
+					}
+
+					return prepared.Run(ctx)
+				}
+			})
 		case "kubelet":
-			// TODO hide everything by default and only unhide a curated subset
-			cmd.Flags().Lookup("version").Hidden = true
+			c.kubeletRunOnce.Do(func() {
+				run := kubelet.Run
+				kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
+					fmt.Printf("!!! kubelet run")
+					return run(ctx, ks, deps, fg)
+				}
+			})
 		default:
 			// Unknown command — register as-is, no RunE rewrapping, no gating.
 			c.Command.AddCommand(cmd)
@@ -188,8 +256,15 @@ func (c *Command) launch(cmds ...*cobra.Command) error {
 
 	g := new(errgroup.Group)
 	for _, cmd := range order {
-		cmd := cmd
-		g.Go(func() error { return c.inner[cmd](cmd, nil) })
+		g.Go(func() error {
+			err := c.inner[cmd](cmd, nil)
+			if err != nil {
+				c.cancel(fmt.Errorf("%s: %w", cmd.Name(), err))
+			}
+			return err
+		})
 	}
-	return g.Wait()
+	err := g.Wait()
+	c.ctx.Storage().Shutdown()
+	return err
 }

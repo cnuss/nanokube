@@ -125,7 +125,8 @@ func (a *ApiServerImpl) genericConfig() (*server.Config, informers.SharedInforme
 		}
 		a.serverConfig = genericConfig
 		a.sharedInformerFactory = versionedInformers
-		a.defaultStorageFactory = a.ctx.Storage().WithFactory(storageFactory).Factory()
+		a.defaultStorageFactory = storageFactory
+		// a.defaultStorageFactory = a.ctx.StorageFactory().WithFactory(storageFactory).Factory()
 	})
 	return a.serverConfig, a.sharedInformerFactory, a.defaultStorageFactory
 }
@@ -142,7 +143,8 @@ func (a *ApiServerImpl) SharedInformerFactory() informers.SharedInformerFactory 
 
 func (a *ApiServerImpl) DefaultStorageFactory() *storage.DefaultStorageFactory {
 	_, _, storageFactory := a.genericConfig()
-	return a.ctx.Storage().WithFactory(storageFactory).Factory()
+	return storageFactory
+	// return a.ctx.StorageFactory().WithFactory(storageFactory).Factory()
 }
 
 func (a *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.ServiceResolver, []admission.PluginInitializer) {
@@ -162,7 +164,7 @@ func (a *ApiServerImpl) kubeAPIServerConfig() (*controlplane.Config, apiserver.S
 
 func (a *ApiServerImpl) ControlPlaneConfig() *controlplane.Config {
 	controlplaneConfig, _, _ := a.kubeAPIServerConfig()
-	controlplaneConfig.ControlPlane.StorageFactory = a.ctx.Storage()
+	// controlplaneConfig.ControlPlane.StorageFactory = a.ctx.StorageFactory()
 	return controlplaneConfig
 }
 
@@ -223,7 +225,7 @@ func (a *ApiServerImpl) APIAggregator() *apiserver.APIAggregator {
 			return
 		}
 
-		<-nanokube.Await(a.ctx, a.ctx.Storage().Ready())
+		// <-nanokube.Await(a.ctx, a.ctx.StorageFactory().Ready())
 
 		prepared, err := chain.PrepareRun()
 		if err != nil {

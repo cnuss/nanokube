@@ -1,7 +1,6 @@
 package nanokube
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,9 +29,12 @@ func NewOptions() v1.Options {
 	options := &OptionsImpl{
 		name: "nanokube",
 		dataDir: func() string {
-			cacheDir, _ := os.UserCacheDir()
-			os.Setenv("NANOKUBE_HOME", cacheDir)
-			return cacheDir
+			// dataDir, _ := os.UserCacheDir()
+			dataDir, _ := os.UserHomeDir()
+			dataDir = filepath.Join(dataDir, ".nanokube")
+			os.MkdirAll(dataDir, 0o755)
+			os.Setenv("NANOKUBE_HOME", dataDir)
+			return dataDir
 		}(),
 		verbosity: 0,
 	}
@@ -45,17 +47,6 @@ func NewOptions() v1.Options {
 	// cmd.PersistentFlags().CountVarP(&options.verbosity, "verbose", "v", "verbosity (-v warn, -vv info, -vvv debug, -vvvv trace)")
 	// cmd.PersistentFlags().StringVar(&options.dataDir, "data", dataDir, "data directory")
 	return options
-}
-
-func (o *OptionsImpl) RunFlags(cmd *cobra.Command) v1.Options {
-	o.cmd = cmd
-	cmd.Flags().StringVar(&o.dataDir, "data", func() string {
-		home, _ := os.UserHomeDir()
-		datadir := filepath.Join(home, fmt.Sprintf(".%s", o.Name()))
-		os.Setenv("NANOKUBE_HOME", datadir)
-		return datadir
-	}(), "data directory")
-	return o
 }
 
 func (o *OptionsImpl) Args() []string {

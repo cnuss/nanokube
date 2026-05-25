@@ -25,6 +25,7 @@ import (
 	_ "unsafe"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	"github.com/cnuss/nanokube/pkg/storage"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
@@ -35,7 +36,7 @@ import (
 	apifeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/options"
-	storage "k8s.io/apiserver/pkg/server/storage"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/cert"
@@ -62,14 +63,15 @@ func NewNanokube(ctx context.Context) (v1.Nanokube, context.CancelCauseFunc) {
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	nano := &nanokubeImpl{
-		ctx:               ctx,
-		cancel:            cancel,
-		options:           nanokube.NewOptions(),
-		canceled:          make(chan struct{}),
-		exitCode:          make(chan int, 1),
-		apiserverProvided: make(chan struct{}),
-		storageProvided:   make(chan struct{}),
-		nodeReady:         make(chan struct{}),
+		ctx:                           ctx,
+		cancel:                        cancel,
+		options:                       nanokube.NewOptions(),
+		canceled:                      make(chan struct{}),
+		exitCode:                      make(chan int, 1),
+		apiserverProvided:             make(chan struct{}),
+		storageProvided:               make(chan struct{}),
+		sharedInformerFactoryProvided: make(chan struct{}),
+		nodeReady:                     make(chan struct{}),
 	}
 
 	nano.noopClient = sync.OnceValue(func() v1.Client {
@@ -132,6 +134,7 @@ type nanokubeImpl struct {
 	noopClient func() v1.Client
 
 	storage         v1.Storage
+	storageOnce     sync.Once
 	storageProvided chan struct{}
 
 	backends     sync.Map
@@ -175,8 +178,9 @@ type nanokubeImpl struct {
 	apiServerOptions     *apiserveroptions.CompletedOptions
 	apiServerOptionsOnce sync.Once
 
-	defaultStorageFactory     *storage.DefaultStorageFactory
-	defaultStorageFactoryOnce sync.Once
+	sharedInformerFactory         informers.SharedInformerFactory
+	sharedInformerFactoryOnce     sync.Once
+	sharedInformerFactoryProvided chan struct{}
 
 	broadcaster     record.EventBroadcaster
 	broadcasterOnce sync.Once
@@ -248,6 +252,27 @@ var FeatureGates = map[string]bool{
 	string(features.ExtendWebSocketsToKubelet): false,
 }
 
+func (k *nanokubeImpl) Storage() v1.Storage {
+	k.storageOnce.Do(func() {
+		k.storage = storage.NewStorage(k)
+		close(k.storageProvided)
+	})
+	return k.storage
+}
+
+func (k *nanokubeImpl) SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory {
+	k.sharedInformerFactoryOnce.Do(func() {
+		k.sharedInformerFactory = factory
+		close(k.sharedInformerFactoryProvided)
+	})
+	return k.sharedInformerFactory
+}
+
+func (k *nanokubeImpl) SharedInformerFactory() informers.SharedInformerFactory {
+	<-nanokube.Await(k.ctx, k.sharedInformerFactoryProvided)
+	return k.sharedInformerFactory
+}
+
 func (k *nanokubeImpl) Broadcaster() record.EventBroadcaster {
 	k.broadcasterOnce.Do(func() {
 		k.broadcaster = record.NewBroadcaster(record.WithContext(k))
@@ -263,7 +288,7 @@ func (k *nanokubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.KeyFilePath()}
 		opts.Authorization.Modes = []string{"Node", "RBAC"}
 		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
-		opts.Etcd.StorageConfig.Transport.ServerList = k.Storage().ServerList()
+		// opts.Etcd.StorageConfig.Transport.ServerList = k.Storage().Servers()
 		opts.GenericServerRunOptions.ExternalHost = tunnel.FQDN()
 		// TODO(incomplete): fiddling with shutdown
 		opts.GenericServerRunOptions.ShutdownDelayDuration = 5 * time.Second
@@ -649,6 +674,10 @@ func (ln keepAliveListener) Accept() (net.Conn, error) {
 	return c, nil
 }
 
+func (k *nanokubeImpl) CancelCause(reason error) {
+	k.Cancel(nanokube.NewError(reason))
+}
+
 func (k *nanokubeImpl) Cancel(reason v1.Error) {
 	k.canceledOnce.Do(func() { close(k.canceled) })
 	k.runCancelHooks()
@@ -806,17 +835,6 @@ func (k *nanokubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Nanokube {
 func (k *nanokubeImpl) ApiServer() v1.ApiServer {
 	<-k.apiserverProvided
 	return k.apiserver
-}
-
-func (k *nanokubeImpl) WithStorage(storage v1.Storage) v1.Nanokube {
-	k.storage = storage
-	close(k.storageProvided)
-	return k
-}
-
-func (k *nanokubeImpl) Storage() v1.Storage {
-	<-k.storageProvided
-	return k.storage
 }
 
 func (k *nanokubeImpl) Backend(name v1.BackendName) v1.Backend {

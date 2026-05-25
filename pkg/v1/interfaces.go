@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/emicklei/go-restful/v3"
-	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/options"
-	storage "k8s.io/apiserver/pkg/server/storage"
+	kubestorage "k8s.io/apiserver/pkg/storage"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
@@ -51,6 +52,7 @@ type Nanokube interface {
 	WithCancel() (context.Context, context.CancelFunc)
 
 	Cancel(reason Error)
+	CancelCause(reason error)
 	Detach()
 	OnCancel(fns ...func(ctx context.Context)) Nanokube
 	OnReady(service ServiceName, fns ...func(ctx context.Context)) Nanokube
@@ -59,9 +61,6 @@ type Nanokube interface {
 
 	WithApiServer(apiserver ApiServer) Nanokube
 	ApiServer() ApiServer
-
-	WithStorage(storage Storage) Nanokube
-	Storage() Storage
 
 	WithBackend(name BackendName, backend Backend) Nanokube
 	Backends() map[BackendName]Backend
@@ -93,6 +92,10 @@ type Nanokube interface {
 	TLSOptions() *kubeletserver.TLSOptions
 	SecureServing() *options.SecureServingOptionsWithLoopback
 	NodeReady() chan struct{}
+
+	Storage() Storage
+	SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory
+	SharedInformerFactory() informers.SharedInformerFactory
 }
 
 type Ready interface {
@@ -109,7 +112,6 @@ type Options interface {
 	InDataDir(path string) bool
 
 	Args() []string
-	RunFlags(cmd *cobra.Command) Options
 }
 
 type Tunnel interface {
@@ -225,18 +227,6 @@ type ApiServer interface {
 	Destroy() error
 }
 
-type Storage interface {
-	storage.StorageFactory
-	Ready
-
-	Context() context.Context
-	Done() <-chan struct{}
-	ServerList() []string
-	Port() int
-	WithFactory(factory *storage.DefaultStorageFactory) Storage
-	Factory() *storage.DefaultStorageFactory
-}
-
 type Manager interface {
 	Ready
 
@@ -287,4 +277,20 @@ type Host interface {
 	mount.Interface
 
 	VolumePlugins() []volume.VolumePlugin
+}
+
+type Storage interface {
+	generic.RESTOptionsGetter
+
+	Ready() <-chan struct{}
+	Shutdown()
+
+	SetConfig(config *server.Config) *server.Config
+	WithResource(inner kubestorage.Interface, resource schema.GroupResource) StorageClient
+
+	Servers() []string
+}
+
+type StorageClient interface {
+	kubestorage.Interface
 }
