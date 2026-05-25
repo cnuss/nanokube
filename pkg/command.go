@@ -2,9 +2,11 @@ package pkg
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
@@ -68,8 +70,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		Use:   "start",
 		Short: "start kubernetes components",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			hooks["kube-controller-manager"] = byName["kube-controller-manager"]
-			hooks["kube-scheduler"] = byName["kube-scheduler"]
+			hooks["run-kube-controller-manager"] = byName["kube-controller-manager"]
+			hooks["run-kube-scheduler"] = byName["kube-scheduler"]
 			return byName["kube-apiserver"].RunE(cmd, args)
 		},
 	}
@@ -102,12 +104,12 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 
 	switch name {
 	case "kube-controller-manager":
-		cmd.Flag("authentication-skip-lookup").Value.Set("true")
-		cmd.Flag("leader-elect").Value.Set("true")
-		cmd.Flag("root-ca-file").Value.Set(c.Nano().RootCaFilePath())
-		cmd.Flag("service-account-private-key-file").Value.Set(c.Nano().KeyFilePath())
-		cmd.Flag("secure-port").Value.Set("0")
-		cmd.Flag("use-service-account-credentials").Value.Set("false")
+		cmd.Flags().Set("authentication-skip-lookup", "true")
+		cmd.Flags().Set("leader-elect", "true")
+		cmd.Flags().Set("root-ca-file", c.Nano().RootCaFilePath())
+		cmd.Flags().Set("service-account-private-key-file", c.Nano().KeyFilePath())
+		cmd.Flags().Set("secure-port", "0")
+		cmd.Flags().Set("use-service-account-credentials", "false")
 		c.controllerManagerRunOnce.Do(func() {
 			run := controllermanager.Run
 			controllermanager.Run = func(ctx context.Context, cfg *controllermanagerconfig.CompletedConfig) error {
@@ -115,9 +117,9 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 			}
 		})
 	case "kube-scheduler":
-		cmd.Flag("authentication-skip-lookup").Value.Set("true")
-		cmd.Flag("leader-elect").Value.Set("true")
-		cmd.Flag("secure-port").Value.Set("0")
+		cmd.Flags().Set("authentication-skip-lookup", "true")
+		cmd.Flags().Set("leader-elect", "true")
+		cmd.Flags().Set("secure-port", "0")
 		c.schedulerRunOnce.Do(func() {
 			run := scheduler.Run
 			scheduler.Run = func(ctx context.Context, cc *schedulerappconfig.CompletedConfig, sched *sched.Scheduler) error {
@@ -125,15 +127,17 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 			}
 		})
 	case "kube-apiserver":
-		cmd.Flag("api-audiences").Value.Set("https://kubernetes.default.svc")
-		cmd.Flag("authorization-mode").Value.Set("RBAC,Node")
-		cmd.Flag("etcd-servers").Value.Set(strings.Join(c.Nano().Storage().Servers(), ","))
-		cmd.Flag("service-account-key-file").Value.Set(c.Nano().KeyFilePath())
-		cmd.Flag("service-account-signing-key-file").Value.Set(c.Nano().KeyFilePath())
-		cmd.Flag("service-account-issuer").Value.Set("https://kubernetes.default.svc")
-		cmd.Flag("storage-media-type").Value.Set("application/json")
-		cmd.Flag("tls-cert-file").Value.Set(c.Nano().CertFilePath())
-		cmd.Flag("tls-private-key-file").Value.Set(c.Nano().KeyFilePath())
+		cmd.Flags().Set("api-audiences", "https://kubernetes.default.svc")
+		cmd.Flags().Set("authorization-mode", "RBAC,Node")
+		cmd.Flags().Set("bind-address", c.Nano().Tunnel().LocalIP().String())
+		cmd.Flags().Set("etcd-servers", strings.Join(c.Nano().Storage().Servers(), ","))
+		cmd.Flags().Set("secure-port", fmt.Sprintf("%d", c.Nano().Tunnel().LocalPort()))
+		cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
+		cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
+		cmd.Flags().Set("service-account-issuer", "https://kubernetes.default.svc")
+		cmd.Flags().Set("storage-media-type", "application/json")
+		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
+		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 		c.apiserverRunOnce.Do(func() {
 			apiserver.Run = func(ctx context.Context, opts apiserveroptions.CompletedOptions) error {
 				config := &apiserver.Config{Options: opts}
@@ -180,29 +184,42 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 				kubeconfigReady := make(chan struct{})
 				server.GenericAPIServer.AddPostStartHook("update-kubeconfig", func(context genericapiserver.PostStartHookContext) error {
 					kubeconfigPath := c.Nano().KubeconfigPath(context.LoopbackClientConfig)
-					c.byName["kube-controller-manager"].Flag("kubeconfig").Value.Set(kubeconfigPath)
-					c.byName["kube-controller-manager"].Flag("authorization-kubeconfig").Value.Set(kubeconfigPath)
-					c.byName["kube-controller-manager"].Flag("authentication-kubeconfig").Value.Set(kubeconfigPath)
-					c.byName["kube-scheduler"].Flag("kubeconfig").Value.Set(kubeconfigPath)
-					c.byName["kube-scheduler"].Flag("authorization-kubeconfig").Value.Set(kubeconfigPath)
-					c.byName["kube-scheduler"].Flag("authentication-kubeconfig").Value.Set(kubeconfigPath)
+					c.byName["kube-controller-manager"].Flags().Set("kubeconfig", kubeconfigPath)
+					c.byName["kube-controller-manager"].Flags().Set("authorization-kubeconfig", kubeconfigPath)
+					c.byName["kube-controller-manager"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
+					c.byName["kube-scheduler"].Flags().Set("kubeconfig", kubeconfigPath)
+					c.byName["kube-scheduler"].Flags().Set("authorization-kubeconfig", kubeconfigPath)
+					c.byName["kube-scheduler"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
 					close(kubeconfigReady)
 					return nil
 				})
 
-				server.GenericAPIServer.AddPostStartHook("run-kcm", func(context genericapiserver.PostStartHookContext) error {
-					<-kubeconfigReady
-					kcm := c.byName["kube-controller-manager"]
-					kcm.SetContext(context.Context)
-					go kcm.RunE(kcm, nil)
-					return nil
-				})
+				var wg sync.WaitGroup
+				for name, hook := range c.hooks {
+					wg.Add(1)
+					server.GenericAPIServer.AddPostStartHook(name, func(hctx genericapiserver.PostStartHookContext) error {
+						go func() {
+							defer wg.Done()
+							<-kubeconfigReady
+							hook.SetContext(hctx.Context)
+							if err := hook.RunE(hook, nil); err != nil {
+								nanokube.Log.Warn("component errored", "component", hook.Name(), "error", err)
+							} else {
+								nanokube.Log.Info("component stopped", "component", hook.Name())
+							}
+						}()
+						nanokube.Log.Info("component started", "component", hook.Name())
+						return nil
+					})
+				}
 
 				prepared, err := server.PrepareRun()
 				if err != nil {
 					return err
 				}
-				return prepared.Run(ctx)
+				err = prepared.Run(ctx)
+				wg.Wait()
+				return err
 			}
 		})
 	case "kubelet":

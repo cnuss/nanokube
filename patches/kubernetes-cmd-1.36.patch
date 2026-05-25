@@ -248,7 +248,7 @@ index e167484781a..731741f618f 100644
  	os.Exit(code)
  }
 diff --git a/cmd/kube-scheduler/app/server.go b/cmd/kube-scheduler/app/server.go
-index 4d0ebfd19af..08d2265dd57 100644
+index 4d0ebfd19af..769156a2269 100644
 --- a/cmd/kube-scheduler/app/server.go
 +++ b/cmd/kube-scheduler/app/server.go
 @@ -36,7 +36,6 @@ import (
@@ -302,6 +302,27 @@ index 4d0ebfd19af..08d2265dd57 100644
  	logger := klog.FromContext(ctx)
  
  	// To help debugging, immediately log version
+@@ -320,9 +317,8 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
+ 				gracefulShutdownSecureServer()
+ 				select {
+ 				case <-ctx.Done():
+-					// We were asked to terminate. Exit 0.
++					// We were asked to terminate. Return cleanly.
+ 					logger.Info("Requested to terminate, exiting")
+-					os.Exit(0)
+ 				default:
+ 					// We lost the lock.
+ 					logger.Error(nil, "Leaderelection lost")
+@@ -337,6 +333,9 @@ func Run(ctx context.Context, cc *schedulerserverconfig.CompletedConfig, sched *
+ 
+ 		leaderElector.Run(ctx)
+ 
++		if ctx.Err() != nil {
++			return nil
++		}
+ 		return fmt.Errorf("lost lease")
+ 	}
+ 
 diff --git a/cmd/kube-scheduler/scheduler.go b/cmd/kube-scheduler/scheduler.go
 index 71739808dd2..60bb501a1f7 100644
 --- a/cmd/kube-scheduler/scheduler.go
