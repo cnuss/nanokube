@@ -14,7 +14,6 @@ import (
 	"k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/component-base/featuregate"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
-	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	controllermanager "k8s.io/kubernetes/cmd/kube-controller-manager/app"
@@ -157,7 +156,7 @@ func (c *Command) AddCommand(cmds ...*cobra.Command) {
 						return err
 					}
 
-					kubeAPIs, serviceResolver, pluginInitializer, err := app.CreateKubeAPIServerConfig(opts, c.Nano().Storage().SetConfig(genericConfig), c.Nano().SetSharedInformerFactory(versionedInformers), storageFactory)
+					kubeAPIs, serviceResolver, pluginInitializer, err := apiserver.CreateKubeAPIServerConfig(opts, c.Nano().Storage().SetConfig(genericConfig), c.Nano().SetSharedInformerFactory(versionedInformers), storageFactory)
 					if err != nil {
 						return err
 					}

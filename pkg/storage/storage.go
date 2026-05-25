@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
@@ -40,6 +41,7 @@ type StorageImpl struct {
 	servers     []string
 	serversOnce sync.Once
 
+	started      atomic.Bool
 	ready        chan struct{}
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
@@ -72,7 +74,9 @@ func (s *StorageImpl) Ready() <-chan struct{} {
 
 func (s *StorageImpl) Shutdown() {
 	s.shutdownOnce.Do(func() { close(s.shutdown) })
-	<-s.done
+	if s.started.Load() {
+		<-s.done
+	}
 }
 
 func (s *StorageImpl) SetConfig(config *server.Config) *server.Config {
@@ -178,6 +182,7 @@ func (s *StorageImpl) Servers() []string {
 			etcdLevel,
 		)))
 
+		s.started.Store(true)
 		go func() {
 			defer close(s.done)
 			server, err := embed.StartEtcd(cfg)
