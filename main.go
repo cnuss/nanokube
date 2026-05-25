@@ -14,13 +14,23 @@ import (
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
 	logsapi "k8s.io/component-base/logs/api/v1"
+	"k8s.io/klog/v2"
 	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
 	controllermanager "k8s.io/kubernetes/cmd/kube-controller-manager/app"
 	scheduler "k8s.io/kubernetes/cmd/kube-scheduler/app"
 	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
 )
 
+var (
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+)
+
 func init() {
+	ctx, cancel = context.WithCancelCause(genericapiserver.SetupSignalContext())
+	klog.OsExit = func(code int) {
+		cancel(fmt.Errorf("exiting with code %d", code))
+	}
 	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 
 	if !v1.HTTP2 {
@@ -50,11 +60,11 @@ func run(ctx context.Context, cmd *kubernetes.Command) error {
 }
 
 func main() {
-	command := pkg.NewNanokubeCommand(genericapiserver.SetupSignalContext()).
-		WithRunCommand(kubelet.NewKubeletCommand(context.Background())).
+	command := pkg.NewNanokubeCommand(ctx).
 		WithRunCommand(apiserver.NewAPIServerCommand(context.Background())).
 		WithRunCommand(controllermanager.NewControllerManagerCommand(context.Background())).
-		WithRunCommand(scheduler.NewSchedulerCommand(context.Background()))
+		WithRunCommand(scheduler.NewSchedulerCommand(context.Background())).
+		WithRunCommand(kubelet.NewKubeletCommand(context.Background()))
 	code := cli.Run(command.Command)
 	os.Exit(code)
 }
