@@ -9,7 +9,6 @@ import (
 
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -29,14 +28,6 @@ type ClientImpl struct {
 }
 
 var _ v1.Client = &ClientImpl{}
-
-func NewNoopClient(ctx context.Context) v1.Client {
-	fakeCS := fake.NewSimpleClientset()
-	return &ClientImpl{
-		ctx:       ctx,
-		Interface: fakeCS,
-	}
-}
 
 func NewClient(ctx context.Context, config *rest.Config) v1.Client {
 	httpClient, err := rest.HTTPClientFor(config)

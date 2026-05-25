@@ -53,7 +53,8 @@ type Nanokube interface {
 	WithCancel() (context.Context, context.CancelFunc)
 
 	Cancel(reason Error)
-	CancelCause(reason error)
+	CancelErr(reason error)
+	Errors() []error
 	Detach()
 	OnCancel(fns ...func(ctx context.Context)) Nanokube
 	OnReady(service ServiceName, fns ...func(ctx context.Context)) Nanokube
@@ -90,7 +91,8 @@ type Nanokube interface {
 	CertFilePath() string
 	KeyFilePath() string
 	RootCaFilePath() string
-	KubeconfigPath(loopback *rest.Config) string
+	WithLoopback(loopback *rest.Config) Nanokube
+	KubeconfigPath() string
 	TLSConfig() *tls.Config
 	TLSOptions() *kubeletserver.TLSOptions
 	SecureServing() *options.SecureServingOptionsWithLoopback

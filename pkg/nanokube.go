@@ -62,7 +62,7 @@ import (
 	"k8s.io/mount-utils"
 )
 
-func NewNanokube(ctx context.Context) (v1.Nanokube, context.CancelCauseFunc) {
+func NewNanokube(ctx context.Context) v1.Nanokube {
 	ctx, cancel := context.WithCancelCause(ctx)
 
 	nano := &nanokubeImpl{
@@ -74,12 +74,9 @@ func NewNanokube(ctx context.Context) (v1.Nanokube, context.CancelCauseFunc) {
 		apiserverProvided:             make(chan struct{}),
 		storageProvided:               make(chan struct{}),
 		sharedInformerFactoryProvided: make(chan struct{}),
+		loopbackProvided:              make(chan struct{}),
 		nodeReady:                     make(chan struct{}),
 	}
-
-	nano.noopClient = sync.OnceValue(func() v1.Client {
-		return nanokube.NewNoopClient(nano)
-	})
 
 	// go func() {
 	// 	<-nano.ctx.Done()
@@ -105,7 +102,7 @@ func NewNanokube(ctx context.Context) (v1.Nanokube, context.CancelCauseFunc) {
 	// 	})
 	// }()
 
-	return nano, cancel
+	return nano
 }
 
 type nanokubeImpl struct {
@@ -124,6 +121,8 @@ type nanokubeImpl struct {
 	cancelMu     sync.Mutex
 	cancelHooks  [][]func(context.Context)
 	cancelOnce   sync.Once
+	cancelErrs   []error
+	cancelErrsMu sync.Mutex
 
 	exitCode     chan int
 	exitCodeOnce sync.Once
@@ -133,8 +132,6 @@ type nanokubeImpl struct {
 
 	apiserver         v1.ApiServer
 	apiserverProvided chan struct{}
-
-	noopClient func() v1.Client
 
 	storage         v1.Storage
 	storageOnce     sync.Once
@@ -184,6 +181,13 @@ type nanokubeImpl struct {
 	sharedInformerFactory         informers.SharedInformerFactory
 	sharedInformerFactoryOnce     sync.Once
 	sharedInformerFactoryProvided chan struct{}
+
+	loopback         *rest.Config
+	loopbackOnce     sync.Once
+	loopbackProvided chan struct{}
+
+	client     v1.Client
+	clientOnce sync.Once
 
 	broadcaster     record.EventBroadcaster
 	broadcasterOnce sync.Once
@@ -629,11 +633,21 @@ func (k *nanokubeImpl) RootCaFilePath() string {
 	return k.CertFilePath()
 }
 
+func (k *nanokubeImpl) WithLoopback(loopback *rest.Config) v1.Nanokube {
+	k.loopbackOnce.Do(func() {
+		k.loopback = loopback
+		close(k.loopbackProvided)
+	})
+	return k
+}
+
 // KubeconfigPath materializes a kubeconfig file pointing at the apiserver via
-// the supplied loopback rest.Config and returns its disk path. Callers (e.g.
-// controller-manager's --kubeconfig flag) typically receive `loopback` inside
-// a PostStartHook as ctx.LoopbackClientConfig.
-func (k *nanokubeImpl) KubeconfigPath(loopback *rest.Config) string {
+// the loopback rest.Config registered with WithLoopback (typically inside an
+// apiserver PostStartHook from ctx.LoopbackClientConfig) and returns its disk
+// path. Blocks until WithLoopback has been called.
+func (k *nanokubeImpl) KubeconfigPath() string {
+	<-nanokube.Await(k.ctx, k.loopbackProvided)
+	loopback := k.loopback
 	ctxName := loopback.Host
 	cfg := clientcmdapi.NewConfig()
 	cfg.Clusters[ctxName] = &clientcmdapi.Cluster{
@@ -717,11 +731,14 @@ func (ln keepAliveListener) Accept() (net.Conn, error) {
 	return c, nil
 }
 
-func (k *nanokubeImpl) CancelCause(reason error) {
+func (k *nanokubeImpl) CancelErr(reason error) {
 	k.Cancel(nanokube.NewError(reason))
 }
 
 func (k *nanokubeImpl) Cancel(reason v1.Error) {
+	k.cancelErrsMu.Lock()
+	k.cancelErrs = append(k.cancelErrs, reason)
+	k.cancelErrsMu.Unlock()
 	k.canceledOnce.Do(func() { close(k.canceled) })
 	k.runCancelHooks()
 	if k.pidfileWritten {
@@ -735,6 +752,17 @@ func (k *nanokubeImpl) Cancel(reason v1.Error) {
 	if errors.As(reason, &fatal) {
 		runtime.Goexit()
 	}
+}
+
+func (k *nanokubeImpl) Errors() []error {
+	k.cancelErrsMu.Lock()
+	defer k.cancelErrsMu.Unlock()
+	if len(k.cancelErrs) == 0 {
+		return nil
+	}
+	out := make([]error, len(k.cancelErrs))
+	copy(out, k.cancelErrs)
+	return out
 }
 
 func (k *nanokubeImpl) Detach() {
@@ -860,13 +888,11 @@ func (k *nanokubeImpl) Host() v1.Host {
 }
 
 func (k *nanokubeImpl) Client() v1.Client {
-	select {
-	case <-k.apiserverProvided:
-		nanokube.Unimplemented() // TODO: remove
-		return k.apiserver.Client()
-	default:
-		return k.noopClient()
-	}
+	k.clientOnce.Do(func() {
+		<-nanokube.Await(k.ctx, k.loopbackProvided)
+		k.client = nanokube.NewClient(k, k.loopback)
+	})
+	return k.client
 }
 
 func (k *nanokubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Nanokube {

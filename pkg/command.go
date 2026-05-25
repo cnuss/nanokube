@@ -33,9 +33,7 @@ import (
 
 type Command struct {
 	*cobra.Command
-
-	ctx    v1.Nanokube
-	cancel context.CancelCauseFunc
+	ctx v1.Nanokube
 
 	run    *cobra.Command
 	start  *cobra.Command
@@ -49,7 +47,7 @@ type Command struct {
 }
 
 func NewNanokubeCommand(ctx context.Context) *Command {
-	nano, cancel := NewNanokube(ctx)
+	nano := NewNanokube(ctx)
 	byName := make(map[string]*cobra.Command)
 	hooks := make(map[string]*cobra.Command)
 
@@ -72,6 +70,7 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hooks["run-kube-controller-manager"] = byName["kube-controller-manager"]
 			hooks["run-kube-scheduler"] = byName["kube-scheduler"]
+			hooks["run-kubelet"] = byName["kubelet"]
 			return byName["kube-apiserver"].RunE(cmd, args)
 		},
 	}
@@ -81,7 +80,6 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	command := &Command{
 		Command: root,
 		ctx:     nano,
-		cancel:  cancel,
 		run:     run,
 		start:   start,
 		byName:  byName,
@@ -93,6 +91,10 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 
 func (c *Command) Nano() v1.Nanokube {
 	return c.ctx
+}
+
+func (c *Command) Cancel(err error) {
+	c.ctx.CancelErr(err)
 }
 
 // WithRunCommand registers cmd under `nanokube run <name>`. Returns the
@@ -183,13 +185,14 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 
 				kubeconfigReady := make(chan struct{})
 				server.GenericAPIServer.AddPostStartHook("update-kubeconfig", func(context genericapiserver.PostStartHookContext) error {
-					kubeconfigPath := c.Nano().KubeconfigPath(context.LoopbackClientConfig)
+					kubeconfigPath := c.Nano().WithLoopback(context.LoopbackClientConfig).KubeconfigPath()
 					c.byName["kube-controller-manager"].Flags().Set("kubeconfig", kubeconfigPath)
 					c.byName["kube-controller-manager"].Flags().Set("authorization-kubeconfig", kubeconfigPath)
 					c.byName["kube-controller-manager"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
 					c.byName["kube-scheduler"].Flags().Set("kubeconfig", kubeconfigPath)
 					c.byName["kube-scheduler"].Flags().Set("authorization-kubeconfig", kubeconfigPath)
 					c.byName["kube-scheduler"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
+					c.byName["kubelet"].Flags().Set("kubeconfig", kubeconfigPath)
 					close(kubeconfigReady)
 					return nil
 				})
@@ -204,6 +207,7 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 							hook.SetContext(hctx.Context)
 							if err := hook.RunE(hook, nil); err != nil {
 								nanokube.Log.Warn("component errored", "component", hook.Name(), "error", err)
+								c.Cancel(err)
 							} else {
 								nanokube.Log.Info("component stopped", "component", hook.Name())
 							}
@@ -219,13 +223,32 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 				}
 				err = prepared.Run(ctx)
 				wg.Wait()
+				c.Nano().Storage().Shutdown()
 				return err
 			}
 		})
 	case "kubelet":
+		cmd.Flags().Set("cloud-provider", "external")
+		cmd.Flags().Set("root-dir", c.Nano().Options().DataDirAt(v1.DataDirKubelet))
+		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
+		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 		c.kubeletRunOnce.Do(func() {
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
+				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
+				ks.ReadOnlyPort = 0
+				ks.RegisterNode = true
+				deps.CAdvisorInterface = c.Nano().DefaultBackend()
+				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
+				deps.HostUtil = c.Nano().Host()
+				deps.Mounter = c.Nano().Host()
+				deps.OSInterface = c.Nano().Host()
+				deps.ProbeManager = nil
+				deps.RemoteImageService = c.Nano().DefaultBackend().Driver()
+				deps.RemoteRuntimeService = c.Nano().DefaultBackend().Driver()
+				deps.Recorder = c.Nano()
+				deps.Subpather = c.Nano().Host()
+				deps.VolumePlugins = c.Nano().Host().VolumePlugins()
 				return run(ctx, ks, deps, fg)
 			}
 		})

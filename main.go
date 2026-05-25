@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/docker"
 	"github.com/cnuss/nanokube/pkg/driver/podman"
 	"github.com/cnuss/nanokube/pkg/kubernetes"
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
@@ -66,6 +68,9 @@ func main() {
 		WithRunCommand(scheduler.NewSchedulerCommand(context.Background())).
 		WithRunCommand(kubelet.NewKubeletCommand(context.Background()))
 	code := cli.Run(command.Command)
+	if errs := command.Nano().Errors(); errs != nil {
+		nanokube.Log.Error("encountered errors during execution", "errors", errors.Join(errs...))
+	}
 	os.Exit(code)
 }
 

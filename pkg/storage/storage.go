@@ -128,7 +128,7 @@ func (s *StorageImpl) Servers() []string {
 		port := func() int {
 			l, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
-				s.nano.CancelCause(err)
+				s.nano.CancelErr(err)
 				return 0
 			}
 			defer l.Close()
@@ -175,7 +175,7 @@ func (s *StorageImpl) Servers() []string {
 			defer close(s.done)
 			server, err := embed.StartEtcd(cfg)
 			if err != nil {
-				s.nano.CancelCause(err)
+				s.nano.CancelErr(err)
 				return
 			}
 			<-nanokube.Await(s.nano, server.Server.ReadyNotify())
