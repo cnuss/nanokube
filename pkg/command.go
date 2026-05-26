@@ -3,10 +3,10 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
-	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
@@ -14,6 +14,7 @@ import (
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/component-base/featuregate"
+	"k8s.io/klog/v2"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
 	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
 	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
@@ -103,6 +104,15 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 	cmd.SetContext(c.Context())
 	name := cmd.Name()
 	c.byName[name] = cmd
+
+	// Route every component's logging through nanokube's registered format.
+	// Skipped when NANOKUBE_PRETTY=0 so the raw klog format leaks through for
+	// side-by-side comparison.
+	if os.Getenv("NANOKUBE_PRETTY") != "0" {
+		if f := cmd.Flags().Lookup("logging-format"); f != nil {
+			cmd.Flags().Set("logging-format", "nanokube")
+		}
+	}
 
 	switch name {
 	case "kube-controller-manager":
@@ -206,13 +216,13 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 							<-kubeconfigReady
 							hook.SetContext(hctx.Context)
 							if err := hook.RunE(hook, nil); err != nil {
-								nanokube.Log.Warn("component errored", "component", hook.Name(), "error", err)
+								klog.ErrorS(err, "component errored", "component", hook.Name())
 								c.Cancel(err)
 							} else {
-								nanokube.Log.Info("component stopped", "component", hook.Name())
+								klog.InfoS("component stopped", "component", hook.Name())
 							}
 						}()
-						nanokube.Log.Info("component started", "component", hook.Name())
+						klog.InfoS("component started", "component", hook.Name())
 						return nil
 					})
 				}

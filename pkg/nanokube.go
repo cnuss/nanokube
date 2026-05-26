@@ -322,7 +322,7 @@ func (k *nanokubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
 			return
 		}
 
-		nanokube.Log.Info("apiserver configured", "fqdn", opts.GenericServerRunOptions.ExternalHost)
+		klog.InfoS("apiserver configured", "fqdn", opts.GenericServerRunOptions.ExternalHost)
 		k.apiServerOptions = &complete
 	})
 	return k.apiServerOptions
@@ -520,13 +520,6 @@ func (k *nanokubeImpl) Eventf(object k8sruntime.Object, eventtype string, reason
 }
 
 func (k *nanokubeImpl) Logf(object k8sruntime.Object, eventtype string, reason string, messageFmt string, args ...interface{}) {
-	logFunc := nanokube.Log.Debug
-	switch eventtype {
-	case corev1.EventTypeNormal:
-		logFunc = nanokube.Log.Info
-	case corev1.EventTypeWarning:
-		logFunc = nanokube.Log.Warn
-	}
 	kv := []interface{}{"gvk", object.GetObjectKind().GroupVersionKind().String(), "reason", reason}
 	if ref, ok := object.(*corev1.ObjectReference); ok {
 		kv = append(kv, "namespace", ref.Namespace, "name", ref.Name)
@@ -534,7 +527,13 @@ func (k *nanokubeImpl) Logf(object k8sruntime.Object, eventtype string, reason s
 	if eventtype == corev1.EventTypeWarning && k.Options().Verbosity() >= 2 {
 		kv = append(kv, "stack", string(debug.Stack()))
 	}
-	logFunc(fmt.Sprintf(messageFmt, args...), kv...)
+	msg := fmt.Sprintf(messageFmt, args...)
+	switch eventtype {
+	case corev1.EventTypeNormal, corev1.EventTypeWarning:
+		klog.InfoS(msg, kv...)
+	default:
+		klog.V(2).InfoS(msg, kv...)
+	}
 }
 
 func (k *nanokubeImpl) NodeReady() chan struct{} {
@@ -744,7 +743,7 @@ func (k *nanokubeImpl) Cancel(reason v1.Error) {
 	if k.pidfileWritten {
 		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
 		if err := os.Remove(pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			nanokube.Log.Warn("failed to remove pidfile", "path", pidPath, "error", err)
+			klog.ErrorS(err, "failed to remove pidfile", "path", pidPath)
 		}
 	}
 	k.cancel(reason)
@@ -773,11 +772,11 @@ func (k *nanokubeImpl) Detach() {
 		}
 		ppid, err := strconv.Atoi(pidStr)
 		if err != nil {
-			nanokube.Log.Warn("invalid NANOKUBE_LAUNCHER_PID", "value", pidStr, "error", err)
+			klog.ErrorS(err, "invalid NANOKUBE_LAUNCHER_PID", "value", pidStr)
 			return
 		}
 		if err := syscall.Kill(ppid, syscall.SIGUSR1); err != nil {
-			nanokube.Log.Warn("failed to signal launcher", "pid", ppid, "error", err)
+			klog.ErrorS(err, "failed to signal launcher", "pid", ppid)
 		}
 	})
 }
@@ -839,7 +838,7 @@ func (k *nanokubeImpl) runCancelHooks() {
 					defer wg.Done()
 					defer func() {
 						if r := recover(); r != nil {
-							nanokube.Log.Error("cancel hook panicked", "group", groupIdx, "recover", r, "stack", string(debug.Stack()))
+							klog.ErrorS(nil, "cancel hook panicked", "group", groupIdx, "recover", r, "stack", string(debug.Stack()))
 						}
 					}()
 					fn(hookCtx)
@@ -855,7 +854,7 @@ func (k *nanokubeImpl) runCancelHooks() {
 			select {
 			case <-done:
 			case <-hookCtx.Done():
-				nanokube.Log.Warn("cancel hook group timed out", "group", groupIdx, "timeout", shutdownTimeout)
+				klog.InfoS("cancel hook group timed out", "group", groupIdx, "timeout", shutdownTimeout)
 				return
 			}
 		}
@@ -918,7 +917,7 @@ func (k *nanokubeImpl) Backends() map[v1.BackendName]v1.Backend {
 		for _, detect := range v1.Backends {
 			backend := detect(k)
 			if backend != nil {
-				nanokube.Log.Info("backend detected", "backend", backend.Name())
+				klog.InfoS("backend detected", "backend", backend.Name())
 				k.WithBackend(backend.Name(), backend)
 			}
 		}
@@ -1036,7 +1035,7 @@ func (k *nanokubeImpl) Run() v1.Nanokube {
 	k.runOnce.Do(func() {
 		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
 		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-			nanokube.Log.Warn("failed to write pidfile", "path", pidPath, "error", err)
+			klog.ErrorS(err, "failed to write pidfile", "path", pidPath)
 		} else {
 			k.pidfileWritten = true
 		}
@@ -1105,7 +1104,7 @@ func (k *nanokubeImpl) HTTPServer() *http.Server {
 		}
 		k.httpServer.RegisterOnShutdown(func() {
 			if err := k.ApiServer().Destroy(); err != nil {
-				nanokube.Log.Warn("failed to destroy API server", "error", err)
+				klog.ErrorS(err, "failed to destroy API server")
 			}
 		})
 	})

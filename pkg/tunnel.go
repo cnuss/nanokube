@@ -38,6 +38,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -299,16 +300,16 @@ func newQuickTunnel(tunnel v1.Tunnel, tunnelName v1.TunnelName) (*QuickTunnel, e
 		for {
 			select {
 			case <-connectedWait:
-				nanokube.Log.Info("tunnel connected", "hostname", q.Hostname())
+				klog.InfoS("tunnel connected", "hostname", q.Hostname())
 				close(q.ready)
 				connectedWait = nil // disable this case; Signal fires once but its channel stays readable
 			case <-q.reconnected:
-				nanokube.Log.Info("tunnel reconnecting", "hostname", q.Hostname())
+				klog.InfoS("tunnel reconnecting", "hostname", q.Hostname())
 			case err := <-done:
 				if err != nil {
-					nanokube.Log.Error("tunnel exited with error", "hostname", q.Hostname(), "error", err)
+					klog.ErrorS(err, "tunnel exited with error", "hostname", q.Hostname())
 				} else {
-					nanokube.Log.Debug("tunnel exited", "hostname", q.Hostname())
+					klog.V(2).InfoS("tunnel exited", "hostname", q.Hostname())
 				}
 				return
 			}
@@ -391,7 +392,7 @@ func (q *QuickTunnel) Spec() (*quickTunnelSpec, error) {
 				return
 			}
 
-			nanokube.Log.Error("failed to fetch tunnel credentials, retrying", "error", err)
+			klog.ErrorS(err, "failed to fetch tunnel credentials, retrying")
 			sleep += 1 * time.Second
 			select {
 			case <-time.After(sleep):

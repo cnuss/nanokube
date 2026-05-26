@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
+	"k8s.io/klog/v2"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
@@ -205,7 +206,7 @@ func (n *NetworkImpl) FromConfig(ctx context.Context, config *criv1.PodSandboxCo
 	})
 	if reclaimed != nil {
 		subnet := reclaimed.Network()
-		Log.Info("reclaiming network for sandbox", "sandboxUID", sandboxUID, "id", reclaimed.ID(), "net", subnet.String())
+		klog.InfoS("reclaiming network for sandbox", "sandboxUID", sandboxUID, "id", reclaimed.ID(), "net", subnet.String())
 		return reclaimed.WithSandboxUID(&sandboxUID), nil
 	}
 
@@ -233,7 +234,7 @@ func (n *NetworkImpl) FromConfig(ctx context.Context, config *criv1.PodSandboxCo
 		carry = sum >> 8
 	}
 
-	Log.Info("allocated network for sandbox", "sandboxUID", sandboxUID, "id", id, "net", nextNet.String())
+	klog.InfoS("allocated network for sandbox", "sandboxUID", sandboxUID, "id", id, "net", nextNet.String())
 	return network.WithSandboxUID(&sandboxUID), nil
 }
 
@@ -299,7 +300,7 @@ func (a *allocatedNetworkImpl) SandboxUID() *types.UID {
 
 func (a *allocatedNetworkImpl) WithSandboxUID(sandboxUID *types.UID) v1.AllocatedNetwork {
 	if a.sandboxUID != nil && sandboxUID != nil && *a.sandboxUID != *sandboxUID {
-		Log.Warn("attempt to change sandbox UID of allocated network", "networkID", a.id, "oldUID", *a.sandboxUID, "newUID", *sandboxUID)
+		klog.InfoS("attempt to change sandbox UID of allocated network", "networkID", a.id, "oldUID", *a.sandboxUID, "newUID", *sandboxUID)
 		return nil
 	}
 	an, ok := a.network.networks.Swap(a.net.IP.String(), v1.AllocatedNetwork(&allocatedNetworkImpl{

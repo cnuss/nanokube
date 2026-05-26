@@ -228,7 +228,7 @@ func (b *BackendImpl) Start() error {
 		})
 		factory.Start(b.Context().Done())
 		// DEVNOTE: old cadvisor Start() was a no-op; real init happened in MachineInfo
-		nanokube.Log.Info("backend is ready", "driver", b.Driver().Name())
+		klog.InfoS("backend is ready", "driver", b.Driver().Name())
 		close(b.ready)
 	})
 	return nil
@@ -242,17 +242,17 @@ func (b *BackendImpl) Reconcile(obj interface{}, deleted bool) {
 	case *corev1.PersistentVolumeClaim:
 		if deleted || v.DeletionTimestamp != nil {
 			if err := b.Driver().ReleaseVolume(b, b.Nanokube().Client(), v); err != nil {
-				nanokube.Log.Warn("unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name), "error", err)
+				klog.ErrorS(err, "unable to release volume", "pvc", fmt.Sprintf("%s/%s", v.Namespace, v.Name))
 				return
 			}
-			nanokube.Log.Info("released PVC", "name", v.Name, "namespace", v.Namespace)
+			klog.InfoS("released PVC", "name", v.Name, "namespace", v.Namespace)
 		} else if pvc := b.Driver().ClaimVolume(b, b.Nanokube().Client(), v); pvc != nil {
 			pvcs := b.Nanokube().Client().CoreV1().PersistentVolumeClaims(v.Namespace)
 			if _, err := pvcs.Apply(b.Context(), pvc, metav1.ApplyOptions{FieldManager: string(b.Name())}); err != nil {
-				nanokube.Log.Warn("unable to claim PVC", "name", v.Name, "namespace", v.Namespace, "error", err)
+				klog.ErrorS(err, "unable to claim PVC", "name", v.Name, "namespace", v.Namespace)
 				return
 			}
-			nanokube.Log.Info("claimed PVC", "name", v.Name, "namespace", v.Namespace)
+			klog.InfoS("claimed PVC", "name", v.Name, "namespace", v.Namespace)
 		}
 	}
 }
@@ -655,7 +655,7 @@ func (c *managerImpl) Start(context.Context, *corev1.Node, cm.ActivePodsFunc, cm
 		// DEVNOTE: old impl initialized DRA manager, CPU manager, memory manager,
 		// cached node info, populated ephemeral storage capacity, validated node
 		// allocatable, started device manager and periodic cgroup ensure tasks
-		nanokube.Log.Info("manager is ready", "driver", c.backend.Driver().Name())
+		klog.InfoS("manager is ready", "driver", c.backend.Driver().Name())
 		close(c.ready)
 	})
 	return nil

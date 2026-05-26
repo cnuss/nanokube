@@ -3,19 +3,16 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/driver/awslambda"
 	"github.com/cnuss/nanokube/pkg/driver/docker"
 	"github.com/cnuss/nanokube/pkg/driver/podman"
-	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
-	logsapi "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
 	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
 	controllermanager "k8s.io/kubernetes/cmd/kube-controller-manager/app"
@@ -31,10 +28,7 @@ var (
 func init() {
 	ctx, cancel = context.WithCancelCause(genericapiserver.SetupSignalContext())
 	wait.NeverStop = ctx.Done()
-	klog.OsExit = func(code int) {
-		cancel(fmt.Errorf("exiting with code %d", code))
-	}
-	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
+	setupLogging(cancel)
 
 	if !v1.HTTP2 {
 		os.Setenv("DISABLE_HTTP2", "true")
@@ -53,7 +47,7 @@ func main() {
 		WithRunCommand(kubelet.NewKubeletCommand(context.Background()))
 	code := cli.Run(command.Command)
 	if errs := command.Nano().Errors(); errs != nil {
-		nanokube.Log.Error("encountered errors during execution", "errors", errors.Join(errs...))
+		klog.ErrorS(errors.Join(errs...), "encountered errors during execution")
 	}
 	os.Exit(code)
 }

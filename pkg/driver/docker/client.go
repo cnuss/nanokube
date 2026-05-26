@@ -7,9 +7,9 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	dockerclient "github.com/docker/docker/client"
+	"k8s.io/klog/v2"
 )
 
 func newClient(ctx context.Context, nano v1.Nanokube, socket string) (*dockerclient.Client, error) {
@@ -40,7 +40,7 @@ func newTransport(ctx context.Context, nano v1.Nanokube, socket string) http.Rou
 			return net.Dial("unix", socket)
 		},
 	}
-	log := nano.Options().Verbosity() >= 3
+	logEnabled := nano.Options().Verbosity() >= 3
 	verbose := nano.Options().Verbosity() >= 4
 	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		// Replace the caller's ctx with the backend's super ctx so the docker
@@ -55,13 +55,13 @@ func newTransport(ctx context.Context, nano v1.Nanokube, socket string) http.Rou
 
 		resp, err := inner.RoundTrip(req)
 		if err != nil {
-			if log {
-				nanokube.Log.Info("dockerapi", "method", req.Method, "url", req.URL.String(), "error", err)
+			if logEnabled {
+				klog.ErrorS(err, "dockerapi", "method", req.Method, "url", req.URL.String())
 			}
 			return resp, err
 		}
 
-		if !log {
+		if !logEnabled {
 			return resp, nil
 		}
 
@@ -76,7 +76,7 @@ func newTransport(ctx context.Context, nano v1.Nanokube, socket string) http.Rou
 					if reqBuf.Len() > 0 {
 						kv = append(kv, "reqBody", reqBuf.String())
 					}
-					nanokube.Log.Info("dockerapi", kv...)
+					klog.InfoS("dockerapi", kv...)
 					return err
 				},
 			}
@@ -85,7 +85,7 @@ func newTransport(ctx context.Context, nano v1.Nanokube, socket string) http.Rou
 			if reqBuf.Len() > 0 {
 				kv = append(kv, "reqBody", reqBuf.String())
 			}
-			nanokube.Log.Info("dockerapi", kv...)
+			klog.InfoS("dockerapi", kv...)
 		}
 
 		return resp, nil

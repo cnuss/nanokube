@@ -39,6 +39,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"k8s.io/klog/v2"
 )
 
 // streamIdleTimeout matches upstream cri/streaming server's default.
@@ -64,15 +65,15 @@ func Detect(ctx context.Context) v1.BackendFunc {
 
 		for _, socket := range sockets {
 			if _, err := os.Stat(socket); err != nil {
-				nanokube.Log.Debug("docker socket not present", "socket", socket, "error", err)
+				klog.V(2).InfoS("docker socket not present", "socket", socket, "error", err)
 				continue
 			}
 			backend, err := NewBackend(ctx, nano, socket)
 			if err != nil {
-				nanokube.Log.Warn("docker socket present but unusable", "socket", socket, "error", err)
+				klog.ErrorS(err, "docker socket present but unusable", "socket", socket)
 				continue
 			}
-			nanokube.Log.Info("docker socket accepted", "socket", socket)
+			klog.InfoS("docker socket accepted", "socket", socket)
 			return backend
 		}
 
@@ -1017,7 +1018,7 @@ func (d *driver) PortForward(ctx context.Context, request *criv1.PortForwardRequ
 				return done
 			}
 			go func() {
-				nanokube.Log.Info("port foraward", "network", network, "port", port)
+				klog.InfoS("port foraward", "network", network, "port", port)
 				// TODO(incomplete): docker run --rm --network static-network.nanokube -p 1234:1234 alpine/socat TCP-LISTEN:1234,fork,reuseaddr TCP:172.18.0.1:8080
 				// TODO(incomplete): figure out API Server doing SPDY, SPDY headers are stripped by cloudflare
 				done <- nanokube.Done{Cancel: cancel, Err: nanokube.Unimplemented()}
@@ -1706,7 +1707,7 @@ func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.P
 							))))),
 			metav1.ApplyOptions{FieldManager: string(backend.Name())})
 		if err != nil {
-			nanokube.Log.Error("failed to apply volume", "error", err)
+			klog.ErrorS(err, "failed to apply volume")
 			return nil
 		}
 

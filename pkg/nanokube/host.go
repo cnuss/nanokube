@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/configmap"
 	"k8s.io/kubernetes/pkg/volume/csi"
@@ -50,7 +51,7 @@ func NewHost(ctx v1.Nanokube) v1.Host {
 }
 
 func (h *HostImpl) CanSafelySkipMountPointCheck() bool {
-	Log.Error("CanSafelySkipMountPointCheck")
+	klog.ErrorS(nil, "CanSafelySkipMountPointCheck")
 	panic("unimplemented hostimpl cansafelyskipmountpointcheck")
 }
 
@@ -59,7 +60,7 @@ func (h *HostImpl) CleanSubPaths(podDir string, volumeName string) error {
 }
 
 func (h *HostImpl) GetMountRefs(pathname string) ([]string, error) {
-	Log.Error("GetMountRefs", "pathname", pathname)
+	klog.ErrorS(nil, "GetMountRefs", "pathname", pathname)
 	panic("unimplemented hostimpl getmountrefs")
 }
 
@@ -67,27 +68,27 @@ func (h *HostImpl) IsLikelyNotMountPoint(file string) (bool, error) {
 	if h.ctx.Options().InDataDir(file) {
 		return true, nil
 	}
-	Log.Error("IsLikelyNotMountPoint", "file", file)
+	klog.ErrorS(nil, "IsLikelyNotMountPoint", "file", file)
 	panic("unimplemented hostimpl islikelynotmountpoint")
 }
 
 func (h *HostImpl) IsMountPoint(file string) (bool, error) {
-	Log.Error("IsMountPoint", "file", file)
+	klog.ErrorS(nil, "IsMountPoint", "file", file)
 	panic("unimplemented hostimpl ismountpoint")
 }
 
 func (h *HostImpl) List() ([]mount.MountPoint, error) {
-	Log.Error("List")
+	klog.ErrorS(nil, "List")
 	panic("unimplemented hostimpl list")
 }
 
 func (h *HostImpl) Mount(source string, target string, fstype string, options []string) error {
-	Log.Error("Mount", "source", source, "target", target, "fstype", fstype, "options", options)
+	klog.ErrorS(nil, "Mount", "source", source, "target", target, "fstype", fstype, "options", options)
 	panic("unimplemented hostimpl mount")
 }
 
 func (h *HostImpl) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	Log.Error("MountSensitive", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions)
+	klog.ErrorS(nil, "MountSensitive", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions)
 	panic("unimplemented hostimpl mountsensitive")
 }
 
@@ -95,27 +96,27 @@ func (h *HostImpl) MountSensitiveWithoutSystemd(source string, target string, fs
 	if source == "tmpfs" && fstype == "tmpfs" {
 		return nil
 	}
-	Log.Error("MountSensitiveWithoutSystemd", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions)
+	klog.ErrorS(nil, "MountSensitiveWithoutSystemd", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions)
 	panic("unimplemented hostimpl mountsensitivewithoutsystemd")
 }
 
 func (h *HostImpl) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	Log.Error("MountSensitiveWithoutSystemdWithMountFlags", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions, "mountFlags", mountFlags)
+	klog.ErrorS(nil, "MountSensitiveWithoutSystemdWithMountFlags", "source", source, "target", target, "fstype", fstype, "options", options, "sensitiveOptions", sensitiveOptions, "mountFlags", mountFlags)
 	panic("unimplemented hostimpl mountsensitivewithoutsystemdwithmountflags")
 }
 
 func (h *HostImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	Log.Error("PrepareSafeSubpath", "subPath", subPath)
+	klog.ErrorS(nil, "PrepareSafeSubpath", "subPath", subPath)
 	panic("unimplemented hostimpl preparesafesubpath")
 }
 
 func (h *HostImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
-	Log.Error("SafeMakeDir", "subdir", subdir, "base", base, "perm", perm)
+	klog.ErrorS(nil, "SafeMakeDir", "subdir", subdir, "base", base, "perm", perm)
 	panic("unimplemented hostimpl safemakedir")
 }
 
 func (h *HostImpl) Unmount(target string) error {
-	Log.Error("Unmount", "target", target)
+	klog.ErrorS(nil, "Unmount", "target", target)
 	panic("unimplemented hostimpl unmount")
 }
 
@@ -332,12 +333,12 @@ func (m *mounterImpl) TearDown() error {
 		}
 		return nil
 	}
-	Log.Error("TearDown", "spec", m.spec)
+	klog.ErrorS(nil, "TearDown", "spec", m.spec)
 	panic("unimplemented mounterimpl teardown")
 }
 
 func (m *mounterImpl) TearDownAt(dir string) error {
-	Log.Error("TearDownAt", "dir", dir)
+	klog.ErrorS(nil, "TearDownAt", "dir", dir)
 	panic("unimplemented mounterimpl teardownat")
 }
 
@@ -356,7 +357,7 @@ func (m *mounterImpl) GetAttributes() volume.Attributes {
 			SELinuxRelabel: false,
 		}
 	}
-	Log.Error("GetAttributes", "spec", m.spec)
+	klog.ErrorS(nil, "GetAttributes", "spec", m.spec)
 	panic("unimplemented mounterimpl getattributes")
 }
 
@@ -373,7 +374,7 @@ func (m *mounterImpl) GetMetrics() (*volume.Metrics, error) {
 			// TODO(partial): get real metrics
 		}, nil
 	}
-	Log.Error("GetMetrics", "spec", m.spec)
+	klog.ErrorS(nil, "GetMetrics", "spec", m.spec)
 	panic("unimplemented mounterimpl getmetrics")
 }
 
@@ -384,7 +385,7 @@ func (m *mounterImpl) GetPath() string {
 	if m.spec.PersistentVolume != nil && m.spec.PersistentVolume.Spec.Local != nil {
 		return m.spec.PersistentVolume.Spec.Local.Path
 	}
-	Log.Error("GetPath", "spec", m.spec)
+	klog.ErrorS(nil, "GetPath", "spec", m.spec)
 	panic("unimplemented mounterimpl getpath")
 }
 
@@ -404,12 +405,12 @@ func (m *mounterImpl) SetUp(args volume.MounterArgs) error {
 		}
 		return nil
 	}
-	Log.Error("SetUp", "spec", m.spec, "args", args)
+	klog.ErrorS(nil, "SetUp", "spec", m.spec, "args", args)
 	panic("unimplemented mounterimpl setup")
 }
 
 func (m *mounterImpl) SetUpAt(dir string, args volume.MounterArgs) error {
-	Log.Error("SetupAt", "dir", dir, "args", args)
+	klog.ErrorS(nil, "SetupAt", "dir", dir, "args", args)
 	panic("unimplemented mounterimpl setupat")
 }
 

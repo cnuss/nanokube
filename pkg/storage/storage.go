@@ -180,12 +180,12 @@ func (s *StorageImpl) Servers() []string {
 			}
 			<-nanokube.Await(s.nano, server.Server.ReadyNotify())
 			if s.nano.Err() == nil {
-				nanokube.Log.Info("storage is ready", "port", port)
+				klog.InfoS("storage is ready", "port", port)
 			}
 			close(s.ready)
 			<-s.shutdown
 			server.Close()
-			nanokube.Log.Info("storage is done")
+			klog.InfoS("storage is done")
 		}()
 
 		s.servers = []string{fmt.Sprintf("http://127.0.0.1:%d", port)}

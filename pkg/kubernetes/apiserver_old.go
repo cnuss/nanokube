@@ -17,6 +17,7 @@ import (
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/util/webhook"
+	"k8s.io/klog/v2"
 	"k8s.io/kube-aggregator/pkg/apiserver"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
@@ -91,7 +92,7 @@ func (a *ApiServerImpl) Ready() <-chan struct{} {
 			<-nanokube.Await(a.ctx, a.clientReady)
 			for {
 				if _, err := a.client.CoreV1().Namespaces().Get(a.ctx, "kube-system", metav1.GetOptions{}); err == nil {
-					nanokube.Log.Info("apiserver is ready")
+					klog.InfoS("apiserver is ready")
 					close(a.ready)
 					break
 				}
@@ -250,7 +251,7 @@ func (a *ApiServerImpl) Handler() http.Handler {
 			context.AfterFunc(a.ctx, func() {
 				err := a.Server().RunPreShutdownHooks()
 				if err != nil {
-					nanokube.Log.Warn("apiserver pre-shutdown hooks failed", "error", err)
+					klog.ErrorS(err, "apiserver pre-shutdown hooks failed")
 				}
 			})
 		}()

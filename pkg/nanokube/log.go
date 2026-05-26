@@ -3,16 +3,12 @@ package nanokube
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/lmittmann/tint"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 
@@ -109,14 +105,14 @@ func (s *LogStreamImpl) Start() {
 
 	if s.status != nil && s.status.LogPath != "" {
 		if err := os.MkdirAll(filepath.Dir(s.status.LogPath), 0o755); err != nil {
-			Log.Error("logstream: failed to create log dir", "path", s.status.LogPath, "error", err)
+			klog.ErrorS(err, "logstream: failed to create log dir", "path", s.status.LogPath)
 			s.mu.Unlock()
 			s.Stop()
 			return
 		}
 		f, err := os.OpenFile(s.status.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			Log.Error("logstream: failed to open log file", "path", s.status.LogPath, "error", err)
+			klog.ErrorS(err, "logstream: failed to open log file", "path", s.status.LogPath)
 			s.mu.Unlock()
 			s.Stop()
 			return
@@ -129,7 +125,7 @@ func (s *LogStreamImpl) Start() {
 
 	stdoutSrc, stderrSrc, closeSrc, err := s.source(ctx)
 	if err != nil {
-		Log.Error("logstream: source failed", "error", err)
+		klog.ErrorS(err, "logstream: source failed")
 		s.mu.Unlock()
 		s.Stop()
 		return
@@ -159,7 +155,7 @@ func (s *LogStreamImpl) pump(src io.Reader, streamType string, rawTap *tap) {
 					if len(buf) < maxLineBytes {
 						break
 					}
-					Log.Warn("logstream: force-flushing oversized line", "stream", streamType, "buflen", len(buf))
+					klog.InfoS("logstream: force-flushing oversized line", "stream", streamType, "buflen", len(buf))
 					i = len(buf) - 1
 				}
 				line := buf[:i+1]
@@ -169,7 +165,7 @@ func (s *LogStreamImpl) pump(src io.Reader, streamType string, rawTap *tap) {
 				s.mu.Lock()
 				if s.logFile != nil {
 					if _, werr := s.logFile.Write(line); werr != nil {
-						Log.Warn("logstream: file write failed", "stream", streamType, "error", werr)
+						klog.ErrorS(werr, "logstream: file write failed", "stream", streamType)
 					}
 				}
 				s.mu.Unlock()
@@ -182,7 +178,7 @@ func (s *LogStreamImpl) pump(src io.Reader, streamType string, rawTap *tap) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				Log.Debug("logstream: pump exiting", "stream", streamType, "error", err)
+				klog.V(2).InfoS("logstream: pump exiting", "stream", streamType, "error", err)
 			}
 			return
 		}
@@ -219,65 +215,4 @@ func (s *LogStreamImpl) Destroy() {
 	s.destroyed.Store(true)
 	s.stdout.Close()
 	s.stderr.Close()
-}
-
-// Log is nanokube's own logger — always visible regardless of -v.
-var Log = slog.New(tint.NewHandler(os.Stderr, &tint.Options{
-	Level:      slog.LevelInfo,
-	TimeFormat: time.TimeOnly,
-}))
-
-// SetupLogging configures klog to output through a colorized handler.
-// Verbosity controls what's visible:
-//
-//	0: klog silenced entirely
-//	1: warnings, info, klog V(0-2)
-//	2: + klog V(3-4)
-//	3: + klog V(5-6)
-//	4+: + klog V(7-8), everything
-func SetupLogging(verbosity int) {
-	if verbosity < 1 {
-		klog.SetSlogLogger(slog.New(slog.DiscardHandler))
-		klog.SetOutput(io.Discard)
-		return
-	}
-
-	var level slog.Level
-	switch {
-	case verbosity >= 4:
-		level = slog.Level(-8)
-	case verbosity >= 3:
-		level = slog.Level(-6)
-	case verbosity >= 2:
-		level = slog.Level(-4)
-	default:
-		level = slog.Level(-2)
-	}
-
-	klog.SetSlogLogger(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
-		Level:      level,
-		TimeFormat: time.TimeOnly,
-		AddSource:  true,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.LevelKey {
-				l := a.Value.Any().(slog.Level)
-				switch {
-				case l >= slog.LevelError:
-					a.Value = slog.StringValue("ERR")
-				case l >= slog.LevelWarn:
-					a.Value = slog.StringValue("WRN")
-				case l >= slog.LevelInfo:
-					a.Value = slog.StringValue("INF")
-				default:
-					a.Value = slog.StringValue(fmt.Sprintf("V(%d)", -int(l)))
-				}
-			}
-			if a.Key == slog.SourceKey {
-				if src, ok := a.Value.Any().(*slog.Source); ok {
-					a.Value = slog.StringValue(fmt.Sprintf("%s:%d", filepath.Base(src.File), src.Line))
-				}
-			}
-			return a
-		},
-	})))
 }
