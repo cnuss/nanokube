@@ -12,19 +12,15 @@ import (
 	dockerclient "github.com/docker/docker/client"
 )
 
-func newClient(ctx v1.Nanokube, socket string) (*dockerclient.Client, error) {
-	opts := []dockerclient.Opt{
-		dockerclient.WithHost("unix://" + socket),
+func newClient(ctx context.Context, nano v1.Nanokube, socket string) (*dockerclient.Client, error) {
+	httpClient := &http.Client{
+		Transport: newTransport(ctx, nano, socket),
+	}
+	return dockerclient.NewClientWithOpts(
+		dockerclient.WithHost("unix://"+socket),
 		dockerclient.WithAPIVersionNegotiation(),
-	}
-	nano := ctx
-	if nano.Options().Verbosity() >= 3 {
-		httpClient := &http.Client{
-			Transport: newTransport(ctx, socket),
-		}
-		opts = append(opts, dockerclient.WithHTTPClient(httpClient))
-	}
-	return dockerclient.NewClientWithOpts(opts...)
+		dockerclient.WithHTTPClient(httpClient),
+	)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -38,14 +34,20 @@ type readCloserFunc struct {
 
 func (r readCloserFunc) Close() error { return r.close() }
 
-func newTransport(ctx v1.Nanokube, socket string) http.RoundTripper {
+func newTransport(ctx context.Context, nano v1.Nanokube, socket string) http.RoundTripper {
 	inner := &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return net.Dial("unix", socket)
 		},
 	}
-	verbose := ctx.Options().Verbosity() >= 4
+	log := nano.Options().Verbosity() >= 3
+	verbose := nano.Options().Verbosity() >= 4
 	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		// Replace the caller's ctx with the backend's super ctx so the docker
+		// connection's lifetime is independent of any caller-side shutdown
+		// (e.g. kubelet's housekeeping ctx getting canceled during shutdown).
+		req = req.WithContext(ctx)
+
 		var reqBuf bytes.Buffer
 		if req.Body != nil && verbose {
 			req.Body = io.NopCloser(io.TeeReader(req.Body, &reqBuf))
@@ -53,8 +55,14 @@ func newTransport(ctx v1.Nanokube, socket string) http.RoundTripper {
 
 		resp, err := inner.RoundTrip(req)
 		if err != nil {
-			nanokube.Log.Info("dockerapi", "method", req.Method, "url", req.URL.String(), "error", err)
+			if log {
+				nanokube.Log.Info("dockerapi", "method", req.Method, "url", req.URL.String(), "error", err)
+			}
 			return resp, err
+		}
+
+		if !log {
+			return resp, nil
 		}
 
 		if resp.Body != nil && verbose {

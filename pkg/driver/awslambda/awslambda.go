@@ -15,8 +15,10 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
-func Detect(ctx v1.Nanokube) v1.Backend {
-	return nil
+func Detect(_ context.Context) v1.BackendFunc {
+	return func(ctx v1.Nanokube) v1.Backend {
+		return nil
+	}
 }
 
 func NewBackend(ctx v1.Nanokube) (v1.Backend, error) {

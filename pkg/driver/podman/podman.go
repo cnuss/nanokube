@@ -16,20 +16,22 @@ import (
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
-func Detect(ctx v1.Nanokube) v1.Backend {
-	sockets := []string{}
+func Detect(_ context.Context) v1.BackendFunc {
+	return func(ctx v1.Nanokube) v1.Backend {
+		sockets := []string{}
 
-	for _, socket := range sockets {
-		if _, err := os.Stat(socket); err == nil {
-			backend, err := NewBackend(ctx)
-			if err != nil {
-				continue
+		for _, socket := range sockets {
+			if _, err := os.Stat(socket); err == nil {
+				backend, err := NewBackend(ctx)
+				if err != nil {
+					continue
+				}
+				return backend
 			}
-			return backend
 		}
-	}
 
-	return nil
+		return nil
+	}
 }
 
 func NewBackend(ctx v1.Nanokube) (v1.Backend, error) {

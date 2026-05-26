@@ -44,42 +44,44 @@ import (
 // streamIdleTimeout matches upstream cri/streaming server's default.
 const streamIdleTimeout = 4 * time.Hour
 
-func Detect(ctx v1.Nanokube) v1.Backend {
-	home, _ := os.UserHomeDir()
+func Detect(ctx context.Context) v1.BackendFunc {
+	return func(nano v1.Nanokube) v1.Backend {
+		home, _ := os.UserHomeDir()
 
-	// TODO: Windows support
-	// TODO: DOCKER_HOST env var support
-	// TODO: Port number support
-	// TODO: Split Colima/Lima/RD into separate Detect functions
-	sockets := []string{
-		`//./pipe/docker_engine`, // TODO: Other windows named pipes?
-		filepath.Join(string(os.PathSeparator), "var", "run", "docker.sock"),
-		filepath.Join(string(os.PathSeparator), "run", "docker.sock"),
-		filepath.Join(home, ".docker", "run", "docker.sock"),
-		filepath.Join(home, ".colima", "default", "docker.sock"),
-		filepath.Join(home, ".lima", "docker-actions-toolkit", "docker.sock"),
-		filepath.Join(home, ".rd", "docker.sock"),
-	}
-
-	for _, socket := range sockets {
-		if _, err := os.Stat(socket); err != nil {
-			nanokube.Log.Debug("docker socket not present", "socket", socket, "error", err)
-			continue
+		// TODO: Windows support
+		// TODO: DOCKER_HOST env var support
+		// TODO: Port number support
+		// TODO: Split Colima/Lima/RD into separate Detect functions
+		sockets := []string{
+			`//./pipe/docker_engine`, // TODO: Other windows named pipes?
+			filepath.Join(string(os.PathSeparator), "var", "run", "docker.sock"),
+			filepath.Join(string(os.PathSeparator), "run", "docker.sock"),
+			filepath.Join(home, ".docker", "run", "docker.sock"),
+			filepath.Join(home, ".colima", "default", "docker.sock"),
+			filepath.Join(home, ".lima", "docker-actions-toolkit", "docker.sock"),
+			filepath.Join(home, ".rd", "docker.sock"),
 		}
-		backend, err := NewBackend(ctx, socket)
-		if err != nil {
-			nanokube.Log.Warn("docker socket present but unusable", "socket", socket, "error", err)
-			continue
-		}
-		nanokube.Log.Info("docker socket accepted", "socket", socket)
-		return backend
-	}
 
-	return nil
+		for _, socket := range sockets {
+			if _, err := os.Stat(socket); err != nil {
+				nanokube.Log.Debug("docker socket not present", "socket", socket, "error", err)
+				continue
+			}
+			backend, err := NewBackend(ctx, nano, socket)
+			if err != nil {
+				nanokube.Log.Warn("docker socket present but unusable", "socket", socket, "error", err)
+				continue
+			}
+			nanokube.Log.Info("docker socket accepted", "socket", socket)
+			return backend
+		}
+
+		return nil
+	}
 }
 
-func NewBackend(ctx v1.Nanokube, socket string) (v1.Backend, error) {
-	dclient, err := newClient(ctx, socket)
+func NewBackend(ctx context.Context, nano v1.Nanokube, socket string) (v1.Backend, error) {
+	dclient, err := newClient(ctx, nano, socket)
 	if err != nil {
 		return nil, err
 	}
@@ -92,16 +94,18 @@ func NewBackend(ctx v1.Nanokube, socket string) (v1.Backend, error) {
 	}
 
 	return pkg.NewBackend(v1.DockerBackend, &driver{
+		nano:            nano,
 		ctx:             ctx,
 		client:          dclient,
 		baseURLProvided: make(chan struct{}),
 		streamsProvided: make(chan struct{}),
 		networkProvided: make(chan struct{}),
-	}, ctx), nil
+	}, nano), nil
 }
 
 type driver struct {
-	ctx    v1.Nanokube
+	nano   v1.Nanokube
+	ctx    context.Context
 	client *client.Client
 
 	name     string
@@ -138,7 +142,7 @@ func (d *driver) Name() string {
 }
 
 func (d *driver) Context() context.Context {
-	return d.ctx
+	return d.nano
 }
 
 func (d *driver) Service() *restful.WebService {
@@ -1130,7 +1134,7 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConf
 			Hostname:   config.GetHostname(),
 			Domainname: meta.GetNamespace() + ".svc.cluster.local",
 			Labels:     labels,
-			Env:        d.ctx.Environ(),
+			Env:        d.nano.Environ(),
 		}
 
 		networkMode := container.NetworkMode("bridge")
