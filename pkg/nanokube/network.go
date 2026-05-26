@@ -169,9 +169,13 @@ func (n *NetworkImpl) FromStatus(ctx context.Context, status *criv1.PodSandboxSt
 		return nil, nil
 	}
 
+	defaultNet := n.Default(ctx)
+	if defaultNet == nil {
+		return nil, fmt.Errorf("default network not initialized")
+	}
+
 	if status.GetAnnotations()["kubernetes.io/config.source"] == "file" {
-		network := n.Default(ctx)
-		return network, nil
+		return defaultNet, nil
 	}
 
 	return n.FromIP(ctx, net.ParseIP(status.GetNetwork().GetIp()))
@@ -180,8 +184,15 @@ func (n *NetworkImpl) FromStatus(ctx context.Context, status *criv1.PodSandboxSt
 func (n *NetworkImpl) FromConfig(ctx context.Context, config *criv1.PodSandboxConfig) (v1.AllocatedNetwork, error) {
 	sandboxUID := types.UID(config.GetMetadata().GetUid())
 
+	// Ensure the default network exists before any allocation — it primes
+	// nextIP and is the anchor the reclaim loop skips over.
+	defaultNet := n.Default(ctx)
+	if defaultNet == nil {
+		return nil, fmt.Errorf("default network not initialized")
+	}
+
 	if config.GetAnnotations()["kubernetes.io/config.source"] == "file" {
-		return n.Default(ctx).WithSandboxUID(&sandboxUID), nil
+		return defaultNet.WithSandboxUID(&sandboxUID), nil
 	}
 
 	n.nextIPMu.Lock()
@@ -195,7 +206,7 @@ func (n *NetworkImpl) FromConfig(ctx context.Context, config *criv1.PodSandboxCo
 		if !ok || an == nil {
 			return true
 		}
-		if n.defaultNet != nil && an.ID() == n.defaultNet.ID() {
+		if an.ID() == defaultNet.ID() {
 			return true
 		}
 		if an.SandboxUID() != nil {

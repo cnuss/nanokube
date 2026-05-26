@@ -220,7 +220,7 @@ func (b *BackendImpl) Ready() <-chan struct{} {
 
 func (b *BackendImpl) Start() error {
 	b.startOnce.Do(func() {
-		factory := b.Nanokube().Client().InformerFactory()
+		factory := b.Nanokube().SharedInformerFactory()
 		factory.Core().V1().PersistentVolumeClaims().Informer().AddEventHandler(clientcache.ResourceEventHandlerFuncs{
 			AddFunc:    func(obj any) { b.Reconcile(obj, false) },
 			UpdateFunc: func(_, obj any) { b.Reconcile(obj, false) },

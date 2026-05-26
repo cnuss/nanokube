@@ -1702,8 +1702,8 @@ func (d *driver) ClaimVolume(backend v1.Backend, client v1.Client, pvc *corev1.P
 								corev1ac.NodeSelectorRequirement().
 									WithKey("kubernetes.io/hostname").
 									WithOperator(corev1.NodeSelectorOpIn).
-									// TODO(incomplete): kublet hostname getter
-									WithValues(backend.Nanokube().Tunnel().Hostname()),
+									// TODO(incomplete): better selection than just NodeRef.Name
+									WithValues(backend.Nanokube().NodeRef().Name),
 							))))),
 			metav1.ApplyOptions{FieldManager: string(backend.Name())})
 		if err != nil {
@@ -1793,8 +1793,8 @@ func (d *driver) ReleaseVolume(backend v1.Backend, client v1.Client, pvc *corev1
 				for _, expr := range term.MatchExpressions {
 					if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn {
 						for _, v := range expr.Values {
-							// TODO(incomplete): kublet hostname getter
-							if v == backend.Nanokube().Tunnel().Hostname() {
+							// TODO(incomplete): better selection than just NodeRef.Name
+							if v == backend.Nanokube().NodeRef().Name {
 								return pv, nil
 							}
 						}
