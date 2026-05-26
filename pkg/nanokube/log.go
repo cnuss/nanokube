@@ -4,16 +4,134 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 
+	"github.com/felixge/httpsnoop"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
+
+// HTTPLog wraps a client RoundTripper or server Handler to klog request
+// method/url/status (when Log) and request/response bodies (when Verbose).
+// Body teeing buffers in memory and only emits on Close — avoid Verbose for
+// long-lived streaming endpoints (exec, attach, watches).
+type HTTPLog struct {
+	Name    string
+	Log     bool
+	Verbose bool
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type readCloserFunc struct {
+	io.Reader
+	close func() error
+}
+
+func (r readCloserFunc) Close() error { return r.close() }
+
+// RoundTripper returns inner wrapped with request/response logging.
+func (h HTTPLog) RoundTripper(inner http.RoundTripper) http.RoundTripper {
+	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var reqBuf bytes.Buffer
+		if req.Body != nil && h.Verbose {
+			req.Body = io.NopCloser(io.TeeReader(req.Body, &reqBuf))
+		}
+		resp, err := inner.RoundTrip(req)
+		if err != nil {
+			if h.Log {
+				klog.ErrorS(err, h.Name, "method", req.Method, "url", req.URL.String())
+			}
+			return resp, err
+		}
+		if !h.Log {
+			return resp, nil
+		}
+		h.logResponse(req, resp, &reqBuf)
+		return resp, nil
+	})
+}
+
+// Handler returns inner wrapped with request/response logging.
+// Uses httpsnoop so the wrapped ResponseWriter exposes exactly the same set
+// of optional interfaces (Flusher, Hijacker, CloseNotifier, etc.) as the
+// caller's writer — otherwise deeper middleware that does
+// `w.(http.Flusher)` checks would see false negatives for streaming
+// endpoints (watch, exec) and refuse to serve.
+func (h HTTPLog) Handler(inner http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var reqBuf bytes.Buffer
+		if req.Body != nil && h.Verbose {
+			req.Body = io.NopCloser(io.TeeReader(req.Body, &reqBuf))
+		}
+		var (
+			status  = http.StatusOK
+			respBuf bytes.Buffer
+		)
+		snoopHooks := httpsnoop.Hooks{
+			WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+				return func(code int) {
+					status = code
+					next(code)
+				}
+			},
+		}
+		if h.Verbose {
+			snoopHooks.Write = func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+				return func(b []byte) (int, error) {
+					respBuf.Write(b)
+					return next(b)
+				}
+			}
+		}
+		wrapped := httpsnoop.Wrap(w, snoopHooks)
+		inner.ServeHTTP(wrapped, req)
+		if !h.Log {
+			return
+		}
+		kv := []any{"method", req.Method, "url", req.URL.String(), "status", status}
+		if reqBuf.Len() > 0 {
+			kv = append(kv, "reqBody", reqBuf.String())
+		}
+		if respBuf.Len() > 0 {
+			kv = append(kv, "respBody", respBuf.String())
+		}
+		klog.InfoS(h.Name, kv...)
+	})
+}
+
+func (h HTTPLog) logResponse(req *http.Request, resp *http.Response, reqBuf *bytes.Buffer) {
+	if resp.Body != nil && h.Verbose {
+		var respBuf bytes.Buffer
+		body := resp.Body
+		resp.Body = readCloserFunc{
+			Reader: io.TeeReader(body, &respBuf),
+			close: func() error {
+				err := body.Close()
+				kv := []any{"method", req.Method, "url", req.URL.String(), "status", resp.StatusCode, "respBody", respBuf.String()}
+				if reqBuf.Len() > 0 {
+					kv = append(kv, "reqBody", reqBuf.String())
+				}
+				klog.InfoS(h.Name, kv...)
+				return err
+			},
+		}
+		return
+	}
+	kv := []any{"method", req.Method, "url", req.URL.String(), "status", resp.StatusCode}
+	if reqBuf.Len() > 0 {
+		kv = append(kv, "reqBody", reqBuf.String())
+	}
+	klog.InfoS(h.Name, kv...)
+}
 
 // maxLineBytes caps the per-stream line buffer. If a container writes more
 // than this without a newline, the buffered bytes are force-flushed as a line

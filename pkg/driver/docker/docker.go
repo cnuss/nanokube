@@ -82,7 +82,7 @@ func Detect(ctx context.Context) v1.BackendFunc {
 }
 
 func NewBackend(ctx context.Context, nano v1.Nanokube, socket string) (v1.Backend, error) {
-	dclient, err := newClient(ctx, nano, socket)
+	dclient, err := newClient(ctx, socket)
 	if err != nil {
 		return nil, err
 	}

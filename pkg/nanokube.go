@@ -897,7 +897,7 @@ func (k *nanokubeImpl) Tunnel() v1.Tunnel {
 	tunnelName := v1.SharedTunnel
 
 	tunnel, _ := k.tunnels.LoadOrStore(tunnelName, func() v1.Tunnel {
-		return NewTunnel(k, tunnelName)
+		return NewTunnel(tunnelName)
 	}())
 	return tunnel.(v1.Tunnel)
 }

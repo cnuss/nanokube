@@ -32,7 +32,6 @@ import (
 	"github.com/cloudflare/cloudflared/supervisor"
 	"github.com/cloudflare/cloudflared/tlsconfig"
 	"github.com/cloudflare/cloudflared/tunnelrpc/pogs"
-	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/dustin/go-humanize"
 	"github.com/google/uuid"
@@ -52,7 +51,7 @@ const (
 var promMu sync.Mutex
 
 type TunnelImpl struct {
-	ctx        v1.Nanokube
+	ctx        context.Context
 	tunnelName v1.TunnelName
 
 	localHost     net.IP
@@ -75,9 +74,9 @@ type TunnelImpl struct {
 
 var _ v1.Tunnel = &TunnelImpl{}
 
-func NewTunnel(ctx v1.Nanokube, tunnelName v1.TunnelName) v1.Tunnel {
+func NewTunnel(tunnelName v1.TunnelName) v1.Tunnel {
 	return &TunnelImpl{
-		ctx:         ctx,
+		ctx:         context.Background(),
 		tunnelName:  tunnelName,
 		fqdnReady:   make(chan struct{}),
 		tunnelReady: make(chan struct{}),
@@ -101,7 +100,7 @@ func (t *TunnelImpl) LocalPort() int32 {
 	t.localPortOnce.Do(func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			t.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to acquire tunnel port: %w", err)))
+			klog.Fatal(err, "failed to acquire tunnel port")
 			return
 		}
 		defer listener.Close()
@@ -168,7 +167,7 @@ func (t *TunnelImpl) FQDN() string {
 
 		tunnel, err := newQuickTunnel(t, t.tunnelName)
 		if err != nil {
-			t.ctx.Cancel(nanokube.NewError(fmt.Errorf("failed to create tunnel: %w", err)))
+			klog.Fatal(err, "failed to create tunnel")
 			return
 		}
 
@@ -187,11 +186,7 @@ func (t *TunnelImpl) FQDN() string {
 			case <-t.tunnel.Stopped():
 				close(t.tunnelReady)
 			}
-			// If nanokube is already shutting down, the tunnel stopping is expected.
-			// Only escalate when the tunnel dies while we're still meant to be running.
-			if t.ctx.Err() == nil {
-				t.ctx.Cancel(nanokube.NewError(fmt.Errorf("tunnel cancelled")))
-			}
+			klog.InfoS("tunnel stopped", "hostname", t.fqdn)
 		}()
 	})
 	return t.fqdn

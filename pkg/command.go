@@ -10,13 +10,17 @@ import (
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
+	"github.com/stoewer/go-strcase"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/util/webhook"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
@@ -79,6 +83,9 @@ type Command struct {
 	byName     map[string]*cobra.Command
 	startHooks map[string]startHookFn
 
+	paths      []string
+	pathsReady chan struct{}
+
 	apiserverRunOnce         sync.Once
 	controllerManagerRunOnce sync.Once
 	schedulerRunOnce         sync.Once
@@ -107,6 +114,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		ctx:                   nano,
 		byName:                make(map[string]*cobra.Command),
 		startHooks:            make(map[string]startHookFn),
+		paths:                 make([]string, 0),
+		pathsReady:            make(chan struct{}),
 		kubeletServerProvided: make(chan struct{}),
 		kubeconfigReady:       make(chan struct{}),
 	}
@@ -144,6 +153,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 			c.startHooks["update-kubeconfig"] = fnHook("update-kubeconfig", nil, c.updateKubeconfig)
 			c.startHooks["untaint-node"] = fnHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 			c.startHooks["update-node-status"] = fnHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
+			// TODO(partial): use a real subject and tighten permissions
+			c.startHooks["update-kubelet-rbac"] = fnHook("kubelet-rbac", c.pathsReady, c.updateKubeletRBAC("system:anonymous"))
 			return c.byName["kube-apiserver"].RunE(cmd, args)
 		},
 	}
@@ -269,9 +280,16 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 
 				go func() {
 					<-c.kubeletServerProvided
+					defer close(c.pathsReady)
 					for _, p := range kubeletPaths {
 						klog.Infof("registering kubelet handler for path prefix %q", p)
 						server.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandlePrefix(p, &c.kubeletServer)
+						c.paths = append(c.paths, p)
+					}
+					for _, ws := range c.Nano().Services(c.Nano().Tunnel().URL()) {
+						klog.InfoS("registering nanokube service", "rootPath", ws.RootPath())
+						server.GenericAPIServer.Handler.GoRestfulContainer.Add(ws)
+						c.paths = append(c.paths, ws.RootPath())
 					}
 				}()
 
@@ -412,6 +430,65 @@ func (c *Command) updateNodeStatus(ctx hookCtx) error {
 	}
 
 	return nil
+}
+
+// updateKubeletRBAC grants subject access to each kubelet-style
+// nonResourceURL we proxy under the apiserver mux. One ClusterRole per
+// path ("system:kubelet:<kebab-of-path>"), each labelled so they're
+// aggregated into the "system:kubelet" role; a single ClusterRoleBinding
+// ("system:kubelet:<subject>") then grants the subject the aggregated
+// role. Today this is wide open (system:anonymous → everything);
+// tighten as a followup once we have a real authenticating subject.
+func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
+	return func(ctx hookCtx) error {
+		const aggregateRoleName = "system:kubelet"
+		const aggregateLabelKey = "rbac.nanokube.io/aggregate-to-kubelet"
+
+		rbac := c.Nano().Client().RbacV1()
+		opts := metav1.ApplyOptions{FieldManager: c.Name(), Force: true}
+		// Strip leading "system:" so "system:anonymous" yields a binding
+		// named "system:kubelet:anonymous" rather than the doubled prefix.
+		subjectSlug := strings.TrimPrefix(subject, "system:")
+
+		for _, p := range c.paths {
+			base := strings.TrimSuffix(p, "/")
+			segments := strings.Split(strings.TrimPrefix(base, "/"), "/")
+			for i, seg := range segments {
+				segments[i] = strcase.KebabCase(seg)
+			}
+			roleName := aggregateRoleName + ":" + strings.Join(segments, ":")
+			role := rbacv1ac.ClusterRole(roleName).
+				WithLabels(map[string]string{aggregateLabelKey: "true"}).
+				WithRules(rbacv1ac.PolicyRule().
+					WithVerbs("*").
+					WithNonResourceURLs(base, base+"/*"))
+			if _, err := rbac.ClusterRoles().Apply(ctx.Context, role, opts); err != nil {
+				return fmt.Errorf("apply cluster role %q: %w", roleName, err)
+			}
+		}
+
+		aggregate := rbacv1ac.ClusterRole(aggregateRoleName).
+			WithAggregationRule(rbacv1ac.AggregationRule().
+				WithClusterRoleSelectors(metav1ac.LabelSelector().
+					WithMatchLabels(map[string]string{aggregateLabelKey: "true"})))
+		if _, err := rbac.ClusterRoles().Apply(ctx.Context, aggregate, opts); err != nil {
+			return fmt.Errorf("apply aggregate cluster role %q: %w", aggregateRoleName, err)
+		}
+
+		binding := rbacv1ac.ClusterRoleBinding(aggregateRoleName + ":" + subjectSlug).
+			WithRoleRef(rbacv1ac.RoleRef().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind("ClusterRole").
+				WithName(aggregateRoleName)).
+			WithSubjects(rbacv1ac.Subject().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(rbacv1.UserKind).
+				WithName(subject))
+		if _, err := rbac.ClusterRoleBindings().Apply(ctx.Context, binding, opts); err != nil {
+			return fmt.Errorf("apply cluster role binding %q: %w", *binding.Name, err)
+		}
+		return nil
+	}
 }
 
 func fnHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) startHookFn {

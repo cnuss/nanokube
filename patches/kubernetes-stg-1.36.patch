@@ -1,0 +1,105 @@
+diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
+index 134e163eeb3..fb0fa2008a6 100644
+--- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
++++ b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
+@@ -275,6 +275,12 @@ func handleWatch(ctx context.Context, rw rest.Watcher, scope *RequestScope, req
+ 	if timeout == 0 && minRequestTimeout > 0 {
+ 		timeout = time.Duration(float64(minRequestTimeout) * (rand.Float64() + 1.0))
+ 	}
++	// nanokube: cap watch timeouts so the apiserver closes the response
++	// frequently — this forces Cloudflare's edge to flush its buffered
++	// body. See docs/cloudflare-sse-limits.md.
++	if timeout > 5*time.Second {
++		timeout = 5 * time.Second
++	}
+ 
+ 	klog.V(3).InfoS("Starting watch", "path", req.URL.Path, "resourceVersion", opts.ResourceVersion, "labels", opts.LabelSelector, "fields", opts.FieldSelector, "sendInitialEvents", opts.SendInitialEvents, "timeout", timeout, "audit-ID", audit.GetAuditIDTruncated(ctx))
+ 	ctx, cancel := context.WithTimeout(ctx, timeout)
+diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
+index cb782f76a3e..d98f28881ba 100644
+--- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
++++ b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/responsewriters/writers.go
+@@ -39,6 +39,7 @@ import (
+ 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
+ 	"k8s.io/apiserver/pkg/endpoints/metrics"
+ 	"k8s.io/apiserver/pkg/endpoints/request"
++	genericrest "k8s.io/apiserver/pkg/registry/generic/rest"
+ 	"k8s.io/apiserver/pkg/registry/rest"
+ 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+ 	"k8s.io/apiserver/pkg/util/flushwriter"
+@@ -73,6 +74,12 @@ func StreamObject(statusCode int, gv schema.GroupVersion, s runtime.NegotiatedSe
+ 	if len(contentType) == 0 {
+ 		contentType = "application/octet-stream"
+ 	}
++	// nanokube patch: forward the backend response's status code when the
++	// streamer recorded one (e.g. pods/log passes kubelet's 206 through so
++	// cloudflare's edge skips its 128KB chunked-response buffer).
++	if ls, ok := stream.(*genericrest.LocationStreamer); ok && ls.BackendStatus != 0 {
++		statusCode = ls.BackendStatus
++	}
+ 	w.Header().Set("Content-Type", contentType)
+ 	w.WriteHeader(statusCode)
+ 	// Flush headers, if possible
+diff --git a/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go b/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
+index b1a61991bf5..82d7a0426d7 100644
+--- a/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
++++ b/staging/src/k8s.io/apiserver/pkg/registry/generic/rest/streamer.go
+@@ -43,6 +43,12 @@ type LocationStreamer struct {
+ 	Flush           bool
+ 	ResponseChecker HttpResponseChecker
+ 	RedirectChecker func(req *http.Request, via []*http.Request) error
++	// nanokube patch: InputStream records the backend's HTTP status code
++	// here so StreamObject can forward it to the client instead of the
++	// caller's default 200. Used by pods/log so kubelet's 206 Partial
++	// Content (which bypasses Cloudflare's 128KB chunked-response buffer)
++	// propagates end-to-end.
++	BackendStatus int
+ 	// TLSVerificationErrorCounter is an optional value that will Inc every time a TLS error is encountered.  This can
+ 	// be wired a single prometheus counter instance to get counts overall.
+ 	TLSVerificationErrorCounter CounterMetric
+@@ -104,6 +110,10 @@ func (s *LocationStreamer) InputStream(ctx context.Context, apiVersion, acceptHe
+ 		}
+ 	}
+ 
++	// nanokube patch: always capture backend status so StreamObject can
++	// forward it end-to-end.
++	s.BackendStatus = resp.StatusCode
++
+ 	contentType = s.ContentType
+ 	if len(contentType) == 0 {
+ 		contentType = resp.Header.Get("Content-Type")
+diff --git a/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go b/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go
+index 3bbeeddb3e6..3515464a7c7 100644
+--- a/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go
++++ b/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go
+@@ -37,6 +37,10 @@ const (
+ 	preV4Base64WebsocketProtocol = wsstream.Base64ChannelWebSocketProtocol
+ 	v4BinaryWebsocketProtocol    = "v4." + wsstream.ChannelWebSocketProtocol
+ 	v4Base64WebsocketProtocol    = "v4." + wsstream.Base64ChannelWebSocketProtocol
++	// v5 is v4 with an additional stream-close signal (see wsstream doc.go);
++	// binary-only. Handshake/handle code in wsstream.Conn already recognizes
++	// this protocol via protocolSupportsStreamClose.
++	v5BinaryWebsocketProtocol = "v5." + wsstream.ChannelWebSocketProtocol
+ )
+ 
+ // createChannels returns the standard channel types for a shell connection (STDIN 0, STDOUT 1, STDERR 2)
+@@ -93,6 +97,10 @@ func createWebSocketStreams(req *http.Request, w http.ResponseWriter, opts *Opti
+ 			Binary:   false,
+ 			Channels: channels,
+ 		},
++		v5BinaryWebsocketProtocol: {
++			Binary:   true,
++			Channels: channels,
++		},
+ 	})
+ 	conn.SetIdleTimeout(idleTimeout)
+ 	negotiatedProtocol, streams, err := conn.Open(httpresponse.GetOriginal(w), req)
+@@ -122,7 +130,7 @@ func createWebSocketStreams(req *http.Request, w http.ResponseWriter, opts *Opti
+ 	}
+ 
+ 	switch negotiatedProtocol {
+-	case v4BinaryWebsocketProtocol, v4Base64WebsocketProtocol:
++	case v4BinaryWebsocketProtocol, v4Base64WebsocketProtocol, v5BinaryWebsocketProtocol:
+ 		ctx.writeStatus = v4WriteStatusFunc(streams[errorChannel])
+ 	default:
+ 		ctx.writeStatus = v1WriteStatusFunc(streams[errorChannel])
