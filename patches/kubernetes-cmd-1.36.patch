@@ -345,7 +345,7 @@ index 71739808dd2..60bb501a1f7 100644
  	os.Exit(code)
  }
 diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
-index c245a648831..65fef4f25a8 100644
+index c245a648831..a6ac74cf0a4 100644
 --- a/cmd/kubelet/app/server.go
 +++ b/cmd/kubelet/app/server.go
 @@ -65,7 +65,6 @@ import (
@@ -420,6 +420,25 @@ index c245a648831..65fef4f25a8 100644
  	logger := klog.FromContext(ctx)
  	// To help debugging, immediately log version
  	logger.Info("Kubelet version", "kubeletVersion", version.Get())
+@@ -1281,13 +1290,16 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
+ 		logger.Error(err, "Failed to set rlimit on max file handles")
+ 	}
+ 
+-	startKubelet(ctx, k, podCfg, &kubeServer.KubeletConfiguration, kubeDeps, kubeServer.EnableServer)
++	StartKubelet(ctx, k, podCfg, &kubeServer.KubeletConfiguration, kubeDeps, kubeServer.EnableServer)
+ 	logger.Info("Started kubelet")
+ 
+ 	return nil
+ }
+ 
+-func startKubelet(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodConfig, kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *kubelet.Dependencies, enableServer bool) {
++// StartKubelet launches the kubelet goroutines.
++// Declared as a var so external code can swap the implementation at init time
++// (e.g. nanokube intercepts to capture the Bootstrap instance).
++var StartKubelet = func(ctx context.Context, k kubelet.Bootstrap, podCfg *config.PodConfig, kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *kubelet.Dependencies, enableServer bool) {
+ 	// start the kubelet
+ 	go k.Run(ctx, podCfg.Updates())
+ 
 diff --git a/cmd/kubelet/kubelet.go b/cmd/kubelet/kubelet.go
 index 114cbd4aabc..a0c858c2a08 100644
 --- a/cmd/kubelet/kubelet.go

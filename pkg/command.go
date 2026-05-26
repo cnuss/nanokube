@@ -3,6 +3,7 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -29,8 +30,26 @@ import (
 	controlplaneapiserver "k8s.io/kubernetes/pkg/controlplane/apiserver"
 	generatedopenapi "k8s.io/kubernetes/pkg/generated/openapi"
 	kubeletcore "k8s.io/kubernetes/pkg/kubelet"
+	kubeletconfiginternal "k8s.io/kubernetes/pkg/kubelet/apis/config"
+	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/config"
+	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 	sched "k8s.io/kubernetes/pkg/scheduler"
 )
+
+var kubeletPaths = []string{
+	"/attach/",
+	"/checkpoint/",
+	"/containerLogs/",
+	"/debug/",
+	"/exec/",
+	"/logs/",
+	"/metrics/",
+	"/pods/",
+	"/portForward/",
+	"/run/",
+	"/runningpods/",
+	"/stats/",
+}
 
 type Command struct {
 	*cobra.Command
@@ -45,6 +64,9 @@ type Command struct {
 	controllerManagerRunOnce sync.Once
 	schedulerRunOnce         sync.Once
 	kubeletRunOnce           sync.Once
+
+	kubeletServer         kubeletserver.Server
+	kubeletServerProvided chan struct{}
 }
 
 func NewNanokubeCommand(ctx context.Context) *Command {
@@ -94,12 +116,13 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	root.AddCommand(start)
 
 	command := &Command{
-		Command: root,
-		ctx:     nano,
-		run:     run,
-		start:   start,
-		byName:  byName,
-		hooks:   hooks,
+		Command:               root,
+		ctx:                   nano,
+		run:                   run,
+		start:                 start,
+		byName:                byName,
+		hooks:                 hooks,
+		kubeletServerProvided: make(chan struct{}),
 	}
 
 	return command
@@ -208,6 +231,14 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 					return err
 				}
 
+				go func() {
+					<-c.kubeletServerProvided
+					for _, p := range kubeletPaths {
+						klog.Infof("registering kubelet handler for path prefix %q", p)
+						server.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandlePrefix(p, &c.kubeletServer)
+					}
+				}()
+
 				kubeconfigReady := make(chan struct{})
 				server.GenericAPIServer.AddPostStartHook("update-kubeconfig", func(context genericapiserver.PostStartHookContext) error {
 					kubeconfigPath := c.Nano().WithLoopback(context.LoopbackClientConfig).KubeconfigPath()
@@ -254,6 +285,8 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		})
 	case "kubelet":
 		cmd.Flags().Set("cloud-provider", "external")
+		cmd.Flags().Set("enable-server", "false")
+		cmd.Flags().Set("read-only-port", "0")
 		cmd.Flags().Set("root-dir", c.Nano().Options().DataDirAt(v1.DataDirKubelet))
 		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
 		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
@@ -261,7 +294,6 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
-				ks.ReadOnlyPort = 0
 				ks.RegisterNode = true
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
 				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
@@ -276,9 +308,19 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 				deps.VolumePlugins = c.Nano().Host().VolumePlugins()
 				return run(ctx, ks, deps, fg)
 			}
+			start := kubelet.StartKubelet
+			kubelet.StartKubelet = func(ctx context.Context, k kubeletcore.Bootstrap, podCfg *kubeletconfig.PodConfig, kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *kubeletcore.Dependencies, enableServer bool) {
+				kl := k.(*kubeletcore.Kubelet)
+				c.kubeletServer = kubeletserver.NewServer(ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), kubeDeps.Auth, kubeCfg)
+				close(c.kubeletServerProvided)
+				start(ctx, k, podCfg, kubeCfg, kubeDeps, enableServer)
+			}
 		})
 	}
 
 	c.run.AddCommand(cmd)
 	return c
+}
+
+func (c *Command) WithHandler(handler http.Handler) {
 }
