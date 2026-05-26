@@ -69,6 +69,21 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		Use:   "start",
 		Short: "start kubernetes components",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Propagate -v (and a few other klog flags) from start down
+			// to each component's own flag set. They're inherited as
+			// persistent flags on start but each component reads from
+			// its own local flag value via logsapi.
+			for _, flag := range []string{"v", "vmodule", "log-flush-frequency"} {
+				f := cmd.Flag(flag)
+				if f == nil || !f.Changed {
+					continue
+				}
+				for _, child := range byName {
+					if child.Flags().Lookup(flag) != nil {
+						child.Flags().Set(flag, f.Value.String())
+					}
+				}
+			}
 			hooks["run-kube-controller-manager"] = byName["kube-controller-manager"]
 			hooks["run-kube-scheduler"] = byName["kube-scheduler"]
 			hooks["run-kubelet"] = byName["kubelet"]

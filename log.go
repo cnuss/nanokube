@@ -91,7 +91,14 @@ type prettyHandler struct {
 }
 
 func (h *prettyHandler) Enabled(_ context.Context, l slog.Level) bool {
-	return l >= slog.LevelInfo
+	// Info/Warn/Error always pass. For V(N) records (negative slog levels,
+	// where V(8) = slog.Level(-8)), gate against klog's own verbosity so
+	// that logr-based code paths like `klog.FromContext(ctx).V(8).Info(…)`
+	// — which bypass klog's V() check — still honor --v.
+	if l >= slog.LevelInfo {
+		return true
+	}
+	return klog.V(klog.Level(-int(l))).Enabled()
 }
 
 func (h *prettyHandler) Handle(_ context.Context, r slog.Record) error {
@@ -255,13 +262,14 @@ func componentFromFunc(fn string) string {
 // --- color helpers (fatih/color handles NO_COLOR / non-TTY autodetect) ---
 
 func levelTag(l slog.Level) string {
+	// Width matched to V(N) (4 chars) so the column after stays aligned.
 	switch {
 	case l >= slog.LevelError:
-		return color.New(color.FgHiRed).Sprint("ERR")
+		return color.New(color.FgHiRed).Sprint("ERR ")
 	case l >= slog.LevelWarn:
-		return color.New(color.FgHiYellow).Sprint("WRN")
+		return color.New(color.FgHiYellow).Sprint("WRN ")
 	case l >= slog.LevelInfo:
-		return color.New(color.FgHiGreen).Sprint("INF")
+		return color.New(color.FgHiGreen).Sprint("INF ")
 	default:
 		return color.New(color.Faint).Sprintf("V(%d)", -int(l))
 	}
