@@ -186,7 +186,11 @@ func (t *TunnelImpl) FQDN() string {
 			case <-t.tunnel.Stopped():
 				close(t.tunnelReady)
 			}
-			t.ctx.Cancel(nanokube.NewError(fmt.Errorf("tunnel cancelled")))
+			// If nanokube is already shutting down, the tunnel stopping is expected.
+			// Only escalate when the tunnel dies while we're still meant to be running.
+			if t.ctx.Err() == nil {
+				t.ctx.Cancel(nanokube.NewError(fmt.Errorf("tunnel cancelled")))
+			}
 		}()
 	})
 	return t.fqdn
