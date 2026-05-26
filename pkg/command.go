@@ -307,8 +307,10 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		c.kubeletRunOnce.Do(func() {
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
-				ks.Port = 443
+				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
+				ks.ClusterDomain = "cluster.local"  // TODO(partial): install coredns
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
+				ks.Port = 443
 				ks.RegisterNode = true
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
 				deps.ContainerManager = c.Nano().DefaultBackend().Manager()

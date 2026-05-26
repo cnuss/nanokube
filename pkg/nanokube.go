@@ -211,6 +211,8 @@ type nanokubeImpl struct {
 	secureServingOnce sync.Once
 
 	certKeyOnce sync.Once
+
+	rootCaOnce sync.Once
 }
 
 var _ v1.Nanokube = &nanokubeImpl{}
@@ -414,19 +416,10 @@ func (k *nanokubeImpl) KubeletDependencies() *kubelet.Dependencies {
 }
 
 func (k *nanokubeImpl) Args(service v1.ServiceName, mountPath string) []string {
+	// Materialize the combined CA bundle on disk and return the mount-relative
+	// path for child component args.
 	rootCaFile := func() string {
-		var buf bytes.Buffer
-		for _, c := range k.ApiServer().CACerts() {
-			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
-				k.Cancel(nanokube.NewError(fmt.Errorf("failed to PEM-encode CA cert: %w", err)))
-				return ""
-			}
-		}
-		path := k.Options().FilePathAt(v1.CAFile)
-		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("failed to write CA file %s: %w", path, err)))
-			return ""
-		}
+		k.RootCaFilePath()
 		return string(v1.CAFile)
 	}
 
@@ -629,12 +622,37 @@ func (k *nanokubeImpl) KeyFilePath() string {
 	return keyPath
 }
 
-// RootCaFilePath returns the path to the CA bundle that signs the apiserver's
-// serving cert. Today the apiserver cert is self-signed, so the cert file is
-// its own CA bundle — same file as CertFilePath. If we ever generate a
-// separate CA, this is the seam to change.
+// RootCaFilePath returns the path to a CA bundle containing the self-signed
+// apiserver cert plus the tunnel's CA roots (Mozilla bundle + Cloudflare
+// root). The apiserver cert is its own CA (self-signed); the tunnel roots
+// are needed so clients also trust the cloudflared edge cert when verifying
+// the chain over the tunnel.
 func (k *nanokubeImpl) RootCaFilePath() string {
-	return k.CertFilePath()
+	path := k.Options().FilePathAt(v1.CAFile)
+	k.rootCaOnce.Do(func() {
+		var buf bytes.Buffer
+
+		certPath, _ := k.ensureCertKey()
+		certPEM, err := os.ReadFile(certPath)
+		if err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("read apiserver cert %s: %w", certPath, err)))
+			return
+		}
+		buf.Write(certPEM)
+
+		for _, c := range k.Tunnel().CACerts() {
+			if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
+				k.Cancel(nanokube.NewError(fmt.Errorf("PEM-encode tunnel CA cert: %w", err)))
+				return
+			}
+		}
+
+		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("write CA bundle %s: %w", path, err)))
+			return
+		}
+	})
+	return path
 }
 
 func (k *nanokubeImpl) WithLoopback(loopback *rest.Config) v1.Nanokube {
