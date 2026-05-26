@@ -4,16 +4,22 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/util/webhook"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
+	cloudproviderapi "k8s.io/cloud-provider/api"
 	"k8s.io/component-base/featuregate"
 	"k8s.io/klog/v2"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
@@ -136,6 +142,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 			c.startHooks["kube-scheduler-cmd"] = runEHook(c.kubeconfigReady, c.byName["kube-scheduler"])
 			c.startHooks["kubelet-cmd"] = runEHook(c.kubeconfigReady, c.byName["kubelet"])
 			c.startHooks["update-kubeconfig"] = fnHook("update-kubeconfig", nil, c.updateKubeconfig)
+			c.startHooks["untaint-node"] = fnHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
+			c.startHooks["update-node-status"] = fnHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
 			return c.byName["kube-apiserver"].RunE(cmd, args)
 		},
 	}
@@ -299,6 +307,7 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		c.kubeletRunOnce.Do(func() {
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
+				ks.Port = 443
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.RegisterNode = true
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
@@ -328,7 +337,7 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 	return c
 }
 
-func (c *Command) updateKubeconfig(ctx genericapiserver.PostStartHookContext) error {
+func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	kubeconfigPath := c.Nano().WithLoopback(ctx.LoopbackClientConfig).KubeconfigPath() // TODO(partial): use WriteKubeconfig on v1.Client
 	c.Nano().Client().WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
 	c.byName["kube-controller-manager"].Flags().Set("kubeconfig", kubeconfigPath)
@@ -339,6 +348,67 @@ func (c *Command) updateKubeconfig(ctx genericapiserver.PostStartHookContext) er
 	c.byName["kube-scheduler"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
 	c.byName["kubelet"].Flags().Set("kubeconfig", kubeconfigPath)
 	close(c.kubeconfigReady)
+	return nil
+}
+
+func (c *Command) untaintNode(ctx hookCtx) error {
+	nodeRef := c.Nano().NodeRef()
+	if nodeRef == nil {
+		return fmt.Errorf("node reference not found")
+	}
+	nodes := c.Nano().Client().CoreV1().Nodes()
+
+	// DEVNOTE: we retry because a few other controllers might be updating the node
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := nodes.Get(ctx.Context, nodeRef.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		node.Spec.Taints = slices.DeleteFunc(node.Spec.Taints, func(t corev1.Taint) bool {
+			return t.Key == cloudproviderapi.TaintExternalCloudProvider
+		})
+		_, err = nodes.Update(ctx.Context, node, metav1.UpdateOptions{})
+		return err
+	}); err != nil {
+		return fmt.Errorf("failed to remove taints from node: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Command) updateNodeStatus(ctx hookCtx) error {
+	nodeRef := c.Nano().NodeRef()
+	if nodeRef == nil {
+		return fmt.Errorf("node reference not found")
+	}
+	nodes := c.Nano().Client().CoreV1().Nodes()
+
+	// DEVNOTE: we retry because a few other controllers might be updating the node
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		_, err := nodes.ApplyStatus(ctx.Context, corev1ac.Node(nodeRef.Name).WithStatus(
+			corev1ac.NodeStatus().
+				WithAddresses(
+					corev1ac.NodeAddress().WithType(corev1.NodeHostName).WithAddress(func() string {
+						a, _ := os.Hostname()
+						a, _, _ = strings.Cut(a, ".")
+						return a
+					}()),
+					corev1ac.NodeAddress().WithType(corev1.NodeInternalDNS).WithAddress(func() string {
+						a, _ := os.Hostname()
+						return a
+					}()),
+					corev1ac.NodeAddress().WithType(corev1.NodeExternalDNS).WithAddress(func() string {
+						// a := fmt.Sprintf("%s:%d", tunnel.FQDN(), 443)
+						a := c.Nano().Tunnel().FQDN()
+						return a
+					}()),
+				),
+		), metav1.ApplyOptions{FieldManager: c.Name(), Force: true})
+		return err
+	}); err != nil {
+		return fmt.Errorf("failed to update node status: %w", err)
+	}
+
 	return nil
 }
 

@@ -96,7 +96,8 @@ type Nanokube interface {
 	TLSConfig() *tls.Config
 	TLSOptions() *kubeletserver.TLSOptions
 	SecureServing() *options.SecureServingOptionsWithLoopback
-	NodeReady() chan struct{}
+	NodeReady() <-chan struct{}
+	NodeRef() *corev1.ObjectReference
 
 	Storage() Storage
 	SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory

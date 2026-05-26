@@ -29,6 +29,7 @@ require (
 	k8s.io/apimachinery v0.36.0
 	k8s.io/apiserver v0.36.0
 	k8s.io/client-go v0.36.0
+	k8s.io/cloud-provider v0.36.0
 	k8s.io/component-base v0.36.0
 	k8s.io/cri-api v0.36.0
 	k8s.io/cri-streaming v0.0.0
@@ -191,7 +192,6 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
-	k8s.io/cloud-provider v0.36.0 // indirect
 	k8s.io/cluster-bootstrap v0.0.0 // indirect
 	k8s.io/component-helpers v0.36.0 // indirect
 	k8s.io/controller-manager v0.36.0 // indirect

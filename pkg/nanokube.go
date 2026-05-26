@@ -195,6 +195,7 @@ type nanokubeImpl struct {
 	eventsOnce sync.Once
 
 	nodeReady     chan struct{}
+	nodeRef       *corev1.ObjectReference
 	nodeReadyOnce sync.Once
 
 	proxiedRecorder     record.EventRecorder
@@ -510,11 +511,10 @@ func (k *nanokubeImpl) Eventf(object k8sruntime.Object, eventtype string, reason
 		eventtype == corev1.EventTypeNormal &&
 		reason == "NodeReady" {
 		if ref, ok := object.(*corev1.ObjectReference); ok {
-			if strings.EqualFold(k.KubeletHostname(), ref.Name) {
-				k.nodeReadyOnce.Do(func() {
-					close(k.nodeReady)
-				})
-			}
+			k.nodeReadyOnce.Do(func() {
+				k.nodeRef = ref
+				close(k.nodeReady)
+			})
 		}
 	}
 }
@@ -536,8 +536,13 @@ func (k *nanokubeImpl) Logf(object k8sruntime.Object, eventtype string, reason s
 	}
 }
 
-func (k *nanokubeImpl) NodeReady() chan struct{} {
+func (k *nanokubeImpl) NodeReady() <-chan struct{} {
 	return k.nodeReady
+}
+
+func (k *nanokubeImpl) NodeRef() *corev1.ObjectReference {
+	<-nanokube.Await(k.ctx, k.nodeReady)
+	return k.nodeRef
 }
 
 func (k *nanokubeImpl) SecureServing() *options.SecureServingOptionsWithLoopback {
