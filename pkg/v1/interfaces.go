@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"net"
@@ -16,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
-	"k8s.io/apiserver/pkg/server/options"
 	kubestorage "k8s.io/apiserver/pkg/storage"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
@@ -26,15 +24,10 @@ import (
 	"k8s.io/client-go/tools/record"
 	internalapi "k8s.io/cri-api/pkg/apis"
 	criv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
-	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
-	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
-	"k8s.io/kubernetes/pkg/kubelet"
-	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
-	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
@@ -48,24 +41,13 @@ type Nanokube interface {
 	record.EventRecorderLogger
 
 	Options() Options
-	Version() string
 
 	WithCancel() (context.Context, context.CancelFunc)
 
 	Cancel(reason Error)
 	CancelErr(reason error)
 	Errors() []error
-	Detach()
-	OnCancel(fns ...func(ctx context.Context)) Nanokube
-	OnReady(service ServiceName, fns ...func(ctx context.Context)) Nanokube
 
-	Canceled() <-chan struct{}
-
-	WithApiServer(apiserver ApiServer) Nanokube
-	ApiServer() ApiServer
-
-	WithBackend(name BackendName, backend Backend) Nanokube
-	Backends() map[BackendName]Backend
 	Backend(name BackendName) Backend
 	DefaultBackend() Backend
 
@@ -73,29 +55,15 @@ type Nanokube interface {
 	Client() Client
 	Tunnel() Tunnel
 	StaticPods() []*corev1.Pod
-	HTTPServer() *http.Server
 
 	Services(baseURL *url.URL) []*restful.WebService
 
-	Run() Nanokube
-
-	// folded from former Kube interface
-	ApiServerOptions() *apiserveroptions.CompletedOptions
-	Args(service ServiceName, mountPath string) []string
 	Environ() []string
-	Broadcaster() record.EventBroadcaster
-	KubeletFlags() *kubeletoptions.KubeletFlags
-	KubeletConfiguration() *kubeletconfig.KubeletConfiguration
-	KubeletDependencies() *kubelet.Dependencies
-	KubeletHostname() string
 	CertFilePath() string
 	KeyFilePath() string
 	RootCaFilePath() string
 	WithLoopback(loopback *rest.Config) Nanokube
 	KubeconfigPath() string
-	TLSConfig() *tls.Config
-	TLSOptions() *kubeletserver.TLSOptions
-	SecureServing() *options.SecureServingOptionsWithLoopback
 	NodeReady() <-chan struct{}
 	NodeRef() *corev1.ObjectReference
 

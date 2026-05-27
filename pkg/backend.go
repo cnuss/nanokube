@@ -316,16 +316,6 @@ func (c *managerImpl) GetAllocateResourcesPodAdmitHandler() lifecycle.PodAdmitHa
 }
 
 func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
-	select {
-	case <-c.backend.Nanokube().Canceled():
-		return lifecycle.PodAdmitResult{
-			Admit:   false,
-			Reason:  "NodeShutdown",
-			Message: "Pod was rejected as the node is shutting down.",
-		}
-	default:
-	}
-
 	pod := attributes.Pod
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
 

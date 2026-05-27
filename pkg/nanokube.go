@@ -3,24 +3,18 @@ package pkg
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	_ "embed"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	_ "unsafe"
 
@@ -29,13 +23,10 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
-	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	apifeatures "k8s.io/apiserver/pkg/features"
-	"k8s.io/apiserver/pkg/server/dynamiccertificates"
-	"k8s.io/apiserver/pkg/server/options"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -43,23 +34,10 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/cert"
-	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
-	apiserveroptions "k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
-	"k8s.io/kubernetes/pkg/capabilities"
 	"k8s.io/kubernetes/pkg/features"
-	"k8s.io/kubernetes/pkg/kubelet"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
-	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
-	probetest "k8s.io/kubernetes/pkg/kubelet/prober/testing"
-	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
-	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
-	"k8s.io/kubernetes/pkg/util/oom"
-	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util/hostutil"
-	"k8s.io/kubernetes/pkg/volume/util/subpath"
-	"k8s.io/mount-utils"
 )
 
 func NewNanokube(ctx context.Context) v1.Nanokube {
@@ -69,9 +47,7 @@ func NewNanokube(ctx context.Context) v1.Nanokube {
 		ctx:                           ctx,
 		cancel:                        cancel,
 		options:                       nanokube.NewOptions(),
-		canceled:                      make(chan struct{}),
 		exitCode:                      make(chan int, 1),
-		apiserverProvided:             make(chan struct{}),
 		storageProvided:               make(chan struct{}),
 		sharedInformerFactoryProvided: make(chan struct{}),
 		loopbackProvided:              make(chan struct{}),
@@ -114,13 +90,6 @@ type nanokubeImpl struct {
 	version     string
 	versionOnce sync.Once
 
-	runOnce sync.Once
-
-	canceled     chan struct{}
-	canceledOnce sync.Once
-	cancelMu     sync.Mutex
-	cancelHooks  [][]func(context.Context)
-	cancelOnce   sync.Once
 	cancelErrs   []error
 	cancelErrsMu sync.Mutex
 
@@ -129,9 +98,6 @@ type nanokubeImpl struct {
 
 	host     v1.Host
 	hostOnce sync.Once
-
-	apiserver         v1.ApiServer
-	apiserverProvided chan struct{}
 
 	storage         v1.Storage
 	storageOnce     sync.Once
@@ -151,32 +117,12 @@ type nanokubeImpl struct {
 	tunnels sync.Map
 
 	pidfileWritten bool
-	detachOnce     sync.Once
 
-	httpServer     *http.Server
-	httpServerOnce sync.Once
-
-	listener     net.Listener
-	listenerOnce sync.Once
-
-	server     *kubeletserver.Server
-	serverOnce sync.Once
-
-	bootstrap     kubelet.Bootstrap
-	bootstrapOnce sync.Once
-
-	// folded from former KubeImpl
 	kubeletFlags     *kubeletoptions.KubeletFlags
 	kubeletFlagsOnce sync.Once
 
 	kubeletConfiguration     *kubeletconfig.KubeletConfiguration
 	kubeletConfigurationOnce sync.Once
-
-	kubeletDependencies     *kubelet.Dependencies
-	kubeletDependenciesOnce sync.Once
-
-	apiServerOptions     *apiserveroptions.CompletedOptions
-	apiServerOptionsOnce sync.Once
 
 	sharedInformerFactory         informers.SharedInformerFactory
 	sharedInformerFactoryOnce     sync.Once
@@ -200,15 +146,6 @@ type nanokubeImpl struct {
 
 	proxiedRecorder     record.EventRecorder
 	proxiedRecorderOnce sync.Once
-
-	tlsConfig     *tls.Config
-	tlsConfigOnce sync.Once
-
-	tlsOptions     *kubeletserver.TLSOptions
-	tlsOptionsOnce sync.Once
-
-	secureServing     *options.SecureServingOptionsWithLoopback
-	secureServingOnce sync.Once
 
 	certKeyOnce sync.Once
 
@@ -290,47 +227,6 @@ func (k *nanokubeImpl) Broadcaster() record.EventBroadcaster {
 	return k.broadcaster
 }
 
-func (k *nanokubeImpl) ApiServerOptions() *apiserveroptions.CompletedOptions {
-	k.apiServerOptionsOnce.Do(func() {
-		tunnel := k.Tunnel()
-		opts := apiserveroptions.NewServerRunOptions()
-		opts.Authentication.ServiceAccounts.Issuers = []string{fmt.Sprintf("https://%s", tunnel.FQDN())}
-		opts.Authentication.ServiceAccounts.KeyFiles = []string{k.KeyFilePath()}
-		opts.Authorization.Modes = []string{"Node", "RBAC"}
-		opts.EndpointReconcilerType = "none" // TODO(partial): manage kubernetes service
-		// opts.Etcd.StorageConfig.Transport.ServerList = k.Storage().Servers()
-		opts.GenericServerRunOptions.ExternalHost = tunnel.FQDN()
-		// TODO(incomplete): fiddling with shutdown
-		opts.GenericServerRunOptions.ShutdownDelayDuration = 5 * time.Second
-		opts.GenericServerRunOptions.ShutdownWatchTerminationGracePeriod = 10 * time.Second
-		opts.GenericServerRunOptions.ShutdownSendRetryAfter = true
-		opts.KubeletConfig.PreferredAddressTypes = []string{
-			string(corev1.NodeExternalDNS),
-			// string(corev1.NodeInternalIP),
-			// string(corev1.NodeInternalDNS),
-			// string(corev1.NodeHostName),
-		}
-		opts.SecureServing = k.SecureServing()
-		opts.ServiceAccountSigningKeyFile = k.KeyFilePath()
-
-		complete, err := opts.Complete(k)
-		if err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("failed to complete apiserver options: %w", err)))
-			return
-		}
-
-		errs := complete.Validate()
-		if len(errs) > 0 {
-			k.Cancel(nanokube.NewError(fmt.Errorf("failed to validate apiserver options: %v", errs)))
-			return
-		}
-
-		klog.InfoS("apiserver configured", "fqdn", opts.GenericServerRunOptions.ExternalHost)
-		k.apiServerOptions = &complete
-	})
-	return k.apiServerOptions
-}
-
 func (k *nanokubeImpl) KubeletHostname() string {
 	tunnel := k.Tunnel()
 	return tunnel.Hostname()
@@ -371,50 +267,6 @@ func (k *nanokubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguratio
 		k.kubeletConfiguration.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: 30 * time.Second}
 	})
 	return k.kubeletConfiguration
-}
-
-func (k *nanokubeImpl) KubeletDependencies() *kubelet.Dependencies {
-	k.kubeletDependenciesOnce.Do(func() {
-		k.kubeletDependencies = &kubelet.Dependencies{
-			// These dependencies are required by the kubelet
-			RemoteRuntimeService: nil,
-			RemoteImageService:   nil,
-			CAdvisorInterface:    nil,
-			ContainerManager:     nil,
-			TLSOptions:           nil,
-			// These are needed for non-standalone mode
-			KubeClient:      nil,
-			HeartbeatClient: nil,
-			// Use fake implementations for the rest of the dependencies
-			ProbeManager:              probetest.FakeManager{},
-			OSInterface:               &containertest.FakeOS{},
-			VolumePlugins:             []volume.VolumePlugin{},
-			OOMAdjuster:               oom.NewFakeOOMAdjuster(),
-			Mounter:                   &mount.FakeMounter{},
-			Subpather:                 &subpath.FakeSubpath{},
-			HostUtil:                  hostutil.NewFakeHostUtil(nil),
-			PodStartupLatencyTracker:  kubeletutil.NewPodStartupLatencyTracker(),
-			NodeStartupLatencyTracker: kubeletutil.NewNodeStartupLatencyTracker(),
-			TracerProvider:            noopoteltrace.NewTracerProvider(),
-			Recorder:                  &record.FakeRecorder{},
-		}
-		k.kubeletDependencies.KubeClient = k.Client()
-		k.kubeletDependencies.HeartbeatClient = k.Client()
-		k.kubeletDependencies.RemoteRuntimeService = k.DefaultBackend().Driver()
-		k.kubeletDependencies.RemoteImageService = k.DefaultBackend().Driver()
-		k.kubeletDependencies.CAdvisorInterface = k.DefaultBackend()
-		k.kubeletDependencies.ContainerManager = k.DefaultBackend().Manager()
-		k.kubeletDependencies.TLSOptions = k.TLSOptions()
-		k.kubeletDependencies.ProbeManager = nil
-		// TODO(1.36): Dependencies.Services field was removed; backend WebServices need a new mount point
-		k.kubeletDependencies.VolumePlugins = k.Host().VolumePlugins()
-		k.kubeletDependencies.OSInterface = k.Host()
-		k.kubeletDependencies.Mounter = k.Host()
-		k.kubeletDependencies.Subpather = k.Host()
-		k.kubeletDependencies.HostUtil = k.Host()
-		k.kubeletDependencies.Recorder = k
-	})
-	return k.kubeletDependencies
 }
 
 func (k *nanokubeImpl) Args(service v1.ServiceName, mountPath string) []string {
@@ -539,80 +391,6 @@ func (k *nanokubeImpl) NodeRef() *corev1.ObjectReference {
 	return k.nodeRef
 }
 
-func (k *nanokubeImpl) SecureServing() *options.SecureServingOptionsWithLoopback {
-	k.secureServingOnce.Do(func() {
-		tunnel := k.Tunnel()
-		listener, err := net.Listen("tcp", net.JoinHostPort(tunnel.LocalIP().String(), strconv.FormatUint(uint64(tunnel.LocalPort()), 10)))
-		if err != nil {
-			k.Cancel(nanokube.NewError(fmt.Errorf("failed to create listener: %w", err)).WithCode(1))
-			return
-		}
-
-		ss := options.NewSecureServingOptions().WithLoopback()
-		ss.BindAddress = tunnel.LocalIP()
-		ss.BindPort = int(tunnel.LocalPort())
-		ss.Listener = listener
-		ss.DisableHTTP2Serving = !v1.HTTP2
-		ss.ServerCert = options.GeneratableKeyCert{
-			CertKey: options.CertKey{
-				CertFile: k.CertFilePath(),
-				KeyFile:  k.KeyFilePath(),
-			},
-		}
-		k.secureServing = ss
-	})
-	return k.secureServing
-}
-
-func (k *nanokubeImpl) TLSConfig() *tls.Config {
-	k.tlsConfigOnce.Do(func() {
-		nextProtos := []string{"h2", "http/1.1"}
-		if !v1.HTTP2 {
-			nextProtos = []string{"http/1.1"}
-		}
-		opts := k.TLSOptions()
-
-		tlsConfig := &tls.Config{
-			MinVersion:       opts.MinVersion,
-			CipherSuites:     opts.CipherSuites,
-			CurvePreferences: opts.CurvePreferences,
-			NextProtos:       nextProtos,
-		}
-
-		// TODO(partial): get rid of this. this makes the LookbackClient work
-		si := k.ApiServer().Server().SecureServingInfo
-		dyn := dynamiccertificates.NewDynamicServingCertificateController(tlsConfig, nil, si.Cert, si.SNICerts, nil)
-		si.Cert.AddListener(dyn)
-		dyn.RunOnce()
-
-		tlsConfig.GetConfigForClient = dyn.GetConfigForClient
-		k.tlsConfig = tlsConfig
-	})
-	return k.tlsConfig
-}
-
-func (k *nanokubeImpl) TLSOptions() *kubeletserver.TLSOptions {
-	k.tlsOptionsOnce.Do(func() {
-		k.tlsOptions = &kubeletserver.TLSOptions{
-			MinVersion: func() uint16 {
-				if v, err := cliflag.TLSVersion(k.KubeletConfiguration().TLSMinVersion); err == nil {
-					return v
-				}
-				return cliflag.DefaultTLSVersion()
-			}(),
-			CipherSuites: func() []uint16 {
-				if v, err := cliflag.TLSCipherSuites(k.KubeletConfiguration().TLSCipherSuites); err == nil {
-					return v
-				}
-				return nil
-			}(),
-			CertFile: k.CertFilePath(),
-			KeyFile:  k.KeyFilePath(),
-		}
-	})
-	return k.tlsOptions
-}
-
 func (k *nanokubeImpl) CertFilePath() string {
 	certPath, _ := k.ensureCertKey()
 	return certPath
@@ -732,28 +510,6 @@ func (k *nanokubeImpl) ensureCertKey() (string, string) {
 	return certPath, keyPath
 }
 
-const shutdownTimeout = 30 * time.Second
-
-// keepAliveListener mirrors the private tcpKeepAliveListener in
-// k8s.io/apiserver/pkg/server: enables TCP keep-alive on accepted
-// connections so half-dead clients get cleaned up.
-type keepAliveListener struct {
-	net.Listener
-	period time.Duration
-}
-
-func (ln keepAliveListener) Accept() (net.Conn, error) {
-	c, err := ln.Listener.Accept()
-	if err != nil {
-		return nil, err
-	}
-	if tc, ok := c.(*net.TCPConn); ok {
-		tc.SetKeepAlive(true)
-		tc.SetKeepAlivePeriod(ln.period)
-	}
-	return c, nil
-}
-
 func (k *nanokubeImpl) CancelErr(reason error) {
 	k.Cancel(nanokube.NewError(reason))
 }
@@ -762,8 +518,6 @@ func (k *nanokubeImpl) Cancel(reason v1.Error) {
 	k.cancelErrsMu.Lock()
 	k.cancelErrs = append(k.cancelErrs, reason)
 	k.cancelErrsMu.Unlock()
-	k.canceledOnce.Do(func() { close(k.canceled) })
-	k.runCancelHooks()
 	if k.pidfileWritten {
 		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
 		if err := os.Remove(pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -786,103 +540,6 @@ func (k *nanokubeImpl) Errors() []error {
 	out := make([]error, len(k.cancelErrs))
 	copy(out, k.cancelErrs)
 	return out
-}
-
-func (k *nanokubeImpl) Detach() {
-	k.detachOnce.Do(func() {
-		pidStr := os.Getenv("NANOKUBE_LAUNCHER_PID")
-		if pidStr == "" {
-			return
-		}
-		ppid, err := strconv.Atoi(pidStr)
-		if err != nil {
-			klog.ErrorS(err, "invalid NANOKUBE_LAUNCHER_PID", "value", pidStr)
-			return
-		}
-		if err := syscall.Kill(ppid, syscall.SIGUSR1); err != nil {
-			klog.ErrorS(err, "failed to signal launcher", "pid", ppid)
-		}
-	})
-}
-
-func (k *nanokubeImpl) Canceled() <-chan struct{} {
-	return k.canceled
-}
-
-func (k *nanokubeImpl) OnCancel(fns ...func(ctx context.Context)) v1.Nanokube {
-	k.cancelMu.Lock()
-	defer k.cancelMu.Unlock()
-	k.cancelHooks = append(k.cancelHooks, fns)
-	return k
-}
-
-func (k *nanokubeImpl) OnReady(service v1.ServiceName, fns ...func(ctx context.Context)) v1.Nanokube {
-	for _, fn := range fns {
-		var ch <-chan struct{}
-
-		switch service {
-		case v1.APIServerService:
-			ch = k.ApiServer().Ready()
-		case v1.Node:
-			ch = k.NodeReady()
-		default:
-			k.Cancel(nanokube.NewError(fmt.Errorf("unknown service %s", service)))
-			return k
-		}
-
-		go func(fn func(ctx context.Context), ch <-chan struct{}) {
-			for {
-				select {
-				case <-ch:
-					fn(k)
-					return
-				case <-k.Canceled():
-					return
-				}
-			}
-		}(fn, ch)
-	}
-	return k
-}
-
-func (k *nanokubeImpl) runCancelHooks() {
-	k.cancelOnce.Do(func() {
-		k.cancelMu.Lock()
-		groups := append([][]func(context.Context){}, k.cancelHooks...)
-		k.cancelMu.Unlock()
-
-		hookCtx, hookCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer hookCancel()
-
-		for groupIdx, group := range groups {
-			var wg sync.WaitGroup
-			for _, hook := range group {
-				wg.Add(1)
-				go func(fn func(context.Context)) {
-					defer wg.Done()
-					defer func() {
-						if r := recover(); r != nil {
-							klog.ErrorS(nil, "cancel hook panicked", "group", groupIdx, "recover", r, "stack", string(debug.Stack()))
-						}
-					}()
-					fn(hookCtx)
-				}(hook)
-			}
-
-			done := make(chan struct{})
-			go func() {
-				wg.Wait()
-				close(done)
-			}()
-
-			select {
-			case <-done:
-			case <-hookCtx.Done():
-				klog.InfoS("cancel hook group timed out", "group", groupIdx, "timeout", shutdownTimeout)
-				return
-			}
-		}
-	})
 }
 
 func (k *nanokubeImpl) Version() string {
@@ -916,17 +573,6 @@ func (k *nanokubeImpl) Client() v1.Client {
 		k.client = nanokube.NewClient(k, k.loopback)
 	})
 	return k.client
-}
-
-func (k *nanokubeImpl) WithApiServer(apiserver v1.ApiServer) v1.Nanokube {
-	k.apiserver = apiserver
-	close(k.apiserverProvided)
-	return k
-}
-
-func (k *nanokubeImpl) ApiServer() v1.ApiServer {
-	<-k.apiserverProvided
-	return k.apiserver
 }
 
 func (k *nanokubeImpl) Backend(name v1.BackendName) v1.Backend {
@@ -1029,108 +675,4 @@ func (k *nanokubeImpl) StaticPods() []*corev1.Pod {
 		})
 	})
 	return k.staticPods
-}
-
-func (k *nanokubeImpl) Bootstrap() kubelet.Bootstrap {
-	k.bootstrapOnce.Do(func() {
-		// kubeDeps := k.KubeletDependencies()
-
-		// server := &kubeletoptions.KubeletServer{
-		// 	KubeletFlags:         *k.KubeletFlags(),
-		// 	KubeletConfiguration: *k.KubeletConfiguration(),
-		// }
-
-		// hostname, _ := nodeutil.GetHostname(server.HostnameOverride)
-		// nodeName := types.NodeName(hostname)
-		// nodeIPs, _, _ := nodeutil.ParseNodeIPArgument(server.NodeIP, server.CloudProvider)
-
-		// klet, err := kubeletapp.CreateAndInitKubelet(k.ctx, server, kubeDeps, hostname, nodeName, nodeIPs)
-		// if err != nil {
-		// 	k.Cancel(nanokube.NewError(fmt.Errorf("create kubelet: %w", err)).WithCode(1))
-		// 	return
-		// }
-
-		// k.bootstrap = klet
-	})
-	return k.bootstrap
-}
-
-func (k *nanokubeImpl) Run() v1.Nanokube {
-	k.runOnce.Do(func() {
-		pidPath := k.Options().FilePathAt(v1.PidFile(k.Options()))
-		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-			klog.ErrorS(err, "failed to write pidfile", "path", pidPath)
-		} else {
-			k.pidfileWritten = true
-		}
-
-		for _, pod := range k.StaticPods() {
-			data, err := json.Marshal(pod)
-			if err != nil {
-				k.Cancel(nanokube.NewError(fmt.Errorf("Failed to marshal static pod %s: %v", pod.Name, err)))
-				return
-			}
-			if err := os.WriteFile(filepath.Join(k.KubeletConfiguration().StaticPodPath, pod.Name+".json"), data, 0o644); err != nil {
-				k.Cancel(nanokube.NewError(fmt.Errorf("Failed to write static pod manifest %s: %v", pod.Name, err)))
-				return
-			}
-		}
-
-		capabilities.Initialize(capabilities.Capabilities{AllowPrivileged: true})
-
-		go func() {
-			ln := keepAliveListener{Listener: k.SecureServing().Listener, period: 1 * time.Minute}
-			if err := k.HTTPServer().ServeTLS(ln, k.CertFilePath(), k.KeyFilePath()); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				k.Cancel(nanokube.NewError(fmt.Errorf("kubelet HTTP server error: %w", err)).WithCode(1))
-			}
-		}()
-		go k.Bootstrap().Run(k.ctx, k.KubeletDependencies().PodConfig.Updates())
-		go k.Bootstrap().ListenAndServePodResources(k.ctx)
-		go k.Bootstrap().ListenAndServePods(k.ctx)
-	})
-	return k
-}
-
-func (k *nanokubeImpl) Server() *kubeletserver.Server {
-	k.serverOnce.Do(func() {
-		// kl := k.Bootstrap().(*kubelet.Kubelet)
-		// ksrv := kubeletserver.NewServer(k.ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), k.KubeletDependencies().Auth, k.KubeletConfiguration())
-		// ksrv.InstallTracingFilter(k.KubeletDependencies().TracerProvider)
-
-		// //
-		// // DEVNOTE: add streaming handlers
-		// //          TODO(partial): consider providing these directly and disable API Server management of /exec /attach /portforward
-		// //
-		// for _, ws := range k.Services(k.Tunnel().URL()) {
-		// 	ksrv.Restful().Add(ws)
-		// 	nanokube.Log.Info("registered service", "service", ws.RootPath())
-		// }
-
-		// //
-		// // DEVNOTE: we combine the kubelet server and the kubernetes apiserver together
-		// //          TODO(partial): add kubelet auth
-		// //
-		// ksrv.Restful().Handle("/", k.ApiServer().Handler())
-		// nanokube.Log.Info("registered API server")
-
-		// k.server = &ksrv
-	})
-	return k.server
-}
-
-func (k *nanokubeImpl) HTTPServer() *http.Server {
-	k.httpServerOnce.Do(func() {
-		tunnel := k.Tunnel()
-		k.httpServer = &http.Server{
-			Addr:      net.JoinHostPort(tunnel.LocalIP().String(), strconv.FormatUint(uint64(tunnel.LocalPort()), 10)),
-			TLSConfig: k.TLSConfig(),
-			Handler:   k.Server(),
-		}
-		k.httpServer.RegisterOnShutdown(func() {
-			if err := k.ApiServer().Destroy(); err != nil {
-				klog.ErrorS(err, "failed to destroy API server")
-			}
-		})
-	})
-	return k.httpServer
 }
