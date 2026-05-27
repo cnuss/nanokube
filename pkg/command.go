@@ -89,6 +89,7 @@ type Command struct {
 	start      *cobra.Command
 	byName     map[string]*cobra.Command
 	startHooks map[string]startHookFn
+	stopHooks  map[string]stopHookFn
 
 	paths      []string
 	pathsReady chan struct{}
@@ -110,6 +111,7 @@ type Command struct {
 type (
 	hookCtx     = genericapiserver.PostStartHookContext
 	startHookFn = func(errFn func(error), doneFn func()) func(hookCtx) error
+	stopHookFn  = func() error
 )
 
 func NewNanokubeCommand(ctx context.Context) *Command {
@@ -123,6 +125,7 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		ctx:                   nano,
 		byName:                make(map[string]*cobra.Command),
 		startHooks:            make(map[string]startHookFn),
+		stopHooks:             make(map[string]stopHookFn),
 		paths:                 make([]string, 0),
 		pathsReady:            make(chan struct{}),
 		kubeletServerProvided: make(chan struct{}),
@@ -165,6 +168,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 			c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 			c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
 			c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsReady, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
+			c.stopHooks["cordon-node"] = stopHook("cordon-node", c.cordonNode)
+			c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
 			return c.byName["kube-apiserver"].RunE(cmd, args)
 		},
 	}
@@ -304,10 +309,10 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 						server.GenericAPIServer.Handler.GoRestfulContainer.Add(ws)
 						c.paths = append(c.paths, ws.RootPath())
 					}
+					for name, hook := range c.stopHooks {
+						server.GenericAPIServer.AddPreShutdownHook(name, hook)
+					}
 				}()
-
-				server.GenericAPIServer.AddPreShutdownHook("cordon", c.cordonNode)
-				server.GenericAPIServer.AddPreShutdownHook("drain", c.drainNode)
 
 				var wg sync.WaitGroup
 
@@ -317,13 +322,6 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 						return startHook(c.Cancel, wg.Done)(ctx)
 					})
 				}
-
-				server.GenericAPIServer.AddPreShutdownHook("cordon", func() error {
-					return nil
-				})
-				server.GenericAPIServer.AddPreShutdownHook("drain", func() error {
-					return nil
-				})
 
 				prepared, err := server.PrepareRun()
 				if err != nil {
@@ -600,6 +598,18 @@ func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) star
 			}()
 			return nil
 		}
+	}
+}
+
+func stopHook(name string, fn func() error) stopHookFn {
+	return func() error {
+		klog.InfoS("starting", "pre-shutdown hook", name)
+		if err := fn(); err != nil {
+			klog.ErrorS(err, "errored", "pre-shutdown hook", name)
+			return err
+		}
+		klog.InfoS("completed", "pre-shutdown hook", name)
+		return nil
 	}
 }
 
