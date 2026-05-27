@@ -64,6 +64,7 @@ var featureGates = []string{
 	"kube:KubeletInUserNamespace=true",
 	"kube:GracefulNodeShutdown=true",
 	"kube:GracefulNodeShutdownBasedOnPodPriority=true",
+	"kube:ControllerManagerReleaseLeaderElectionLockOnExit=true",
 }
 
 var kubeletPaths = []string{
@@ -248,6 +249,7 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
 		cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
 		cmd.Flags().Set("service-account-issuer", "https://kubernetes.default.svc")
+		cmd.Flags().Set("shutdown-delay-duration", handlers.MaxWatchTimeout.String())
 		cmd.Flags().Set("shutdown-send-retry-after", "true")
 		cmd.Flags().Set("shutdown-watch-termination-grace-period", handlers.MaxWatchTimeout.String())
 		cmd.Flags().Set("storage-media-type", "application/json")
@@ -368,6 +370,7 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 			start := kubelet.StartKubelet
 			kubelet.StartKubelet = func(ctx context.Context, k kubeletcore.Bootstrap, podCfg *kubeletconfig.PodConfig, kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *kubeletcore.Dependencies, enableServer bool) {
 				kl := k.(*kubeletcore.Kubelet)
+				defer kl.NodeLeaseController().Stop()
 				c.kubeletServer = kubeletserver.NewServer(ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), kubeDeps.Auth, kubeCfg)
 				close(c.kubeletServerProvided)
 				start(ctx, k, podCfg, kubeCfg, kubeDeps, enableServer)

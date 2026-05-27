@@ -130,7 +130,7 @@ index a0ba37e0103..5c48e600dad 100644
  	klog.Infof("Version: %+v", utilversion.Get())
  
 diff --git a/cmd/kube-controller-manager/app/controllermanager.go b/cmd/kube-controller-manager/app/controllermanager.go
-index 016b00bb315..34aade556c4 100644
+index 016b00bb315..e52f0d8d1f7 100644
 --- a/cmd/kube-controller-manager/app/controllermanager.go
 +++ b/cmd/kube-controller-manager/app/controllermanager.go
 @@ -106,7 +106,7 @@ const (
@@ -155,6 +155,15 @@ index 016b00bb315..34aade556c4 100644
  			c, err := s.Config(ctx, KnownControllers(), ControllersDisabledByDefault(), ControllerAliases())
  			if err != nil {
  				return err
+@@ -156,7 +156,7 @@ controller, and serviceaccounts controller.`,
+ 			// add component version metrics
+ 			s.ComponentGlobalsRegistry.AddMetrics()
+ 
+-			if utilfeature.DefaultFeatureGate.Enabled(cmfeatures.ControllerManagerReleaseLeaderElectionLockOnExit) {
++			if utilfeature.DefaultFeatureGate.Enabled(cmfeatures.ControllerManagerReleaseLeaderElectionLockOnExit) && ctx.Done() == nil {
+ 				ctx = server.SetupSignalContext()
+ 			}
+ 			return Run(ctx, c.Complete())
 @@ -183,6 +183,8 @@ controller, and serviceaccounts controller.`,
  	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
  	cliflag.SetUsageAndHelpFunc(cmd, namedFlagSets, cols)
