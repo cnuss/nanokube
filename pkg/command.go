@@ -169,7 +169,6 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 			c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 			c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
 			c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsReady, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
-			c.stopHooks["cordon-node"] = stopHook("cordon-node", c.cordonNode)
 			c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
 			return c.byName["kube-apiserver"].RunE(cmd, args)
 		},
@@ -352,8 +351,8 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
-				ks.ShutdownGracePeriod = metav1.Duration{Duration: handlers.MaxWatchTimeout}
-				ks.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: handlers.MaxWatchTimeout / 2}
+				ks.ShutdownGracePeriod = metav1.Duration{Duration: 60 * time.Second}
+				ks.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: 30 * time.Second}
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
 				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
 				deps.HostUtil = c.Nano().Host()
@@ -370,10 +369,18 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 			start := kubelet.StartKubelet
 			kubelet.StartKubelet = func(ctx context.Context, k kubeletcore.Bootstrap, podCfg *kubeletconfig.PodConfig, kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *kubeletcore.Dependencies, enableServer bool) {
 				kl := k.(*kubeletcore.Kubelet)
-				defer kl.NodeLeaseController().Stop()
 				c.kubeletServer = kubeletserver.NewServer(ctx, kl, kl.ResourceAnalyzer(), kl.HealthCheckers(), kl.Flagz(), kubeDeps.Auth, kubeCfg)
 				close(c.kubeletServerProvided)
 				start(ctx, k, podCfg, kubeCfg, kubeDeps, enableServer)
+				go func() {
+					<-ctx.Done()
+					gcCtx, cancel := context.WithTimeout(context.Background(), handlers.MaxWatchTimeout)
+					defer cancel()
+					if err := kl.ContainerGC().DeleteAllUnusedContainers(gcCtx); err != nil {
+						klog.ErrorS(err, "shutdown container GC failed")
+					}
+					kl.NodeLeaseController().Stop()
+				}()
 			}
 		})
 	}
@@ -507,21 +514,6 @@ func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
 	}
 }
 
-func (c *Command) cordonNode() error {
-	nodeRef := c.Nano().NodeRef()
-	if nodeRef == nil {
-		return fmt.Errorf("node reference not found")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), handlers.MaxWatchTimeout)
-	defer cancel()
-	node := corev1ac.Node(nodeRef.Name).WithSpec(corev1ac.NodeSpec().WithUnschedulable(true))
-	if _, err := c.Nano().Client().CoreV1().Nodes().Apply(ctx, node, metav1.ApplyOptions{FieldManager: c.Name(), Force: true}); err != nil {
-		return fmt.Errorf("cordon node: %w", err)
-	}
-	klog.InfoS("cordoned node", "node", nodeRef.Name)
-	return nil
-}
-
 func (c *Command) drainNode() error {
 	defer close(c.drainDone)
 
@@ -532,13 +524,18 @@ func (c *Command) drainNode() error {
 	ctx, cancel := context.WithTimeout(context.Background(), handlers.MaxWatchTimeout)
 	defer cancel()
 	client := c.Nano().Client()
+
+	node := corev1ac.Node(nodeRef.Name).WithSpec(corev1ac.NodeSpec().WithUnschedulable(true))
+	if _, err := client.CoreV1().Nodes().Apply(ctx, node, metav1.ApplyOptions{FieldManager: c.Name(), Force: true}); err != nil {
+		return fmt.Errorf("cordon node: %w", err)
+	}
+	klog.InfoS("cordoned node", "node", nodeRef.Name)
 	pods, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + nodeRef.Name,
 	})
 	if err != nil {
 		return fmt.Errorf("list pods on node: %w", err)
 	}
-	zero := int64(0)
 	pending := make([]corev1.Pod, 0, len(pods.Items))
 	for _, pod := range pods.Items {
 		if pod.Annotations[corev1.MirrorPodAnnotationKey] != "" {
@@ -550,8 +547,7 @@ func (c *Command) drainNode() error {
 			continue
 		}
 		eviction := &policyv1.Eviction{
-			ObjectMeta:    metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
-			DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: &zero},
+			ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
 		}
 		if err := client.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction); err != nil {
 			klog.ErrorS(err, "evict pod failed", "pod", klog.KObj(&pod))
