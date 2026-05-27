@@ -162,9 +162,9 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 					}
 				}
 			}
-			c.startHooks["kube-controller-manager-cmd"] = c.runEHook(c.kubeconfigReady, c.byName["kube-controller-manager"])
-			c.startHooks["kube-scheduler-cmd"] = c.runEHook(c.kubeconfigReady, c.byName["kube-scheduler"])
-			c.startHooks["kubelet-cmd"] = c.runEHook(c.kubeconfigReady, c.byName["kubelet"])
+			c.startHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.byName["kube-controller-manager"])
+			c.startHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.byName["kube-scheduler"])
+			c.startHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.byName["kubelet"])
 			c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", nil, c.updateKubeconfig)
 			c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 			c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
@@ -241,21 +241,22 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		cmd.Flags().Set("allow-privileged", "true")
 		cmd.Flags().Set("api-audiences", "https://kubernetes.default.svc")
 		cmd.Flags().Set("authorization-mode", "RBAC,Node")
-		cmd.Flags().Set("bind-address", c.Nano().Tunnel().LocalIP().String())            // TODO(lazify): move to runOnce
-		cmd.Flags().Set("etcd-servers", strings.Join(c.Nano().Storage().Servers(), ",")) // TODO(lazify): move to runOnce
+		cmd.Flags().Set("etcd-servers", "http://")
 		cmd.Flags().Set("kubelet-preferred-address-types", "ExternalDNS")
-		cmd.Flags().Set("secure-port", fmt.Sprintf("%d", c.Nano().Tunnel().LocalPort())) // TODO(lazify): move to runOnce
 		cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
 		cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
 		cmd.Flags().Set("service-account-issuer", "https://kubernetes.default.svc")
-		cmd.Flags().Set("shutdown-delay-duration", handlers.MaxWatchTimeout.String())
+		cmd.Flags().Set("shutdown-delay-duration", "10s")
 		cmd.Flags().Set("shutdown-send-retry-after", "true")
-		cmd.Flags().Set("shutdown-watch-termination-grace-period", handlers.MaxWatchTimeout.String())
+		cmd.Flags().Set("shutdown-watch-termination-grace-period", "10s")
 		cmd.Flags().Set("storage-media-type", "application/json")
 		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
 		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 		c.apiserverRunOnce.Do(func() {
 			apiserver.Run = func(ctx context.Context, opts apiserveroptions.CompletedOptions) error {
+				opts.SecureServing.BindAddress = c.Nano().Tunnel().LocalIP()
+				opts.SecureServing.BindPort = c.Nano().Tunnel().LocalPort()
+				opts.Etcd.StorageConfig.Transport.ServerList = c.Nano().Storage().Servers()
 				config := &apiserver.Config{Options: opts}
 
 				genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(

@@ -12,8 +12,6 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 	_ "unsafe"
@@ -243,78 +241,6 @@ func (k *nanokubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
 		k.kubeletFlags.RootDirectory = k.Options().DataDirAt(v1.DataDirKubelet)
 	})
 	return k.kubeletFlags
-}
-
-func (k *nanokubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguration {
-	k.kubeletConfigurationOnce.Do(func() {
-		tunnel := k.Tunnel()
-		if cfg, err := kubeletoptions.NewKubeletConfiguration(); err == nil {
-			k.kubeletConfiguration = cfg
-		} else {
-			k.kubeletConfiguration = &kubeletconfig.KubeletConfiguration{}
-		}
-		k.kubeletConfiguration.Address = tunnel.LocalIP().String()
-		k.kubeletConfiguration.ClusterDomain = tunnel.Domain()
-		// TODO(incomplete): probe a container to get resolv.conf
-		k.kubeletConfiguration.ClusterDNS = []string{"1.1.1.1"}
-		k.kubeletConfiguration.FileCheckFrequency = metav1.Duration{Duration: 1 * time.Second}
-		k.kubeletConfiguration.PodLogsDir = k.Options().DataDirAt(v1.DataDirLogs)
-		k.kubeletConfiguration.Port = tunnel.LocalPort()
-		k.kubeletConfiguration.ReadOnlyPort = 0
-		k.kubeletConfiguration.RegisterNode = true
-		k.kubeletConfiguration.StaticPodPath = k.Options().DataDirAt(v1.DataDirStaticPods)
-		k.kubeletConfiguration.ShutdownGracePeriod = metav1.Duration{Duration: 60 * time.Second}
-		k.kubeletConfiguration.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: 30 * time.Second}
-	})
-	return k.kubeletConfiguration
-}
-
-func (k *nanokubeImpl) Args(service v1.ServiceName, mountPath string) []string {
-	// Materialize the combined CA bundle on disk and return the mount-relative
-	// path for child component args.
-	rootCaFile := func() string {
-		k.RootCaFilePath()
-		return string(v1.CAFile)
-	}
-
-	gateKeys := make([]string, 0, len(FeatureGates))
-	for k := range FeatureGates {
-		gateKeys = append(gateKeys, k)
-	}
-	sort.Strings(gateKeys)
-	gateParts := make([]string, 0, len(gateKeys))
-	for _, k := range gateKeys {
-		gateParts = append(gateParts, fmt.Sprintf("%s=%t", k, FeatureGates[k]))
-	}
-	featureGates := "--feature-gates=" + strings.Join(gateParts, ",")
-
-	switch service {
-	case v1.ControllerManagerService:
-		return []string{
-			"--kubeconfig=" + mountPath + "/.kube/config",
-			"--authentication-kubeconfig=" + mountPath + "/.kube/config",
-			"--authorization-kubeconfig=" + mountPath + "/.kube/config",
-			"--leader-elect=true",
-			"--use-service-account-credentials=false",
-			"--tls-cert-file=" + mountPath + "/" + string(v1.CertFile),
-			"--tls-private-key-file=" + mountPath + "/" + string(v1.KeyFile),
-			"--service-account-private-key-file=" + mountPath + "/" + string(v1.KeyFile),
-			"--root-ca-file=" + mountPath + "/" + rootCaFile(),
-			featureGates,
-		}
-	case v1.SchedulerService:
-		return []string{
-			"--kubeconfig=" + mountPath + "/.kube/config",
-			"--authentication-kubeconfig=" + mountPath + "/.kube/config",
-			"--authorization-kubeconfig=" + mountPath + "/.kube/config",
-			"--authentication-skip-lookup=true",
-			"--leader-elect=true",
-			"--tls-cert-file=" + mountPath + "/" + string(v1.CertFile),
-			"--tls-private-key-file=" + mountPath + "/" + string(v1.KeyFile),
-			featureGates,
-		}
-	}
-	return []string{}
 }
 
 func (k *nanokubeImpl) Environ() []string {
@@ -656,17 +582,10 @@ func (k *nanokubeImpl) StaticPods() []*corev1.Pod {
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{
 					{
-						Name:         "controller-manager",
-						Image:        "registry.k8s.io/kube-controller-manager:" + k.Version(),
-						Command:      []string{"kube-controller-manager"},
-						Args:         k.Args(v1.ControllerManagerService, mountPath),
-						VolumeMounts: volumeMounts,
-					},
-					{
-						Name:         "scheduler",
-						Image:        "registry.k8s.io/kube-scheduler:" + k.Version(),
-						Command:      []string{"kube-scheduler"},
-						Args:         k.Args(v1.SchedulerService, mountPath),
+						Name:         "some-name",
+						Image:        "some-image:latest",
+						Command:      []string{"some-command"},
+						Args:         []string{"some-args"},
 						VolumeMounts: volumeMounts,
 					},
 				},

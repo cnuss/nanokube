@@ -76,6 +76,7 @@ type Ready interface {
 	Ready() <-chan struct{}
 }
 
+// TODO(deprecate)
 type Options interface {
 	Name() string
 	Verbosity() int
@@ -92,7 +93,7 @@ type Tunnel interface {
 	Ready
 
 	Context() context.Context
-	LocalPort() int32
+	LocalPort() int
 	LocalIP() net.IP
 	LocalHostname() string
 	LocalDomain() string
@@ -256,13 +257,11 @@ type Host interface {
 type Storage interface {
 	generic.RESTOptionsGetter
 
-	Ready() <-chan struct{}
-	Shutdown()
-
 	SetConfig(config *server.Config) *server.Config
 	WithResource(inner kubestorage.Interface, resource schema.GroupResource) StorageClient
 
 	Servers() []string
+	Shutdown()
 }
 
 type StorageClient interface {

@@ -66,10 +66,6 @@ func NewStorage(nano v1.Nanokube) v1.Storage {
 
 var _ v1.Storage = &StorageImpl{}
 
-func (s *StorageImpl) Ready() <-chan struct{} {
-	return s.ready
-}
-
 func (s *StorageImpl) Shutdown() {
 	s.shutdownOnce.Do(func() { close(s.shutdown) })
 	if s.started.Load() {

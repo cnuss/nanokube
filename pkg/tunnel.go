@@ -57,7 +57,7 @@ type TunnelImpl struct {
 	localHost     net.IP
 	localHostOnce sync.Once
 
-	localPort     int32
+	localPort     int
 	localPortOnce sync.Once
 
 	caCerts     []*x509.Certificate
@@ -96,7 +96,7 @@ func (t *TunnelImpl) LocalIP() net.IP {
 	return t.localHost
 }
 
-func (t *TunnelImpl) LocalPort() int32 {
+func (t *TunnelImpl) LocalPort() int {
 	t.localPortOnce.Do(func() {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -104,7 +104,7 @@ func (t *TunnelImpl) LocalPort() int32 {
 			return
 		}
 		defer listener.Close()
-		t.localPort = int32(listener.Addr().(*net.TCPAddr).Port)
+		t.localPort = int(listener.Addr().(*net.TCPAddr).Port)
 	})
 	return t.localPort
 }
