@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apiserver/pkg/endpoints/handlers"
 	apifeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/options"
@@ -367,6 +368,8 @@ func (k *nanokubeImpl) KubeletConfiguration() *kubeletconfig.KubeletConfiguratio
 		k.kubeletConfiguration.ReadOnlyPort = 0
 		k.kubeletConfiguration.RegisterNode = true
 		k.kubeletConfiguration.StaticPodPath = k.Options().DataDirAt(v1.DataDirStaticPods)
+		k.kubeletConfiguration.ShutdownGracePeriod = metav1.Duration{Duration: handlers.MaxWatchTimeout}
+		k.kubeletConfiguration.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: handlers.MaxWatchTimeout / 2}
 	})
 	return k.kubeletConfiguration
 }
@@ -441,7 +444,6 @@ func (k *nanokubeImpl) Args(service v1.ServiceName, mountPath string) []string {
 			"--authentication-kubeconfig=" + mountPath + "/.kube/config",
 			"--authorization-kubeconfig=" + mountPath + "/.kube/config",
 			"--leader-elect=true",
-			"--controller-shutdown-timeout=0",
 			"--use-service-account-credentials=false",
 			"--tls-cert-file=" + mountPath + "/" + string(v1.CertFile),
 			"--tls-private-key-file=" + mountPath + "/" + string(v1.KeyFile),

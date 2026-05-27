@@ -10,7 +10,6 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/docker"
 	"github.com/cnuss/nanokube/pkg/driver/podman"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
 	"k8s.io/klog/v2"
@@ -27,7 +26,6 @@ var (
 
 func init() {
 	ctx, cancel = context.WithCancelCause(genericapiserver.SetupSignalContext())
-	wait.NeverStop = ctx.Done()
 	setupLogging(cancel)
 
 	if !v1.HTTP2 {

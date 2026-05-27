@@ -1,16 +1,28 @@
 diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
-index 134e163eeb3..fb0fa2008a6 100644
+index 134e163eeb3..e8501e58869 100644
 --- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
 +++ b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
-@@ -275,6 +275,12 @@ func handleWatch(ctx context.Context, rw rest.Watcher, scope *RequestScope, req
+@@ -45,6 +45,14 @@ import (
+ 	"k8s.io/klog/v2"
+ )
+ 
++// MaxWatchTimeout caps per-request watch timeouts so the apiserver
++// closes the response frequently — this forces Cloudflare's edge to
++// flush its buffered body. Nanokube also reads this constant to set
++// --shutdown-watch-termination-grace-period, guaranteeing every
++// in-flight watch can finish within one shutdown grace period.
++// See docs/cloudflare-sse-limits.md.
++var MaxWatchTimeout = 5 * time.Second
++
+ // getterFunc performs a get request with the given context and object name. The request
+ // may be used to deserialize an options object to pass to the getter.
+ type getterFunc func(ctx context.Context, name string, req *http.Request) (runtime.Object, error)
+@@ -275,6 +283,9 @@ func handleWatch(ctx context.Context, rw rest.Watcher, scope *RequestScope, req
  	if timeout == 0 && minRequestTimeout > 0 {
  		timeout = time.Duration(float64(minRequestTimeout) * (rand.Float64() + 1.0))
  	}
-+	// nanokube: cap watch timeouts so the apiserver closes the response
-+	// frequently — this forces Cloudflare's edge to flush its buffered
-+	// body. See docs/cloudflare-sse-limits.md.
-+	if timeout > 5*time.Second {
-+		timeout = 5 * time.Second
++	if timeout > MaxWatchTimeout {
++		timeout = MaxWatchTimeout
 +	}
  
  	klog.V(3).InfoS("Starting watch", "path", req.URL.Path, "resourceVersion", opts.ResourceVersion, "labels", opts.LabelSelector, "fields", opts.FieldSelector, "sendInitialEvents", opts.SendInitialEvents, "timeout", timeout, "audit-ID", audit.GetAuditIDTruncated(ctx))

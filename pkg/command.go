@@ -7,15 +7,20 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"github.com/stoewer/go-strcase"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/endpoints/handlers"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/util/webhook"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -57,6 +62,8 @@ var featureGates = []string{
 	"kube:WatchListClient=false",
 	// DEVNOTE: general:
 	"kube:KubeletInUserNamespace=true",
+	"kube:GracefulNodeShutdown=true",
+	"kube:GracefulNodeShutdownBasedOnPodPriority=true",
 }
 
 var kubeletPaths = []string{
@@ -95,6 +102,8 @@ type Command struct {
 	kubeletServer         kubeletserver.Server
 	kubeletServerProvided chan struct{}
 
+	drainDone chan struct{}
+
 	kubeconfigReady chan struct{}
 }
 
@@ -117,8 +126,10 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		paths:                 make([]string, 0),
 		pathsReady:            make(chan struct{}),
 		kubeletServerProvided: make(chan struct{}),
+		drainDone:             make(chan struct{}),
 		kubeconfigReady:       make(chan struct{}),
 	}
+	wait.NeverStop = c.drainDone
 	c.Command.SetContext(nano)
 
 	c.run = &cobra.Command{
@@ -147,14 +158,13 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 					}
 				}
 			}
-			c.startHooks["kube-controller-manager-cmd"] = runEHook(c.kubeconfigReady, c.byName["kube-controller-manager"])
-			c.startHooks["kube-scheduler-cmd"] = runEHook(c.kubeconfigReady, c.byName["kube-scheduler"])
-			c.startHooks["kubelet-cmd"] = runEHook(c.kubeconfigReady, c.byName["kubelet"])
-			c.startHooks["update-kubeconfig"] = fnHook("update-kubeconfig", nil, c.updateKubeconfig)
-			c.startHooks["untaint-node"] = fnHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
-			c.startHooks["update-node-status"] = fnHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
-			// TODO(partial): use a real subject and tighten permissions
-			c.startHooks["update-kubelet-rbac"] = fnHook("kubelet-rbac", c.pathsReady, c.updateKubeletRBAC("system:anonymous"))
+			c.startHooks["kube-controller-manager-cmd"] = c.runEHook(c.kubeconfigReady, c.byName["kube-controller-manager"])
+			c.startHooks["kube-scheduler-cmd"] = c.runEHook(c.kubeconfigReady, c.byName["kube-scheduler"])
+			c.startHooks["kubelet-cmd"] = c.runEHook(c.kubeconfigReady, c.byName["kubelet"])
+			c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", nil, c.updateKubeconfig)
+			c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
+			c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
+			c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsReady, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
 			return c.byName["kube-apiserver"].RunE(cmd, args)
 		},
 	}
@@ -200,6 +210,7 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 	switch name {
 	case "kube-controller-manager":
 		cmd.Flags().Set("authentication-skip-lookup", "true")
+		cmd.Flags().Set("controller-shutdown-timeout", "0")
 		cmd.Flags().Set("leader-elect", "true")
 		cmd.Flags().Set("root-ca-file", c.Nano().RootCaFilePath())
 		cmd.Flags().Set("service-account-private-key-file", c.Nano().KeyFilePath())
@@ -232,6 +243,8 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
 		cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
 		cmd.Flags().Set("service-account-issuer", "https://kubernetes.default.svc")
+		cmd.Flags().Set("shutdown-send-retry-after", "true")
+		cmd.Flags().Set("shutdown-watch-termination-grace-period", handlers.MaxWatchTimeout.String())
 		cmd.Flags().Set("storage-media-type", "application/json")
 		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
 		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
@@ -293,6 +306,9 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 					}
 				}()
 
+				server.GenericAPIServer.AddPreShutdownHook("cordon", c.cordonNode)
+				server.GenericAPIServer.AddPreShutdownHook("drain", c.drainNode)
+
 				var wg sync.WaitGroup
 
 				for name, startHook := range c.startHooks {
@@ -301,6 +317,13 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 						return startHook(c.Cancel, wg.Done)(ctx)
 					})
 				}
+
+				server.GenericAPIServer.AddPreShutdownHook("cordon", func() error {
+					return nil
+				})
+				server.GenericAPIServer.AddPreShutdownHook("drain", func() error {
+					return nil
+				})
 
 				prepared, err := server.PrepareRun()
 				if err != nil {
@@ -311,7 +334,6 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 
 				// TODO(partial): find a better spot for storage shutdown
 				c.Nano().Storage().Shutdown()
-
 				return err
 			}
 		})
@@ -330,6 +352,8 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
+				ks.ShutdownGracePeriod = metav1.Duration{Duration: handlers.MaxWatchTimeout}
+				ks.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: handlers.MaxWatchTimeout / 2}
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
 				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
 				deps.HostUtil = c.Nano().Host()
@@ -432,13 +456,6 @@ func (c *Command) updateNodeStatus(ctx hookCtx) error {
 	return nil
 }
 
-// updateKubeletRBAC grants subject access to each kubelet-style
-// nonResourceURL we proxy under the apiserver mux. One ClusterRole per
-// path ("system:kubelet:<kebab-of-path>"), each labelled so they're
-// aggregated into the "system:kubelet" role; a single ClusterRoleBinding
-// ("system:kubelet:<subject>") then grants the subject the aggregated
-// role. Today this is wide open (system:anonymous → everything);
-// tighten as a followup once we have a real authenticating subject.
 func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
 	return func(ctx hookCtx) error {
 		const aggregateRoleName = "system:kubelet"
@@ -446,8 +463,6 @@ func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
 
 		rbac := c.Nano().Client().RbacV1()
 		opts := metav1.ApplyOptions{FieldManager: c.Name(), Force: true}
-		// Strip leading "system:" so "system:anonymous" yields a binding
-		// named "system:kubelet:anonymous" rather than the doubled prefix.
 		subjectSlug := strings.TrimPrefix(subject, "system:")
 
 		for _, p := range c.paths {
@@ -491,7 +506,81 @@ func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
 	}
 }
 
-func fnHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) startHookFn {
+func (c *Command) cordonNode() error {
+	nodeRef := c.Nano().NodeRef()
+	if nodeRef == nil {
+		return fmt.Errorf("node reference not found")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), handlers.MaxWatchTimeout)
+	defer cancel()
+	node := corev1ac.Node(nodeRef.Name).WithSpec(corev1ac.NodeSpec().WithUnschedulable(true))
+	if _, err := c.Nano().Client().CoreV1().Nodes().Apply(ctx, node, metav1.ApplyOptions{FieldManager: c.Name(), Force: true}); err != nil {
+		return fmt.Errorf("cordon node: %w", err)
+	}
+	klog.InfoS("cordoned node", "node", nodeRef.Name)
+	return nil
+}
+
+func (c *Command) drainNode() error {
+	defer close(c.drainDone)
+
+	nodeRef := c.Nano().NodeRef()
+	if nodeRef == nil {
+		return fmt.Errorf("node reference not found")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), handlers.MaxWatchTimeout)
+	defer cancel()
+	client := c.Nano().Client()
+	pods, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + nodeRef.Name,
+	})
+	if err != nil {
+		return fmt.Errorf("list pods on node: %w", err)
+	}
+	zero := int64(0)
+	pending := make([]corev1.Pod, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		if pod.Annotations[corev1.MirrorPodAnnotationKey] != "" {
+			continue
+		}
+		if slices.ContainsFunc(pod.OwnerReferences, func(o metav1.OwnerReference) bool {
+			return o.Kind == "DaemonSet"
+		}) {
+			continue
+		}
+		eviction := &policyv1.Eviction{
+			ObjectMeta:    metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
+			DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: &zero},
+		}
+		if err := client.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction); err != nil {
+			klog.ErrorS(err, "evict pod failed", "pod", klog.KObj(&pod))
+			continue
+		}
+		pending = append(pending, pod)
+	}
+
+	// Wait for the kubelet to actually tear down — Eviction only schedules
+	// deletion; containers don't disappear until the kubelet sync loop
+	// runs and the runtime removes them.
+	if err := wait.PollUntilContextCancel(ctx, 200*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+		remaining := pending[:0]
+		for _, pod := range pending {
+			_, err := client.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			remaining = append(remaining, pod)
+		}
+		pending = remaining
+		return len(pending) == 0, nil
+	}); err != nil {
+		klog.ErrorS(err, "drain wait timed out", "node", nodeRef.Name, "remaining", len(pending))
+	}
+	klog.InfoS("drained node", "node", nodeRef.Name)
+	return nil
+}
+
+func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) startHookFn {
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
@@ -514,13 +603,21 @@ func fnHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) startHo
 	}
 }
 
-func runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHookFn {
+func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHookFn {
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
 				if waitCh != nil {
 					<-waitCh
 				}
+
+				ctx, cancel := context.WithCancel(context.Background())
+				cmd.SetContext(ctx)
+				go func() {
+					<-c.drainDone
+					cancel()
+				}()
+
 				klog.InfoS("starting", "command", cmd.Name())
 				defer doneFn()
 				if err := cmd.RunE(cmd, []string{}); err != nil {
