@@ -192,7 +192,7 @@ func (c *Command) Cancel(err error) {
 	c.ctx.CancelErr(err)
 }
 
-func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
+func (c *Command) With(cmd *cobra.Command) *Command {
 	cmd.SetContext(c.Context())
 	name := cmd.Name()
 	c.featureGatesOnce.Do(func() {

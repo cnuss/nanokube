@@ -39,10 +39,10 @@ func init() {
 
 func main() {
 	command := pkg.NewNanokubeCommand(ctx).
-		WithRunCommand(apiserver.NewAPIServerCommand(context.Background())).
-		WithRunCommand(controllermanager.NewControllerManagerCommand(context.Background())).
-		WithRunCommand(scheduler.NewSchedulerCommand(context.Background())).
-		WithRunCommand(kubelet.NewKubeletCommand(context.Background()))
+		With(apiserver.NewAPIServerCommand(context.Background())).
+		With(controllermanager.NewControllerManagerCommand(context.Background())).
+		With(scheduler.NewSchedulerCommand(context.Background())).
+		With(kubelet.NewKubeletCommand(context.Background()))
 	code := cli.Run(command.Command)
 	if errs := command.Nano().Errors(); errs != nil {
 		klog.ErrorS(errors.Join(errs...), "encountered errors during execution")
