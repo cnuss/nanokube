@@ -122,11 +122,11 @@ func (h *prettyHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 	b.WriteByte(' ')
 
-	// Source (faint) — just the base filename, without `.go` or line number.
+	// Source (faint) — base filename with line number.
 	if r.PC != 0 {
 		if fn := runtime.FuncForPC(r.PC); fn != nil {
-			file, _ := fn.FileLine(r.PC)
-			b.WriteString(faint(strings.TrimSuffix(filepath.Base(file), ".go")))
+			file, line := fn.FileLine(r.PC)
+			b.WriteString(faint(fmt.Sprintf("%s:%d", filepath.Base(file), line)))
 			b.WriteByte(' ')
 		}
 	}

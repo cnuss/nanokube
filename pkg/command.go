@@ -86,26 +86,35 @@ type Command struct {
 	*cobra.Command
 	ctx v1.Nanokube
 
-	run        *cobra.Command
-	start      *cobra.Command
-	components map[string]*cobra.Command
 	startHooks map[string]startHookFn
 	stopHooks  map[string]stopHookFn
 
-	paths      []string
-	pathsReady chan struct{}
+	featureGatesOnce sync.Once
 
-	apiserverRunOnce         sync.Once
-	controllerManagerRunOnce sync.Once
-	schedulerRunOnce         sync.Once
-	kubeletRunOnce           sync.Once
-	featureGatesOnce         sync.Once
+	run                       *cobra.Command
+	runProvided               chan struct{}
+	start                     *cobra.Command
+	startProvided             chan struct{}
+	apiserver                 *cobra.Command
+	apiserverOnce             sync.Once
+	apiServerProvided         chan struct{}
+	controllerManger          *cobra.Command
+	controllerManagerOnce     sync.Once
+	controllerManagerProvided chan struct{}
+	scheduler                 *cobra.Command
+	schedulerOnce             sync.Once
+	schedulerProvided         chan struct{}
+	kubelet                   *cobra.Command
+	kubeletOnce               sync.Once
+	kubeletProvided           chan struct{}
 
 	kubeletServer         kubeletserver.Server
 	kubeletServerProvided chan struct{}
 
-	drainDone chan struct{}
+	paths         []string
+	pathsProvided chan struct{}
 
+	drainDone       chan struct{}
 	kubeconfigReady chan struct{}
 }
 
@@ -123,15 +132,20 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 			Use:  "nanokube",
 			Long: "all-in-one kubernetes binary",
 		},
-		ctx:                   nano,
-		components:            make(map[string]*cobra.Command),
-		startHooks:            make(map[string]startHookFn),
-		stopHooks:             make(map[string]stopHookFn),
-		paths:                 make([]string, 0),
-		pathsReady:            make(chan struct{}),
-		kubeletServerProvided: make(chan struct{}),
-		drainDone:             make(chan struct{}),
-		kubeconfigReady:       make(chan struct{}),
+		ctx:                       nano,
+		startHooks:                make(map[string]startHookFn),
+		stopHooks:                 make(map[string]stopHookFn),
+		runProvided:               make(chan struct{}),
+		startProvided:             make(chan struct{}),
+		apiServerProvided:         make(chan struct{}),
+		controllerManagerProvided: make(chan struct{}),
+		schedulerProvided:         make(chan struct{}),
+		kubeletProvided:           make(chan struct{}),
+		paths:                     make([]string, 0),
+		pathsProvided:             make(chan struct{}),
+		kubeletServerProvided:     make(chan struct{}),
+		drainDone:                 make(chan struct{}),
+		kubeconfigReady:           make(chan struct{}),
 	}
 	wait.NeverStop = c.drainDone
 	c.Command.SetContext(nano)
@@ -140,42 +154,38 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		Use:   "run",
 		Short: "run a kubernetes component",
 	}
-	c.run.SetContext(nano)
+	c.run.SetContext(c.Nano())
 	c.Command.AddCommand(c.run)
+	close(c.runProvided)
 
 	start := &cobra.Command{
 		Use:   "start",
 		Short: "start kubernetes components",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Propagate -v (and a few other klog flags) from start down
-			// to each component's own flag set. They're inherited as
-			// persistent flags on start but each component reads from
-			// its own local flag value via logsapi.
-			for _, flag := range []string{"v", "vmodule", "log-flush-frequency"} {
-				f := cmd.Flag(flag)
-				if f == nil || !f.Changed {
-					continue
-				}
-				for _, child := range c.components {
-					if child.Flags().Lookup(flag) != nil {
-						child.Flags().Set(flag, f.Value.String())
-					}
-				}
-			}
-			c.startHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.components["kube-controller-manager"])
-			c.startHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.components["kube-scheduler"])
-			c.startHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.components["kubelet"])
+			c.startHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.ControllerManagerCommand())
+			c.startHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
+			c.startHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.KubeletCommand())
 			c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", nil, c.updateKubeconfig)
 			c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 			c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
-			c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsReady, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
+			c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
 			c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
-			return c.components["kube-apiserver"].RunE(cmd, args)
+			return c.ApiServerCommand().RunE(cmd, args)
 		},
 	}
-	start.SetContext(nano)
+	start.SetContext(c.Nano())
 	c.Command.AddCommand(start)
+	close(c.startProvided)
 
+	c.Command.RunE = func(cmd *cobra.Command, args []string) error {
+		klog.Info("!!! run command", "name", c.RunCommand().Name())
+		klog.Info("!!! start command", "name", c.StartCommand().Name())
+		klog.Info("!!! kube-apiserver command", "name", c.ApiServerCommand().Name())
+		klog.Info("!!! kube-controller-manager command", "name", c.ControllerManagerCommand().Name())
+		klog.Info("!!! kube-scheduler command", "name", c.SchedulerCommand().Name())
+		klog.Info("!!! kubelet command", "name", c.KubeletCommand().Name())
+		return nil
+	}
 	return c
 }
 
@@ -187,12 +197,14 @@ func (c *Command) Cancel(err error) {
 	c.ctx.CancelErr(err)
 }
 
-// WithRunCommand registers cmd under `nanokube run <name>`. Returns the
-// receiver for chaining.
 func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 	cmd.SetContext(c.Context())
 	name := cmd.Name()
-	c.components[name] = cmd
+	c.featureGatesOnce.Do(func() {
+		if cmd.Flags().Lookup("feature-gates") != nil {
+			cmd.Flags().Set("feature-gates", strings.Join(featureGates, ","))
+		}
+	})
 
 	// Route every component's logging through nanokube's registered format.
 	// Skipped when NANOKUBE_PRETTY=0 so the raw klog format leaks through for
@@ -203,56 +215,51 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 		}
 	}
 
-	// Apply [featureGates] once. The kube: gate is a process-wide
-	// singleton shared by every in-process component, so setting it on any
-	// one component's --feature-gates flag mutates the same registry.
-	c.featureGatesOnce.Do(func() {
-		if cmd.Flags().Lookup("feature-gates") != nil {
-			cmd.Flags().Set("feature-gates", strings.Join(featureGates, ","))
-		}
-	})
-
 	switch name {
 	case "kube-controller-manager":
-		cmd.Flags().Set("authentication-skip-lookup", "true")
-		cmd.Flags().Set("controller-shutdown-timeout", "0")
-		cmd.Flags().Set("leader-elect", "true")
-		cmd.Flags().Set("root-ca-file", c.Nano().RootCaFilePath())
-		cmd.Flags().Set("service-account-private-key-file", c.Nano().KeyFilePath())
-		cmd.Flags().Set("secure-port", "0")
-		cmd.Flags().Set("use-service-account-credentials", "false")
-		c.controllerManagerRunOnce.Do(func() {
+		c.controllerManagerOnce.Do(func() {
+			cmd.Flags().Set("authentication-skip-lookup", "true")
+			cmd.Flags().Set("controller-shutdown-timeout", "0")
+			cmd.Flags().Set("leader-elect", "true")
+			cmd.Flags().Set("root-ca-file", c.Nano().RootCaFilePath())
+			cmd.Flags().Set("service-account-private-key-file", c.Nano().KeyFilePath())
+			cmd.Flags().Set("secure-port", "0")
+			cmd.Flags().Set("use-service-account-credentials", "false")
 			run := controllermanager.Run
 			controllermanager.Run = func(ctx context.Context, cfg *controllermanagerconfig.CompletedConfig) error {
 				return run(ctx, cfg)
 			}
+			c.RunCommand().AddCommand(cmd)
+			close(c.controllerManagerProvided)
 		})
 	case "kube-scheduler":
-		cmd.Flags().Set("authentication-skip-lookup", "true")
-		cmd.Flags().Set("leader-elect", "true")
-		cmd.Flags().Set("secure-port", "0")
-		c.schedulerRunOnce.Do(func() {
+		c.schedulerOnce.Do(func() {
+			cmd.Flags().Set("authentication-skip-lookup", "true")
+			cmd.Flags().Set("leader-elect", "true")
+			cmd.Flags().Set("secure-port", "0")
 			run := scheduler.Run
 			scheduler.Run = func(ctx context.Context, cc *schedulerappconfig.CompletedConfig, sched *sched.Scheduler) error {
 				return run(ctx, cc, sched)
 			}
+			c.RunCommand().AddCommand(cmd)
+			close(c.schedulerProvided)
 		})
 	case "kube-apiserver":
-		cmd.Flags().Set("allow-privileged", "true")
-		cmd.Flags().Set("api-audiences", "https://kubernetes.default.svc")
-		cmd.Flags().Set("authorization-mode", "RBAC,Node")
-		cmd.Flags().Set("etcd-servers", "http://") // TODO(partial): mark as not required
-		cmd.Flags().Set("kubelet-preferred-address-types", "ExternalDNS")
-		cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
-		cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
-		cmd.Flags().Set("service-account-issuer", "https://kubernetes.default.svc")
-		cmd.Flags().Set("shutdown-delay-duration", "10s")
-		cmd.Flags().Set("shutdown-send-retry-after", "true")
-		cmd.Flags().Set("shutdown-watch-termination-grace-period", "10s")
-		cmd.Flags().Set("storage-media-type", "application/json")
-		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
-		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
-		c.apiserverRunOnce.Do(func() {
+		c.apiserverOnce.Do(func() {
+			cmd.Flags().Set("allow-privileged", "true")
+			cmd.Flags().Set("api-audiences", "https://kubernetes.default.svc")
+			cmd.Flags().Set("authorization-mode", "RBAC,Node")
+			cmd.Flags().Set("etcd-servers", "http://") // TODO(partial): mark as not required
+			cmd.Flags().Set("kubelet-preferred-address-types", "ExternalDNS")
+			cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
+			cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
+			cmd.Flags().Set("service-account-issuer", "https://kubernetes.default.svc")
+			cmd.Flags().Set("shutdown-delay-duration", "10s")
+			cmd.Flags().Set("shutdown-send-retry-after", "true")
+			cmd.Flags().Set("shutdown-watch-termination-grace-period", "10s")
+			cmd.Flags().Set("storage-media-type", "application/json")
+			cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
+			cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 			apiserver.Run = func(ctx context.Context, opts apiserveroptions.CompletedOptions) error {
 				opts.SecureServing.BindAddress = c.Nano().Tunnel().LocalIP()
 				opts.SecureServing.BindPort = c.Nano().Tunnel().LocalPort()
@@ -300,14 +307,12 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 
 				go func() {
 					<-c.kubeletServerProvided
-					defer close(c.pathsReady)
+					defer close(c.pathsProvided)
 					for _, p := range kubeletPaths {
-						klog.Infof("registering kubelet handler for path prefix %q", p)
 						server.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandlePrefix(p, &c.kubeletServer)
 						c.paths = append(c.paths, p)
 					}
 					for _, ws := range c.Nano().Services(c.Nano().Tunnel().URL()) {
-						klog.InfoS("registering nanokube service", "rootPath", ws.RootPath())
 						server.GenericAPIServer.Handler.GoRestfulContainer.Add(ws)
 						c.paths = append(c.paths, ws.RootPath())
 					}
@@ -336,15 +341,17 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 				c.Nano().Storage().Shutdown()
 				return err
 			}
+			c.RunCommand().AddCommand(cmd)
+			close(c.apiServerProvided)
 		})
 	case "kubelet":
-		cmd.Flags().Set("cloud-provider", "external")
-		cmd.Flags().Set("enable-server", "false")
-		cmd.Flags().Set("read-only-port", "0")
-		cmd.Flags().Set("root-dir", c.Nano().Options().DataDirAt(v1.DataDirKubelet))
-		cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
-		cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
-		c.kubeletRunOnce.Do(func() {
+		c.kubeletOnce.Do(func() {
+			cmd.Flags().Set("cloud-provider", "external")
+			cmd.Flags().Set("enable-server", "false")
+			cmd.Flags().Set("read-only-port", "0")
+			cmd.Flags().Set("root-dir", c.Nano().Options().DataDirAt(v1.DataDirKubelet))
+			cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
+			cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
 				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
@@ -383,23 +390,84 @@ func (c *Command) WithRunCommand(cmd *cobra.Command) *Command {
 					kl.NodeLeaseController().Stop()
 				}()
 			}
+			c.RunCommand().AddCommand(cmd)
+			close(c.kubeletProvided)
 		})
 	}
 
-	c.run.AddCommand(cmd)
 	return c
+}
+
+func (c *Command) RunCommand() *cobra.Command {
+	<-c.runProvided
+	for _, cmd := range c.Commands() {
+		if cmd.Name() == "run" {
+			return cmd
+		}
+	}
+	panic("run command not found")
+}
+
+func (c *Command) StartCommand() *cobra.Command {
+	<-c.startProvided
+	for _, cmd := range c.Commands() {
+		if cmd.Name() == "start" {
+			return cmd
+		}
+	}
+	panic("start command not found")
+}
+
+func (c *Command) ApiServerCommand() *cobra.Command {
+	<-c.apiServerProvided
+	for _, cmd := range c.RunCommand().Commands() {
+		if cmd.Name() == "kube-apiserver" {
+			return cmd
+		}
+	}
+	panic("kube-apiserver command not found")
+}
+
+func (c *Command) ControllerManagerCommand() *cobra.Command {
+	<-c.controllerManagerProvided
+	for _, cmd := range c.RunCommand().Commands() {
+		if cmd.Name() == "kube-controller-manager" {
+			return cmd
+		}
+	}
+	panic("kube-controller-manager command not found")
+}
+
+func (c *Command) SchedulerCommand() *cobra.Command {
+	<-c.schedulerProvided
+	for _, cmd := range c.RunCommand().Commands() {
+		if cmd.Name() == "kube-scheduler" {
+			return cmd
+		}
+	}
+	panic("kube-scheduler command not found")
+}
+
+func (c *Command) KubeletCommand() *cobra.Command {
+	<-c.kubeletProvided
+	for _, cmd := range c.RunCommand().Commands() {
+		if cmd.Name() == "kubelet" {
+			return cmd
+		}
+	}
+	panic("kubelet command not found")
 }
 
 func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	kubeconfigPath := c.Nano().WithLoopback(ctx.LoopbackClientConfig).KubeconfigPath() // TODO(partial): use WriteKubeconfig on v1.Client
 	c.Nano().Client().WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
-	c.components["kube-controller-manager"].Flags().Set("kubeconfig", kubeconfigPath)
-	c.components["kube-controller-manager"].Flags().Set("authorization-kubeconfig", kubeconfigPath)
-	c.components["kube-controller-manager"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
-	c.components["kube-scheduler"].Flags().Set("kubeconfig", kubeconfigPath)
-	c.components["kube-scheduler"].Flags().Set("authorization-kubeconfig", kubeconfigPath)
-	c.components["kube-scheduler"].Flags().Set("authentication-kubeconfig", kubeconfigPath)
-	c.components["kubelet"].Flags().Set("kubeconfig", kubeconfigPath)
+	c.ControllerManagerCommand().Flags().Set("kubeconfig", kubeconfigPath)
+	c.ControllerManagerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
+	c.ControllerManagerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
+	c.SchedulerCommand().Flags().Set("kubeconfig", kubeconfigPath)
+	c.SchedulerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
+	c.SchedulerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
+	c.KubeletCommand().Flags().Set("kubeconfig", kubeconfigPath)
 	close(c.kubeconfigReady)
 	return nil
 }
@@ -530,7 +598,6 @@ func (c *Command) drainNode() error {
 	if _, err := client.CoreV1().Nodes().Apply(ctx, node, metav1.ApplyOptions{FieldManager: c.Name(), Force: true}); err != nil {
 		return fmt.Errorf("cordon node: %w", err)
 	}
-	klog.InfoS("cordoned node", "node", nodeRef.Name)
 	pods, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + nodeRef.Name,
 	})
@@ -574,11 +641,11 @@ func (c *Command) drainNode() error {
 	}); err != nil {
 		klog.ErrorS(err, "drain wait timed out", "node", nodeRef.Name, "remaining", len(pending))
 	}
-	klog.InfoS("drained node", "node", nodeRef.Name)
 	return nil
 }
 
 func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHookFn {
+	klog.InfoS("registering RunE hook", "hook", cmd.Name())
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
@@ -593,15 +660,12 @@ func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHook
 					cancel()
 				}()
 
-				klog.InfoS("starting", "command", cmd.Name())
 				defer doneFn()
 				if err := cmd.RunE(cmd, []string{}); err != nil {
 					klog.ErrorS(err, "errored", "command", cmd.Name())
 					if errFn != nil {
 						errFn(err)
 					}
-				} else {
-					klog.InfoS("completed", "command", cmd.Name())
 				}
 			}()
 			return nil
@@ -610,21 +674,19 @@ func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHook
 }
 
 func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) startHookFn {
+	klog.InfoS("registering start hook", "hook", name)
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
 				if waitCh != nil {
 					<-waitCh
 				}
-				klog.InfoS("starting", "hook", name)
 				defer doneFn()
 				if err := fn(hctx); err != nil {
 					klog.ErrorS(err, "errored", "hook", name)
 					if errFn != nil {
 						errFn(err)
 					}
-				} else {
-					klog.InfoS("completed", "hook", name)
 				}
 			}()
 			return nil
@@ -633,13 +695,12 @@ func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) star
 }
 
 func stopHook(name string, fn func() error) stopHookFn {
+	klog.InfoS("registering stop hook", "hook", name)
 	return func() error {
-		klog.InfoS("starting", "pre-shutdown hook", name)
 		if err := fn(); err != nil {
 			klog.ErrorS(err, "errored", "pre-shutdown hook", name)
 			return err
 		}
-		klog.InfoS("completed", "pre-shutdown hook", name)
 		return nil
 	}
 }
