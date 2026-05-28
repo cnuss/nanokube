@@ -178,13 +178,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	close(c.startProvided)
 
 	c.Command.RunE = func(cmd *cobra.Command, args []string) error {
-		klog.Info("!!! run command", "name", c.RunCommand().Name())
-		klog.Info("!!! start command", "name", c.StartCommand().Name())
-		klog.Info("!!! kube-apiserver command", "name", c.ApiServerCommand().Name())
-		klog.Info("!!! kube-controller-manager command", "name", c.ControllerManagerCommand().Name())
-		klog.Info("!!! kube-scheduler command", "name", c.SchedulerCommand().Name())
-		klog.Info("!!! kubelet command", "name", c.KubeletCommand().Name())
-		return nil
+		c.startHooks["detach"] = startHook("detach", c.Nano().NodeReady(), c.detach)
+		return c.StartCommand().RunE(cmd, args)
 	}
 	return c
 }
@@ -456,6 +451,12 @@ func (c *Command) KubeletCommand() *cobra.Command {
 		}
 	}
 	panic("kubelet command not found")
+}
+
+func (c *Command) detach(ctx hookCtx) error {
+	klog.Info("!!!! TIME TO DETACH THE NODE !!!!")
+	time.Sleep(10 * time.Second)
+	return nil
 }
 
 func (c *Command) updateKubeconfig(ctx hookCtx) error {
