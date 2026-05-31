@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -53,7 +54,7 @@ type Nanokube interface {
 
 	Host() Host
 	Client() Client
-	Tunnel() Tunnel
+	Tunnel() tunnel.Tunnel
 	StaticPods() []*corev1.Pod
 
 	Services(baseURL *url.URL) []*restful.WebService
@@ -87,22 +88,6 @@ type Options interface {
 	InDataDir(path string) bool
 
 	Args() []string
-}
-
-type Tunnel interface {
-	Ready
-
-	Context() context.Context
-	LocalPort() int
-	LocalIP() net.IP
-	LocalHostname() string
-	LocalDomain() string
-	LocalFQDN() string
-	Domain() string
-	FQDN() string
-	Hostname() string
-	URL() *url.URL
-	CACerts() []*x509.Certificate
 }
 
 // LogStream represents a container's log pump. Runtimes construct one via
@@ -183,7 +168,7 @@ type Client interface {
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
-	WithTunnel(tunnel Tunnel, local bool) Client
+	WithTunnel(tunnel tunnel.Tunnel, local bool) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
 	WriteKubeconfig(path string) error

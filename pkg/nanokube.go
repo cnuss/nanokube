@@ -18,6 +18,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/storage"
+	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/spf13/cobra"
@@ -225,27 +226,9 @@ func (k *nanokubeImpl) Broadcaster() record.EventBroadcaster {
 	return k.broadcaster
 }
 
-func (k *nanokubeImpl) KubeletHostname() string {
-	tunnel := k.Tunnel()
-	return tunnel.Hostname()
-}
-
-func (k *nanokubeImpl) KubeletFlags() *kubeletoptions.KubeletFlags {
-	k.kubeletFlagsOnce.Do(func() {
-		tunnel := k.Tunnel()
-		k.kubeletFlags = kubeletoptions.NewKubeletFlags()
-		k.kubeletFlags.CloudProvider = "external"
-		k.kubeletFlags.HostnameOverride = k.KubeletHostname()
-		k.kubeletFlags.NodeLabels = make(map[string]string) // TODO(incomplete): add labels
-		k.kubeletFlags.NodeIP = tunnel.LocalIP().String()
-		k.kubeletFlags.RootDirectory = k.Options().DataDirAt(v1.DataDirKubelet)
-	})
-	return k.kubeletFlags
-}
-
 func (k *nanokubeImpl) Environ() []string {
 	return []string{
-		"KUBERNETES_SERVICE_HOST=" + k.Tunnel().FQDN(),
+		"KUBERNETES_SERVICE_HOST=" + k.Tunnel().Hostname(),
 		"KUBERNETES_SERVICE_PORT=443",
 	}
 }
@@ -253,7 +236,7 @@ func (k *nanokubeImpl) Environ() []string {
 func (k *nanokubeImpl) recorder() record.EventRecorder {
 	k.proxiedRecorderOnce.Do(func() {
 		tunnel := k.Tunnel()
-		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Options().Name(), Host: tunnel.FQDN()})
+		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Options().Name(), Host: tunnel.Hostname()})
 	})
 	return k.proxiedRecorder
 }
@@ -418,7 +401,7 @@ func (k *nanokubeImpl) ensureCertKey() (string, string) {
 		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(
 			"localhost",
 			[]net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback, tunnel.LocalIP()},
-			[]string{tunnel.FQDN(), tunnel.Hostname()},
+			[]string{tunnel.Hostname()},
 		)
 		if err != nil {
 			k.Cancel(nanokube.NewError(fmt.Errorf("generate self-signed cert: %w", err)))
@@ -475,15 +458,15 @@ func (k *nanokubeImpl) Version() string {
 	return k.version
 }
 
-func (k *nanokubeImpl) Tunnel() v1.Tunnel {
+func (k *nanokubeImpl) Tunnel() tunnel.Tunnel {
 	// DEVNOTE: Formerly had separate tunnels for the API server and kubelet
 	//          Leaving scaffolding in place to allow for multiple tunnels in the future, but for now just return a single shared tunnel.
 	tunnelName := v1.SharedTunnel
 
-	tunnel, _ := k.tunnels.LoadOrStore(tunnelName, func() v1.Tunnel {
-		return NewTunnel(tunnelName)
+	t, _ := k.tunnels.LoadOrStore(tunnelName, func() tunnel.Tunnel {
+		return tunnel.NewTunnel()
 	}())
-	return tunnel.(v1.Tunnel)
+	return t.(tunnel.Tunnel)
 }
 
 func (k *nanokubeImpl) Host() v1.Host {

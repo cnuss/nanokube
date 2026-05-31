@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"syscall"
 
+	daemonize "github.com/cnuss/daemonize"
 	"github.com/cnuss/nanokube/pkg"
 	"github.com/cnuss/nanokube/pkg/driver/awslambda"
 	"github.com/cnuss/nanokube/pkg/driver/docker"
 	"github.com/cnuss/nanokube/pkg/driver/podman"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
-	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/component-base/cli"
 	"k8s.io/klog/v2"
 	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
@@ -19,14 +20,8 @@ import (
 	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
 )
 
-var (
-	ctx    context.Context
-	cancel context.CancelCauseFunc
-)
-
 func init() {
-	ctx, cancel = context.WithCancelCause(genericapiserver.SetupSignalContext())
-	setupLogging(cancel)
+	// TODO: re-enable setupLogging once signal/cancel plumbing is reworked.
 
 	if !v1.HTTP2 {
 		os.Setenv("DISABLE_HTTP2", "true")
@@ -38,12 +33,15 @@ func init() {
 }
 
 func main() {
-	command := pkg.NewNanokubeCommand(ctx).
+	command := pkg.NewNanokubeCommand(context.Background()).
 		With(apiserver.NewAPIServerCommand(context.Background())).
 		With(controllermanager.NewControllerManagerCommand(context.Background())).
 		With(scheduler.NewSchedulerCommand(context.Background())).
 		With(kubelet.NewKubeletCommand(context.Background()))
-	code := cli.Run(command.Command)
+
+	code := cli.Run(daemonize.FromCobra(command.Command).
+		WithShutdownSignal(syscall.SIGINT, syscall.SIGTERM).
+		DetachOn(command.StartHooksDone()))
 	if errs := command.Nano().Errors(); errs != nil {
 		klog.ErrorS(errors.Join(errs...), "encountered errors during execution")
 	}

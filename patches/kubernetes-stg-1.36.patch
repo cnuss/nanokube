@@ -80,6 +80,25 @@ index b1a61991bf5..82d7a0426d7 100644
  	contentType = s.ContentType
  	if len(contentType) == 0 {
  		contentType = resp.Header.Get("Content-Type")
+diff --git a/staging/src/k8s.io/apiserver/pkg/server/signal.go b/staging/src/k8s.io/apiserver/pkg/server/signal.go
+index e5334ae4c15..eb46f28402b 100644
+--- a/staging/src/k8s.io/apiserver/pkg/server/signal.go
++++ b/staging/src/k8s.io/apiserver/pkg/server/signal.go
+@@ -25,6 +25,14 @@ import (
+ var onlyOneSignalHandler = make(chan struct{})
+ var shutdownHandler chan os.Signal
+ 
++func init() {
++	// nanokube: forbid k8s' built-in signal handler. Closing this channel
++	// up-front causes any later SetupSignalContext / SetupSignalHandler call
++	// to re-close it and panic ("close of closed channel"), so any caller
++	// in the in-process kube components is surfaced loudly.
++	close(onlyOneSignalHandler)
++}
++
+ // SetupSignalHandler registered for SIGTERM and SIGINT. A stop channel is returned
+ // which is closed on one of these signals. If a second signal is caught, the program
+ // is terminated with exit code 1.
 diff --git a/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go b/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go
 index 3bbeeddb3e6..3515464a7c7 100644
 --- a/staging/src/k8s.io/cri-streaming/pkg/streaming/remotecommand/websocket.go

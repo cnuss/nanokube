@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	cloudproviderapi "k8s.io/cloud-provider/api"
 	"k8s.io/component-base/featuregate"
+	logsapi "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
 	apiserver "k8s.io/kubernetes/cmd/kube-apiserver/app"
@@ -52,7 +53,7 @@ import (
 )
 
 // featureGates is applied process-wide (the kube: gate is a singleton
-// shared by every in-process component) via [Command.WithRunCommand].
+// shared by every in-process component) via [Command.With].
 var featureGates = []string{
 	// DEVNOTE: for cloudflared support:
 	"kube:ExtendWebSocketsToKubelet=false",
@@ -86,25 +87,19 @@ type Command struct {
 	*cobra.Command
 	ctx v1.Nanokube
 
-	startHooks map[string]startHookFn
-	stopHooks  map[string]stopHookFn
+	startHooks     map[string]startHookFn
+	runHooks       map[string]startHookFn
+	stopHooks      map[string]stopHookFn
+	startHooksDone chan struct{}
 
 	featureGatesOnce sync.Once
 
-	run                       *cobra.Command
-	runProvided               chan struct{}
-	start                     *cobra.Command
-	startProvided             chan struct{}
-	apiserver                 *cobra.Command
 	apiserverOnce             sync.Once
 	apiServerProvided         chan struct{}
-	controllerManger          *cobra.Command
 	controllerManagerOnce     sync.Once
 	controllerManagerProvided chan struct{}
-	scheduler                 *cobra.Command
 	schedulerOnce             sync.Once
 	schedulerProvided         chan struct{}
-	kubelet                   *cobra.Command
 	kubeletOnce               sync.Once
 	kubeletProvided           chan struct{}
 
@@ -126,7 +121,6 @@ type (
 
 func NewNanokubeCommand(ctx context.Context) *Command {
 	nano := NewNanokube(ctx)
-
 	c := &Command{
 		Command: &cobra.Command{
 			Use:  "nanokube",
@@ -134,9 +128,9 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		},
 		ctx:                       nano,
 		startHooks:                make(map[string]startHookFn),
+		runHooks:                  make(map[string]startHookFn),
 		stopHooks:                 make(map[string]stopHookFn),
-		runProvided:               make(chan struct{}),
-		startProvided:             make(chan struct{}),
+		startHooksDone:            make(chan struct{}),
 		apiServerProvided:         make(chan struct{}),
 		controllerManagerProvided: make(chan struct{}),
 		schedulerProvided:         make(chan struct{}),
@@ -148,38 +142,29 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		kubeconfigReady:           make(chan struct{}),
 	}
 	wait.NeverStop = c.drainDone
+	klog.OsExit = func(code int) {
+		c.Cancel(fmt.Errorf("klog exit code %d", code))
+	}
+	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 	c.Command.SetContext(nano)
 
-	c.run = &cobra.Command{
+	run := &cobra.Command{
 		Use:   "run",
 		Short: "run a kubernetes component",
 	}
-	c.run.SetContext(c.Nano())
-	c.Command.AddCommand(c.run)
-	close(c.runProvided)
-
-	start := &cobra.Command{
-		Use:   "start",
-		Short: "start kubernetes components",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c.startHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.ControllerManagerCommand())
-			c.startHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
-			c.startHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.KubeletCommand())
-			c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", nil, c.updateKubeconfig)
-			c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
-			c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
-			c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
-			c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
-			return c.ApiServerCommand().RunE(cmd, args)
-		},
-	}
-	start.SetContext(c.Nano())
-	c.Command.AddCommand(start)
-	close(c.startProvided)
+	run.SetContext(c.Nano())
+	c.Command.AddCommand(run)
 
 	c.Command.RunE = func(cmd *cobra.Command, args []string) error {
-		c.startHooks["detach"] = startHook("detach", c.Nano().NodeReady(), c.detach)
-		return c.StartCommand().RunE(cmd, args)
+		c.runHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.ControllerManagerCommand())
+		c.runHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
+		c.runHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.KubeletCommand())
+		c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", nil, c.updateKubeconfig)
+		c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
+		c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
+		c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
+		c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
+		return c.ApiServerCommand().RunE(cmd, args)
 	}
 	return c
 }
@@ -192,6 +177,10 @@ func (c *Command) Cancel(err error) {
 	c.ctx.CancelErr(err)
 }
 
+func (c *Command) StartHooksDone() <-chan struct{} {
+	return c.startHooksDone
+}
+
 func (c *Command) With(cmd *cobra.Command) *Command {
 	cmd.SetContext(c.Context())
 	name := cmd.Name()
@@ -200,15 +189,6 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("feature-gates", strings.Join(featureGates, ","))
 		}
 	})
-
-	// Route every component's logging through nanokube's registered format.
-	// Skipped when NANOKUBE_PRETTY=0 so the raw klog format leaks through for
-	// side-by-side comparison.
-	if os.Getenv("NANOKUBE_PRETTY") != "0" {
-		if f := cmd.Flags().Lookup("logging-format"); f != nil {
-			cmd.Flags().Set("logging-format", "nanokube")
-		}
-	}
 
 	switch name {
 	case "kube-controller-manager":
@@ -300,6 +280,9 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 					return err
 				}
 
+				// TODO(partial): is this the right place for this?
+				c.Nano().Tunnel().WithListener(server.GenericAPIServer.SecureServingInfo.Listener)
+
 				go func() {
 					<-c.kubeletServerProvided
 					defer close(c.pathsProvided)
@@ -316,21 +299,32 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 					}
 				}()
 
-				var wg sync.WaitGroup
+				var startWg, runWg sync.WaitGroup
 
-				for name, startHook := range c.startHooks {
-					wg.Add(1)
+				for name, h := range c.startHooks {
+					startWg.Add(1)
 					server.GenericAPIServer.AddPostStartHook(name, func(ctx hookCtx) error {
-						return startHook(c.Cancel, wg.Done)(ctx)
+						return h(c.Cancel, startWg.Done)(ctx)
 					})
 				}
+				for name, h := range c.runHooks {
+					runWg.Add(1)
+					server.GenericAPIServer.AddPostStartHook(name, func(ctx hookCtx) error {
+						return h(c.Cancel, runWg.Done)(ctx)
+					})
+				}
+				go func() {
+					startWg.Wait()
+					close(c.startHooksDone)
+				}()
 
 				prepared, err := server.PrepareRun()
 				if err != nil {
 					return err
 				}
 				err = prepared.Run(ctx)
-				wg.Wait()
+				startWg.Wait()
+				runWg.Wait()
 
 				// TODO(partial): find a better spot for storage shutdown
 				c.Nano().Storage().Shutdown()
@@ -350,7 +344,8 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
 				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
-				ks.ClusterDomain = "cluster.local"  // TODO(partial): install coredns
+				ks.ClusterDomain = c.Nano().Tunnel().Domain()
+				// ks.HostnameOverride = c.Nano().Tunnel().Hostname()
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
@@ -394,23 +389,12 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 }
 
 func (c *Command) RunCommand() *cobra.Command {
-	<-c.runProvided
 	for _, cmd := range c.Commands() {
 		if cmd.Name() == "run" {
 			return cmd
 		}
 	}
 	panic("run command not found")
-}
-
-func (c *Command) StartCommand() *cobra.Command {
-	<-c.startProvided
-	for _, cmd := range c.Commands() {
-		if cmd.Name() == "start" {
-			return cmd
-		}
-	}
-	panic("start command not found")
 }
 
 func (c *Command) ApiServerCommand() *cobra.Command {
@@ -451,12 +435,6 @@ func (c *Command) KubeletCommand() *cobra.Command {
 		}
 	}
 	panic("kubelet command not found")
-}
-
-func (c *Command) detach(ctx hookCtx) error {
-	klog.Info("!!!! TIME TO DETACH THE NODE !!!!")
-	time.Sleep(10 * time.Second)
-	return nil
 }
 
 func (c *Command) updateKubeconfig(ctx hookCtx) error {
@@ -521,7 +499,7 @@ func (c *Command) updateNodeStatus(ctx hookCtx) error {
 					}()),
 					corev1ac.NodeAddress().WithType(corev1.NodeExternalDNS).WithAddress(func() string {
 						// a := fmt.Sprintf("%s:%d", tunnel.FQDN(), 443)
-						a := c.Nano().Tunnel().FQDN()
+						a := c.Nano().Tunnel().Hostname()
 						return a
 					}()),
 				),
@@ -650,6 +628,7 @@ func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHook
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
+				klog.InfoS("waiting to start command", "command", cmd.Name())
 				if waitCh != nil {
 					<-waitCh
 				}
@@ -662,6 +641,7 @@ func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHook
 				}()
 
 				defer doneFn()
+				klog.InfoS("starting command", "command", cmd.Name())
 				if err := cmd.RunE(cmd, []string{}); err != nil {
 					klog.ErrorS(err, "errored", "command", cmd.Name())
 					if errFn != nil {
@@ -679,10 +659,12 @@ func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) star
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
+				klog.InfoS("waiting to start hook", "hook", name)
 				if waitCh != nil {
 					<-waitCh
 				}
 				defer doneFn()
+				klog.InfoS("starting hook", "hook", name)
 				if err := fn(hctx); err != nil {
 					klog.ErrorS(err, "errored", "hook", name)
 					if errFn != nil {

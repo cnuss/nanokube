@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
@@ -116,17 +117,14 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) v1.Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func (c *ClientImpl) WithTunnel(tunnel v1.Tunnel, local bool) v1.Client {
+func (c *ClientImpl) WithTunnel(tunnel tunnel.Tunnel, local bool) v1.Client {
 	if c.config == nil {
 		return c
-	}
-	if !local {
-		<-tunnel.Ready()
 	}
 
 	cfg := rest.CopyConfig(c.config)
 	if !local {
-		cfg.Host = fmt.Sprintf("https://%s", tunnel.FQDN())
+		cfg.Host = fmt.Sprintf("https://%s", tunnel.Hostname())
 	} else {
 		cfg.Host = fmt.Sprintf("https://%s:%d", tunnel.LocalIP(), tunnel.LocalPort())
 	}
