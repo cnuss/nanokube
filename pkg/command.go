@@ -155,6 +155,22 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	run.SetContext(c.Nano())
 	c.Command.AddCommand(run)
 
+	c.Command.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		propagate := []string{"v"}
+		for _, name := range propagate {
+			src := cmd.Root().Flags().Lookup(name)
+			if src == nil || !src.Changed {
+				continue
+			}
+			for _, sub := range c.RunCommand().Commands() {
+				if sub.Flags().Lookup(name) != nil {
+					sub.Flags().Set(name, src.Value.String())
+				}
+			}
+		}
+		return nil
+	}
+
 	c.Command.RunE = func(cmd *cobra.Command, args []string) error {
 		c.runHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.ControllerManagerCommand())
 		c.runHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
