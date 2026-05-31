@@ -37,7 +37,10 @@ runs:
       run: make build ARTIFACT=${{ inputs.artifact }}
 
     - shell: bash
-      run: ./nanokube start -vvv
+      run: ./nanokube start -v=4
+
+    - shell: bash
+      run: echo "NANOKUBE_LOG=$(./nanokube status -o json | jq -r '.log_file')" >> "$GITHUB_ENV"
 
     - shell: bash
       run: make test SUITE=${{ inputs.suite }} CHAINSAW_ARGS="${{ inputs.chainsaw-args }}"
@@ -49,9 +52,8 @@ runs:
     - if: always()
       shell: bash
       run: |
-        mkdir -p nanokube-logs/logs
-        cp "$HOME/.nanokube/nanokube.log" nanokube-logs/ 2>/dev/null || true
-        cp -R "$HOME/.nanokube/logs/." nanokube-logs/logs/ 2>/dev/null || true
+        mkdir -p nanokube-logs
+        cp "$NANOKUBE_LOG" nanokube-logs/ 2>/dev/null || true
 
     - uses: actions/upload-artifact@v7
       if: always()
