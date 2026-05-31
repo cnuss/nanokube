@@ -109,7 +109,7 @@ var (
 
 func NewTunnel() Tunnel {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	log := zerolog.New(os.Stderr).With().Str("component", "tunnel").Logger()
+	log := zerolog.New(io.Discard).With().Str("component", "tunnel").Logger()
 
 	t := &TunnelImpl{
 		ctx:       ctx,

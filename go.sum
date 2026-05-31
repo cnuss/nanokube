@@ -41,6 +41,8 @@ github.com/cnuss/daemonize v0.1.14 h1:hjMBiJycVz1+lnGwAZhVMoFsXCoFr6k1UzNgE5ysLJ
 github.com/cnuss/daemonize v0.1.14/go.mod h1:xs15b5a4lkrAu2VK9NfoDsC4gKhP4DhpoH8U0JjYsDE=
 github.com/cnuss/daemonize v0.1.18 h1:cmq423M7Aw9bdsYskJwLlRKABmvoNoRER2TVPC2p7VE=
 github.com/cnuss/daemonize v0.1.18/go.mod h1:xs15b5a4lkrAu2VK9NfoDsC4gKhP4DhpoH8U0JjYsDE=
+github.com/cnuss/daemonize v0.1.19 h1:ccMSHOY6UGhNNDrxzyIOB6v7G0ZetYF6qsBvpIO5qz4=
+github.com/cnuss/daemonize v0.1.19/go.mod h1:xs15b5a4lkrAu2VK9NfoDsC4gKhP4DhpoH8U0JjYsDE=
 github.com/cockroachdb/datadriven v1.0.2 h1:H9MtNqVoVhvd9nCBwOyDjUEdZCREqbIdCJD93PBm/jA=
 github.com/cockroachdb/datadriven v1.0.2/go.mod h1:a9RdTaap04u637JoCzcUoIcDmvwSUtcUFtT/C3kJlTU=
 github.com/container-storage-interface/spec v1.9.0 h1:zKtX4STsq31Knz3gciCYCi1SXtO2HJDecIjDVboYavY=
