@@ -667,7 +667,7 @@ func (c *Command) drainNode() error {
 }
 
 func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHookFn {
-	klog.InfoS("registering RunE hook", "hook", cmd.Name())
+	klog.V(2).InfoS("registering RunE hook", "hook", cmd.Name())
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
@@ -698,7 +698,7 @@ func (c *Command) runEHook(waitCh <-chan struct{}, cmd *cobra.Command) startHook
 }
 
 func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) startHookFn {
-	klog.InfoS("registering start hook", "hook", name)
+	klog.V(2).InfoS("registering start hook", "hook", name)
 	return func(errFn func(error), doneFn func()) func(hookCtx) error {
 		return func(hctx hookCtx) error {
 			go func() {
@@ -721,7 +721,7 @@ func startHook(name string, waitCh <-chan struct{}, fn func(hookCtx) error) star
 }
 
 func stopHook(name string, fn func() error) stopHookFn {
-	klog.InfoS("registering stop hook", "hook", name)
+	klog.V(2).InfoS("registering stop hook", "hook", name)
 	return func() error {
 		if err := fn(); err != nil {
 			klog.ErrorS(err, "errored", "pre-shutdown hook", name)
