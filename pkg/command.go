@@ -2,8 +2,12 @@ package pkg
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -157,6 +161,22 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	}
 	run.SetContext(c.Nano())
 	c.Command.AddCommand(run)
+
+	// export mirrors `kind export logs <dir>`: copy nanokube's daemon log
+	// (managed by daemonize) into a directory for CI artifact upload.
+	export := &cobra.Command{
+		Use:   "export",
+		Short: "export nanokube artifacts",
+	}
+	export.AddCommand(&cobra.Command{
+		Use:   "logs <dir>",
+		Short: "export nanokube logs to a directory",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return c.exportLogs(args[0])
+		},
+	})
+	c.Command.AddCommand(export)
 
 	c.Command.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		propagate := []string{"v"}
@@ -729,4 +749,49 @@ func stopHook(name string, fn func() error) stopHookFn {
 		}
 		return nil
 	}
+}
+
+// exportLogs copies the daemon log into dir, mirroring `kind export logs <dir>`.
+// The log path comes from the daemon via `status -o json` rather than being
+// recomputed here.
+func (c *Command) exportLogs(dir string) error {
+	// Mint the directory first so callers (e.g. upload-artifact) always have a
+	// target, matching `kind export logs <dir>` which creates the dir it fills.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	fmt.Printf("Exporting logs to:\n%s\n", dir)
+
+	statusJSON, err := exec.Command(os.Args[0], "status", "-o", "json").Output()
+	if err != nil {
+		return fmt.Errorf("query daemon status: %w", err)
+	}
+	var status struct {
+		LogFile string `json:"log_file,omitempty"`
+	}
+	if err := json.Unmarshal(statusJSON, &status); err != nil {
+		return fmt.Errorf("parse daemon status: %w", err)
+	}
+	src := status.LogFile
+	if src == "" {
+		return nil // no log yet; directory is still minted
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open log %s: %w", src, err)
+	}
+	defer in.Close()
+
+	dst := filepath.Join(dir, filepath.Base(src))
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dst, err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return fmt.Errorf("copy log to %s: %w", dst, err)
+	}
+	return out.Close()
 }
