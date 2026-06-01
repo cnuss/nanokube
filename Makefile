@@ -68,8 +68,8 @@ test:
 
 ARGS ?=
 
-run: fmt build
-	./nanokube $(ARGS)
+run: fmt
+	go run -ldflags="$(VERSION_LDFLAGS)" . $(ARGS)
 
 start: fmt build
 	./nanokube start $(ARGS)
