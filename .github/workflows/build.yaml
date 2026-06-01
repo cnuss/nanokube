@@ -12,7 +12,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: cnuss/nanokube/.github/actions/test@github
+        with:
+          suite: smoke
+          log-name: nanokube-log-ubuntu-24.04-smoke
+
   build:
+    needs: smoke
     strategy:
       fail-fast: false
       matrix:
@@ -36,18 +45,8 @@ jobs:
       - id: collect
         uses: cnuss/nanokube/.github/actions/collect@github
 
-  smoke:
-    needs: collect
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: cnuss/nanokube/.github/actions/test@github
-        with:
-          suite: smoke
-          artifact: ${{ fromJSON(needs.collect.outputs.artifacts)['ubuntu-24.04'] }}
-          log-name: nanokube-log-ubuntu-24.04-smoke
-
   release:
-    needs: [collect, smoke]
+    needs: collect
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
