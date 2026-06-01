@@ -1,0 +1,12 @@
+name: "Nanokube"
+description: "Run Nanokube in GitHub Actions"
+author: "cnuss"
+branding:
+  icon: "box"
+  color: "blue"
+runs:
+  using: "composite"
+  steps:
+    - id: debug-env
+      shell: bash
+      run: env
