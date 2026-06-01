@@ -37,7 +37,7 @@ runs:
       run: make build ARTIFACT=${{ inputs.artifact }}
 
     - shell: bash
-      run: ./nanokube start -v=4
+      run: ./nanokube start -v=2
 
     - shell: bash
       run: echo "NANOKUBE_LOG=$(./nanokube status -o json | jq -r '.log_file')" >> "$GITHUB_ENV"
