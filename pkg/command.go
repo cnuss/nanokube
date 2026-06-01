@@ -63,8 +63,6 @@ var featureGates = []string{
 	"kube:WatchListClient=false",
 	// DEVNOTE: general:
 	"kube:KubeletInUserNamespace=true",
-	"kube:GracefulNodeShutdown=true",
-	"kube:GracefulNodeShutdownBasedOnPodPriority=true",
 	"kube:ControllerManagerReleaseLeaderElectionLockOnExit=true",
 }
 
@@ -361,12 +359,12 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
 				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
 				ks.ClusterDomain = c.Nano().Tunnel().Domain()
-				// ks.HostnameOverride = c.Nano().Tunnel().Hostname()
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
 				ks.ShutdownGracePeriod = metav1.Duration{Duration: 60 * time.Second}
 				ks.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: 30 * time.Second}
+				ks.VolumePluginDir = c.Nano().Options().DataDirAt(v1.DataDirVolumePlugins)
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
 				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
 				deps.HostUtil = c.Nano().Host()
