@@ -1,3 +1,32 @@
+diff --git a/pkg/controlplane/apiserver/server.go b/pkg/controlplane/apiserver/server.go
+index 5cc74fdf9b6..0a71dc4356a 100644
+--- a/pkg/controlplane/apiserver/server.go
++++ b/pkg/controlplane/apiserver/server.go
+@@ -27,6 +27,7 @@ import (
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/util/runtime"
+ 	"k8s.io/apimachinery/pkg/util/uuid"
++	"k8s.io/apimachinery/pkg/util/validation"
+ 	apiserverfeatures "k8s.io/apiserver/pkg/features"
+ 	peerreconcilers "k8s.io/apiserver/pkg/reconcilers"
+ 	genericregistry "k8s.io/apiserver/pkg/registry/generic"
+@@ -322,6 +323,16 @@ func labelAPIServerHeartbeatFunc(identity string, peeraddress string) lease.Proc
+ 			return err
+ 		}
+ 
++		// nanokube: label values are bounded by validation.LabelValueMaxLength
++		// (63). Some hosts (cloud-CI runners, Tailscale/macOS .local FQDNs)
++		// exceed that, which would make the apiserver lease patch fail with
++		// "metadata.labels: Invalid value: ...: must be no more than 63 bytes".
++		// Truncate the prefix so the rest of the controller still publishes
++		// the lease.
++		if len(hostname) > validation.LabelValueMaxLength {
++			hostname = hostname[:validation.LabelValueMaxLength]
++		}
++
+ 		// convenience label to easily map a lease object to a specific apiserver
+ 		lease.Labels[apiv1.LabelHostname] = hostname
+ 
 diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
 index d8cfd44222c..b2b1c9e71a3 100644
 --- a/pkg/controlplane/controller/kubernetesservice/controller.go
