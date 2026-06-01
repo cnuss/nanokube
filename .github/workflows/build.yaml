@@ -63,7 +63,7 @@ jobs:
         run: |
           BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
           chmod +x "$BIN"
-          echo "version=$($BIN --version)" >> "$GITHUB_OUTPUT"
+          echo "version=$("$BIN" --version | sed 's/^Kubernetes //')" >> "$GITHUB_OUTPUT"
 
       - uses: ncipollo/release-action@v1
         with:
