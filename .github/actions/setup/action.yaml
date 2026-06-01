@@ -13,6 +13,7 @@ runs:
     - uses: actions/checkout@v6
       with:
         fetch-depth: 1
+        submodules: recursive
 
     - name: Setup Docker on Linux
       if: inputs.runtime == 'docker' && runner.os == 'Linux'
