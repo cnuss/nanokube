@@ -1,8 +1,16 @@
 diff --git a/pkg/controlplane/apiserver/server.go b/pkg/controlplane/apiserver/server.go
-index 5cc74fdf9b6..0a71dc4356a 100644
+index 5cc74fdf9b6..f6a00cddccf 100644
 --- a/pkg/controlplane/apiserver/server.go
 +++ b/pkg/controlplane/apiserver/server.go
-@@ -27,6 +27,7 @@ import (
+@@ -20,6 +20,7 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"os"
++	"strings"
+ 	"time"
+ 
+ 	coordinationapiv1 "k8s.io/api/coordination/v1"
+@@ -27,6 +28,7 @@ import (
  	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
  	"k8s.io/apimachinery/pkg/util/runtime"
  	"k8s.io/apimachinery/pkg/util/uuid"
@@ -10,18 +18,17 @@ index 5cc74fdf9b6..0a71dc4356a 100644
  	apiserverfeatures "k8s.io/apiserver/pkg/features"
  	peerreconcilers "k8s.io/apiserver/pkg/reconcilers"
  	genericregistry "k8s.io/apiserver/pkg/registry/generic"
-@@ -322,6 +323,16 @@ func labelAPIServerHeartbeatFunc(identity string, peeraddress string) lease.Proc
+@@ -322,6 +324,15 @@ func labelAPIServerHeartbeatFunc(identity string, peeraddress string) lease.Proc
  			return err
  		}
  
 +		// nanokube: label values are bounded by validation.LabelValueMaxLength
-+		// (63). Some hosts (cloud-CI runners, Tailscale/macOS .local FQDNs)
-+		// exceed that, which would make the apiserver lease patch fail with
-+		// "metadata.labels: Invalid value: ...: must be no more than 63 bytes".
-+		// Truncate the prefix so the rest of the controller still publishes
-+		// the lease.
++		// (63). Long FQDNs (cloud-CI runners, Tailscale/macOS .local hosts)
++		// blow past that. Drop everything after the first '.' to grab just
++		// the short hostname; if the short part still doesn't fit, let the
++		// downstream label validation surface the error.
 +		if len(hostname) > validation.LabelValueMaxLength {
-+			hostname = hostname[:validation.LabelValueMaxLength]
++			hostname, _, _ = strings.Cut(hostname, ".")
 +		}
 +
  		// convenience label to easily map a lease object to a specific apiserver
