@@ -456,6 +456,7 @@ func (c *Command) KubeletCommand() *cobra.Command {
 
 func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	kubeconfigPath := c.Nano().WithLoopback(ctx.LoopbackClientConfig).KubeconfigPath() // TODO(partial): use WriteKubeconfig on v1.Client
+	c.Nano().Client().CoreV1().Namespaces().Get(ctx.Context, "default", metav1.GetOptions{})
 	c.Nano().Client().WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
 	c.ControllerManagerCommand().Flags().Set("kubeconfig", kubeconfigPath)
 	c.ControllerManagerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
@@ -464,8 +465,15 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	c.SchedulerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
 	c.SchedulerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
 	c.KubeletCommand().Flags().Set("kubeconfig", kubeconfigPath)
-	close(c.kubeconfigReady)
-	return nil
+
+	return wait.ExponentialBackoffWithContext(ctx.Context, retry.DefaultBackoff, func(ctx context.Context) (bool, error) {
+		_, err := c.Nano().Client().CoreV1().Namespaces().Get(ctx, "default", metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		close(c.kubeconfigReady)
+		return true, nil
+	})
 }
 
 func (c *Command) untaintNode(ctx hookCtx) error {
