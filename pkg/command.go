@@ -456,8 +456,6 @@ func (c *Command) KubeletCommand() *cobra.Command {
 
 func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	kubeconfigPath := c.Nano().WithLoopback(ctx.LoopbackClientConfig).KubeconfigPath() // TODO(partial): use WriteKubeconfig on v1.Client
-	c.Nano().Client().CoreV1().Namespaces().Get(ctx.Context, "default", metav1.GetOptions{})
-	c.Nano().Client().WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
 	c.ControllerManagerCommand().Flags().Set("kubeconfig", kubeconfigPath)
 	c.ControllerManagerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
 	c.ControllerManagerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
@@ -466,9 +464,17 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	c.SchedulerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
 	c.KubeletCommand().Flags().Set("kubeconfig", kubeconfigPath)
 
+	client := c.Nano().Client()
+
 	return wait.PollUntilContextCancel(ctx.Context, 200*time.Millisecond, true, func(ctx context.Context) (bool, error) {
-		_, err := c.Nano().Client().RbacV1().ClusterRoleBindings().Get(ctx, "system:node", metav1.GetOptions{})
+		_, err := client.RbacV1().ClusterRoleBindings().Get(ctx, "system:node", metav1.GetOptions{})
 		if err != nil {
+			klog.V(2).InfoS("waiting for API server to be ready: %v", err)
+			return false, nil
+		}
+		err = client.WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
+		if err != nil {
+			klog.ErrorS(err, "failed to write kubeconfig")
 			return false, nil
 		}
 		close(c.kubeconfigReady)
