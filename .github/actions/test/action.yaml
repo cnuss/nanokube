@@ -6,8 +6,9 @@ inputs:
     description: "Chainsaw test suite under tests/ (e.g. smoke, sanity)"
     required: true
   artifact:
-    description: "Name of the build artifact to download"
-    required: true
+    description: "Name of the build artifact to download. If omitted, builds from source via 'make run'"
+    required: false
+    default: ""
   log-name:
     description: "Name for the uploaded log artifact"
     required: true
@@ -25,7 +26,8 @@ runs:
 
     - uses: cnuss/nanokube/.github/actions/setup@github
 
-    - uses: actions/download-artifact@v4
+    - if: inputs.artifact != ''
+      uses: actions/download-artifact@v4
       with:
         name: ${{ inputs.artifact }}
 
@@ -34,20 +36,34 @@ runs:
         go-version-file: go.mod
 
     - shell: bash
-      run: make build ARTIFACT=${{ inputs.artifact }}
+      run: |
+        if [ -n "${{ inputs.artifact }}" ]; then
+          make build ARTIFACT=${{ inputs.artifact }}
+          ./nanokube start -v=2
+        else
+          make run ARGS="start -v=2"
+        fi
 
     - shell: bash
-      run: ./nanokube start -v=2
-
-    - shell: bash
-      run: echo "NANOKUBE_LOG=$(./nanokube status -o json | jq -r '.log_file')" >> "$GITHUB_ENV"
+      run: |
+        if [ -n "${{ inputs.artifact }}" ]; then
+          log=$(./nanokube status -o json | jq -r '.log_file')
+        else
+          log=$(make -s run ARGS='status -o json' 2>/dev/null | jq -r '.log_file')
+        fi
+        echo "NANOKUBE_LOG=$log" >> "$GITHUB_ENV"
 
     - shell: bash
       run: make test SUITE=${{ inputs.suite }} CHAINSAW_ARGS="${{ inputs.chainsaw-args }}"
 
     - if: always()
       shell: bash
-      run: ./nanokube stop || true
+      run: |
+        if [ -n "${{ inputs.artifact }}" ]; then
+          ./nanokube stop || true
+        else
+          make run ARGS="stop -v=2" || true
+        fi
 
     - if: always()
       shell: bash
