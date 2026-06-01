@@ -466,8 +466,8 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	c.SchedulerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
 	c.KubeletCommand().Flags().Set("kubeconfig", kubeconfigPath)
 
-	return wait.ExponentialBackoffWithContext(ctx.Context, retry.DefaultBackoff, func(ctx context.Context) (bool, error) {
-		_, err := c.Nano().Client().CoreV1().Namespaces().Get(ctx, "default", metav1.GetOptions{})
+	return wait.PollUntilContextCancel(ctx.Context, 200*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+		_, err := c.Nano().Client().RbacV1().ClusterRoleBindings().Get(ctx, "system:node", metav1.GetOptions{})
 		if err != nil {
 			return false, nil
 		}
