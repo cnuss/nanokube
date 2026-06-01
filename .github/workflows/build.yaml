@@ -52,6 +52,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           pattern: nanokube-${{ github.ref_name }}-*
@@ -63,6 +65,15 @@ jobs:
           BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
           chmod +x "$BIN"
           echo "version=$("$BIN" --version | sed 's/^Kubernetes //')" >> "$GITHUB_OUTPUT"
+
+      # ncipollo/release-action's allowUpdates refreshes the release assets but
+      # leaves the git tag pinned to its original commit. Force-move the tag to
+      # this push so @<version> resolves to the current tree (incl. action.yml).
+      - name: Move tag to current commit
+        run: |
+          tag=${{ steps.version.outputs.version }}
+          git tag -f "$tag"
+          git push -f origin "refs/tags/$tag"
 
       - uses: ncipollo/release-action@v1
         with:
