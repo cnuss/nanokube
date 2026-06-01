@@ -5,5 +5,6 @@
   "git.ignoredRepositories": [
     "kubernetes"
   ],
-  "explorer.openEditors.visible": 10
+  "explorer.openEditors.visible": 10,
+  "terminal.integrated.scrollback": 50000
 }
