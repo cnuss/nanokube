@@ -19,7 +19,7 @@ KUBE_PATCH_PKG := patches/kubernetes-pkg-$(KUBE_MAJOR).$(KUBE_MINOR).patch
 KUBE_PATCH_STG := patches/kubernetes-stg-$(KUBE_MAJOR).$(KUBE_MINOR).patch
 
 patch:
-	@cd kubernetes && git reset --hard HEAD
+	@cd kubernetes && git reset --hard --quiet HEAD
 	@cd kubernetes && git apply ../$(KUBE_PATCH_CMD)
 	@cd kubernetes && git apply ../$(KUBE_PATCH_PKG)
 	@cd kubernetes && [ -s ../$(KUBE_PATCH_STG) ] && git apply ../$(KUBE_PATCH_STG) || true
