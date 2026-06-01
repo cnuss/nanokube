@@ -64,22 +64,40 @@ jobs:
         run: |
           BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
           chmod +x "$BIN"
-          version=$("$BIN" --version | sed 's/^Kubernetes //')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          # Re-tag the assets from the branch ref to the captured version so
-          # the action can fetch them by the ref it was pinned to.
-          for f in ./artifacts/nanokube-${{ github.ref_name }}-*; do
-            mv "$f" "${f/nanokube-${{ github.ref_name }}-/nanokube-$version-}"
-          done
+          echo "version=$("$BIN" --version | sed 's/^Kubernetes //')" >> "$GITHUB_OUTPUT"
 
       # ncipollo/release-action's allowUpdates refreshes the release assets but
-      # leaves the git tag pinned to its original commit. Force-move the tag to
-      # this push so @<version> resolves to the current tree (incl. action.yml).
-      - name: Move tag to current commit
+      # leaves the git tag pinned to its original commit, so each release below
+      # force-moves its tag to this push first.
+
+      # Rolling prerelease keyed on the branch, carrying the branch-named assets
+      # (nanokube-<branch>-<OS>-<ARCH>). Lets the action install a branch ref by
+      # download instead of building from source.
+      - name: Move branch tag to current commit
         run: |
-          tag=${{ steps.version.outputs.version }}
-          git tag -f "$tag"
-          git push -f origin "refs/tags/$tag"
+          git tag -f "${{ github.ref_name }}"
+          git push -f origin "refs/tags/${{ github.ref_name }}"
+
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: true
+          allowUpdates: true
+          removeArtifacts: true
+          artifacts: artifacts/*
+
+      # Rename the assets to the captured version and cut the versioned release.
+      - name: Rename assets to version
+        run: |
+          for f in ./artifacts/nanokube-${{ github.ref_name }}-*; do
+            mv "$f" "${f/nanokube-${{ github.ref_name }}-/nanokube-${{ steps.version.outputs.version }}-}"
+          done
+
+      - name: Move version tag to current commit
+        run: |
+          git tag -f "${{ steps.version.outputs.version }}"
+          git push -f origin "refs/tags/${{ steps.version.outputs.version }}"
 
       - uses: ncipollo/release-action@v1
         with:

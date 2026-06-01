@@ -14,52 +14,27 @@ runs:
       shell: bash
       run: |
         rest=${GITHUB_ACTION_PATH##*/_actions/}   # <owner>/<repo>/<ref>
-        version=${rest##*/}                        # <ref>  (tag, sha, or branch)
+        version=${rest##*/}                        # <ref>  (tag or branch)
         repo=${rest%/*}                            # <owner>/<repo>
-        # A branch ref has no release asset, so build it from source instead.
-        if git ls-remote --heads "https://github.com/${repo}.git" "$version" | grep -q .; then
-          source=true
-          # Pull the ref's go.mod so setup-go can infer the toolchain version.
-          # setup-go keys its parse mode on the basename, so keep it "go.mod".
-          gomoddir="${RUNNER_TEMP}/nanokube-gomod"
-          mkdir -p "$gomoddir"
-          curl -fsSL -o "$gomoddir/go.mod" "https://raw.githubusercontent.com/${repo}/${version}/go.mod"
-          echo "gomod=$gomoddir/go.mod" >> "$GITHUB_OUTPUT"
-        else
-          source=false
-        fi
         echo "repo=$repo"       >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
-        echo "source=$source"   >> "$GITHUB_OUTPUT"
-        echo "resolved $repo @ $version (from source: $source)"
+        echo "resolved $repo @ $version"
 
-    # Branch refs build from source, so the runner needs a Go toolchain
-    # matching the ref's go.mod.
-    - if: steps.resolve.outputs.source == 'true'
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: ${{ steps.resolve.outputs.gomod }}
-
-    # Put a nanokube binary matching this runner on PATH.
-    #   - from source  -> go install <repo>@<version>
-    #   - release asset -> download the prebuilt binary:
-    #       https://github.com/<repo>/releases/download/<version>/nanokube-<version>-<OS>-<ARCH>
+    # Download the prebuilt binary for this runner and put it on PATH. Both tag
+    # and branch refs resolve to a release: tags to the versioned release, and
+    # branches to a rolling prerelease named after the branch.
+    #   https://github.com/<repo>/releases/download/<version>/nanokube-<version>-<OS>-<ARCH>
     - id: install
       shell: bash
       run: |
         repo="${{ steps.resolve.outputs.repo }}"
         version="${{ steps.resolve.outputs.version }}"
+        asset="nanokube-${version}-$(uname -s)-$(uname -m)"
+        url="https://github.com/${repo}/releases/download/${version}/${asset}"
         bindir="${RUNNER_TEMP}/nanokube-bin"
         mkdir -p "$bindir"
-        if [ "${{ steps.resolve.outputs.source }}" = "true" ]; then
-          echo "installing from source: github.com/${repo}@${version}"
-          GOBIN="$bindir" go install "github.com/${repo}@${version}"
-        else
-          asset="nanokube-${version}-$(uname -s)-$(uname -m)"
-          url="https://github.com/${repo}/releases/download/${version}/${asset}"
-          echo "fetching $url"
-          curl -fsSL -o "$bindir/nanokube" "$url"
-          chmod +x "$bindir/nanokube"
-        fi
+        echo "fetching $url"
+        curl -fsSL -o "$bindir/nanokube" "$url"
+        chmod +x "$bindir/nanokube"
         echo "$bindir" >> "$GITHUB_PATH"
         "$bindir/nanokube" --version
