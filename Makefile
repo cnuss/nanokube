@@ -68,7 +68,7 @@ test:
 
 ARGS ?=
 
-run: fmt
+run: fmt patch
 	go run -ldflags="$(VERSION_LDFLAGS)" . $(ARGS)
 
 start: fmt build
