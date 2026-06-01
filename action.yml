@@ -7,6 +7,15 @@ branding:
 runs:
   using: "composite"
   steps:
-    - id: debug-env
+    # Derive the repo (owner/name) and version (ref) from the path GitHub
+    # checked this action out to, so nothing is hardcoded if the repo moves.
+    #   GITHUB_ACTION_PATH = .../_actions/<owner>/<repo>/<ref>
+    - id: resolve
       shell: bash
-      run: env
+      run: |
+        rest=${GITHUB_ACTION_PATH##*/_actions/}   # <owner>/<repo>/<ref>
+        version=${rest##*/}                        # <ref>  (tag, sha, or branch)
+        repo=${rest%/*}                            # <owner>/<repo>
+        echo "repo=$repo"       >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "resolved $repo @ $version"

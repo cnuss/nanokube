@@ -64,7 +64,13 @@ jobs:
         run: |
           BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
           chmod +x "$BIN"
-          echo "version=$("$BIN" --version | sed 's/^Kubernetes //')" >> "$GITHUB_OUTPUT"
+          version=$("$BIN" --version | sed 's/^Kubernetes //')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Re-tag the assets from the branch ref to the captured version so
+          # the action can fetch them by the ref it was pinned to.
+          for f in ./artifacts/nanokube-${{ github.ref_name }}-*; do
+            mv "$f" "${f/nanokube-${{ github.ref_name }}-/nanokube-$version-}"
+          done
 
       # ncipollo/release-action's allowUpdates refreshes the release assets but
       # leaves the git tag pinned to its original commit. Force-move the tag to
