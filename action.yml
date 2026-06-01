@@ -20,9 +20,11 @@ runs:
         if git ls-remote --heads "https://github.com/${repo}.git" "$version" | grep -q .; then
           source=true
           # Pull the ref's go.mod so setup-go can infer the toolchain version.
-          gomod="${RUNNER_TEMP}/nanokube-go.mod"
-          curl -fsSL -o "$gomod" "https://raw.githubusercontent.com/${repo}/${version}/go.mod"
-          echo "gomod=$gomod" >> "$GITHUB_OUTPUT"
+          # setup-go keys its parse mode on the basename, so keep it "go.mod".
+          gomoddir="${RUNNER_TEMP}/nanokube-gomod"
+          mkdir -p "$gomoddir"
+          curl -fsSL -o "$gomoddir/go.mod" "https://raw.githubusercontent.com/${repo}/${version}/go.mod"
+          echo "gomod=$gomoddir/go.mod" >> "$GITHUB_OUTPUT"
         else
           source=false
         fi
