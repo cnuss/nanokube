@@ -178,7 +178,7 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		c.runHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.ControllerManagerCommand())
 		c.runHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
 		c.runHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.KubeletCommand())
-		c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", nil, c.updateKubeconfig)
+		c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", c.Nano().Tunnel().HostnameReady(), c.updateKubeconfig)
 		c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 		c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
 		c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions

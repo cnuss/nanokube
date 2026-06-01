@@ -36,6 +36,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
+	"k8s.io/klog/v2"
 )
 
 type Tunnel interface {
@@ -50,6 +51,7 @@ type Tunnel interface {
 
 	WithListener(listener net.Listener) Tunnel
 	Listening() <-chan struct{}
+	HostnameReady() <-chan struct{}
 }
 
 type TunnelImpl struct {
@@ -73,8 +75,11 @@ type TunnelImpl struct {
 	caCertsOnce sync.Once
 	__caCerts__ []*x509.Certificate
 
-	listenerOnce sync.Once
-	listening    chan struct{}
+	listeningOnce sync.Once
+	__listening__ chan struct{}
+
+	hostnameReadyOnce sync.Once
+	__hostnameReady__ chan struct{}
 }
 
 type spec struct {
@@ -107,15 +112,27 @@ var (
 	cloudflaredVersion = "2026.3.0"
 )
 
+// klogWriter adapts zerolog's io.Writer sink onto klog so cloudflared tunnel
+// logs surface through the normal nanokube log stream instead of being
+// discarded. zerolog accepts any io.Writer; klog has no matching ingress
+// writer, so forward each emitted line as a klog record.
+type klogWriter struct{}
+
+func (klogWriter) Write(p []byte) (int, error) {
+	klog.Info(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
 func NewTunnel() Tunnel {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	log := zerolog.New(io.Discard).With().Str("component", "tunnel").Logger()
+	log := zerolog.New(klogWriter{}).With().Str("component", "tunnel").Logger()
 
 	t := &TunnelImpl{
-		ctx:       ctx,
-		cancel:    cancel,
-		log:       &log,
-		listening: make(chan struct{}),
+		ctx:               ctx,
+		cancel:            cancel,
+		log:               &log,
+		__listening__:     make(chan struct{}),
+		__hostnameReady__: make(chan struct{}),
 	}
 	return t
 }
@@ -214,7 +231,7 @@ func (t *TunnelImpl) CACerts() []*x509.Certificate {
 }
 
 func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
-	t.listenerOnce.Do(func() {
+	t.listeningOnce.Do(func() {
 		t.log.Info().Str("address", listener.Addr().String()).Msg("configuring tunnel with local listener")
 		if listener.Addr().(*net.TCPAddr).Port != t.LocalPort() {
 			t.cancel(fmt.Errorf("listener port (%d) does not match local port (%d)", listener.Addr().(*net.TCPAddr).Port, t.LocalPort()))
@@ -320,15 +337,77 @@ func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
 
 			t.log.Info().Msg("waiting for tunnel to be connected")
 			<-connected.Wait()
-			t.log.Info().Msg("tunnel connected")
-			close(t.listening)
+			t.log.Info().Msg("tunnel connected, waiting for DNS")
+			<-t.HostnameReady()
+			t.log.Info().Msg("tunnel is listening")
+			close(t.__listening__)
 		}()
 	})
 	return t
 }
 
+func (t *TunnelImpl) HostnameReady() <-chan struct{} {
+	t.hostnameReadyOnce.Do(func() {
+		// authServers resolves the zone's authoritative nameservers to ip:53
+		// endpoints. Run once up front and stashed; NS records are stable.
+		authServers := func() []string {
+			ns, err := net.DefaultResolver.LookupNS(t.ctx, t.Domain())
+			if err != nil {
+				return nil
+			}
+
+			ips := make([]string, 0, len(ns))
+			for _, record := range ns {
+				hostIPs, err := net.DefaultResolver.LookupHost(t.ctx, record.Host)
+				if err != nil {
+					continue
+				}
+				for _, ip := range hostIPs {
+					ips = append(ips, net.JoinHostPort(ip, "53"))
+				}
+			}
+			return ips
+		}
+
+		go func() {
+			// Discover the authoritative servers once, retrying until available.
+			var ips []string
+			for {
+				if ips = authServers(); len(ips) > 0 {
+					break
+				}
+				<-await(t.ctx, time.After(time.Second))
+			}
+
+			d := net.Dialer{Timeout: 5 * time.Second}
+			r := &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					// randomize across all authoritative servers instead of always picking the first one
+					return d.DialContext(ctx, network, ips[time.Now().UnixNano()%int64(len(ips))])
+				},
+			}
+
+			for {
+				ctx, cancel := context.WithTimeout(t.ctx, 5*time.Second)
+				addrs, err := r.LookupHost(ctx, t.Hostname())
+				cancel()
+
+				if err == nil && len(addrs) > 0 {
+					t.log.Info().Str("hostname", t.Hostname()).Strs("addrs", addrs).Msg("hostname resolved on authoritative nameservers")
+					close(t.__hostnameReady__)
+					return
+				}
+
+				<-await(t.ctx, time.After(time.Second))
+			}
+		}()
+	})
+	return t.__hostnameReady__
+}
+
 func (t *TunnelImpl) Listening() <-chan struct{} {
-	return t.listening
+	return t.__listening__
 }
 
 func (t *TunnelImpl) spec() *spec {
@@ -422,12 +501,20 @@ func (t *TunnelImpl) spec() *spec {
 			t.log.Warn().Err(err).Msg("failed to fetch tunnel spec, retrying...")
 
 			sleep += 1 * time.Second
-
-			select {
-			case <-t.ctx.Done():
-			case <-time.After(sleep):
-			}
+			<-await(t.ctx, time.After(sleep))
 		}
 	})
 	return t.__spec__
+}
+
+func await(ctx context.Context, ch <-chan time.Time) <-chan struct{} {
+	out := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-ch:
+			close(out)
+		}
+	}()
+	return out
 }
