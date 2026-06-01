@@ -354,7 +354,7 @@ index 71739808dd2..60bb501a1f7 100644
  	os.Exit(code)
  }
 diff --git a/cmd/kubelet/app/server.go b/cmd/kubelet/app/server.go
-index c245a648831..a6ac74cf0a4 100644
+index c245a648831..5cfa5d6d068 100644
 --- a/cmd/kubelet/app/server.go
 +++ b/cmd/kubelet/app/server.go
 @@ -65,7 +65,6 @@ import (
@@ -419,7 +419,17 @@ index c245a648831..a6ac74cf0a4 100644
  	return cmd
  }
  
-@@ -539,7 +547,8 @@ func UnsecuredDependencies(ctx context.Context, s *options.KubeletServer, featur
+@@ -497,7 +505,8 @@ func loadDropinConfigFileIntoJSON(name string) ([]byte, *schema.GroupVersionKind
+ 
+ // UnsecuredDependencies returns a Dependencies suitable for being run, or an error if the server setup
+ // is not valid.  It will not start any background processes, and does not include authentication/authorization
+-func UnsecuredDependencies(ctx context.Context, s *options.KubeletServer, featureGate featuregate.FeatureGate) (*kubelet.Dependencies, error) {
++// Declared as a var so external code can swap the implementation at init time.
++var UnsecuredDependencies = func(ctx context.Context, s *options.KubeletServer, featureGate featuregate.FeatureGate) (*kubelet.Dependencies, error) {
+ 	// Initialize the TLS Options
+ 	tlsOptions, err := InitializeTLS(ctx, &s.KubeletFlags, &s.KubeletConfiguration)
+ 	if err != nil {
+@@ -539,7 +548,8 @@ func UnsecuredDependencies(ctx context.Context, s *options.KubeletServer, featur
  // The kubeDeps argument may be nil - if so, it is initialized from the settings on KubeletServer.
  // Otherwise, the caller is assumed to have set up the Dependencies object and a default one will
  // not be generated.
@@ -429,7 +439,7 @@ index c245a648831..a6ac74cf0a4 100644
  	logger := klog.FromContext(ctx)
  	// To help debugging, immediately log version
  	logger.Info("Kubelet version", "kubeletVersion", version.Get())
-@@ -1281,13 +1290,16 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
+@@ -1281,13 +1291,16 @@ func RunKubelet(ctx context.Context, kubeServer *options.KubeletServer, kubeDeps
  		logger.Error(err, "Failed to set rlimit on max file handles")
  	}
  

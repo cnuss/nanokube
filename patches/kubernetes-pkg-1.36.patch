@@ -138,7 +138,7 @@ index 5bf378bab58..d0cc2c02816 100644
  func (kl *Kubelet) ListenAndServeReadOnly(ctx context.Context, address net.IP, port uint, tp trace.TracerProvider) {
  	server.ListenAndServeKubeletReadOnlyServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, address, port, tp)
 diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
-index fe96a4ab366..190486668ad 100644
+index fe96a4ab366..c7d9a6e01c5 100644
 --- a/pkg/kubelet/server/server.go
 +++ b/pkg/kubelet/server/server.go
 @@ -469,14 +469,17 @@ func (s *Server) getMetricMethodBucket(method string) string {
@@ -178,7 +178,48 @@ index fe96a4ab366..190486668ad 100644
  	if err := s.host.GetKubeletContainerLogs(ctx, kubecontainer.GetPodFullName(pod), containerName, logOptions, stdout, stderr); err != nil {
  		response.WriteError(http.StatusBadRequest, err)
  		return
-@@ -1278,6 +1285,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+@@ -965,6 +972,13 @@ func getPortForwardRequestParams(req *restful.Request) portForwardRequestParams
+ 	}
+ }
+ 
++// nanokube: streaming URLs returned by the CRI runtime point at the apiserver's
++// public tunnel hostname; the connection ultimately loops back to this process.
++// Skip cert verification since both ends are controlled by nanokube.
++var nanokubeProxyTransport = &http.Transport{
++	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
++}
++
+ type responder struct{}
+ 
+ func (r *responder) Error(w http.ResponseWriter, req *http.Request, err error) {
+@@ -996,7 +1010,7 @@ func (s *Server) getAttach(request *restful.Request, response *restful.Response)
+ 		streaming.WriteError(err, response.ResponseWriter)
+ 		return
+ 	}
+-	var handler http.Handler = proxy.NewUpgradeAwareHandler(url, nil /*transport*/, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
++	var handler http.Handler = proxy.NewUpgradeAwareHandler(url, nanokubeProxyTransport, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
+ 	// If upgrade request is for V5 websockets, wrap with websocket/spdy stream translation.
+ 	if utilfeature.DefaultFeatureGate.Enabled(features.ExtendWebSocketsToKubelet) &&
+ 		wsstream.IsWebSocketRequestWithStreamCloseProtocol(request.Request) {
+@@ -1033,7 +1047,7 @@ func (s *Server) getExec(request *restful.Request, response *restful.Response) {
+ 		streaming.WriteError(err, response.ResponseWriter)
+ 		return
+ 	}
+-	var handler http.Handler = proxy.NewUpgradeAwareHandler(url, nil /*transport*/, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
++	var handler http.Handler = proxy.NewUpgradeAwareHandler(url, nanokubeProxyTransport, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
+ 	// If upgrade request is for V5 websockets, wrap with websocket/spdy stream translation.
+ 	if utilfeature.DefaultFeatureGate.Enabled(features.ExtendWebSocketsToKubelet) &&
+ 		wsstream.IsWebSocketRequestWithStreamCloseProtocol(request.Request) {
+@@ -1117,7 +1131,7 @@ func (s *Server) getPortForward(request *restful.Request, response *restful.Resp
+ 		streaming.WriteError(err, response.ResponseWriter)
+ 		return
+ 	}
+-	var handler http.Handler = proxy.NewUpgradeAwareHandler(url, nil /*transport*/, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
++	var handler http.Handler = proxy.NewUpgradeAwareHandler(url, nanokubeProxyTransport, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
+ 	// If upgrade request is for tunneling websockets, wrap with tunneling handling.
+ 	if websocketSPDYTunnel {
+ 		servermetrics.IncWebSocketStreamingRequest("portforward")
+@@ -1278,6 +1292,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
  	handler.ServeHTTP(w, req)
  }
  

@@ -12,6 +12,7 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"github.com/stoewer/go-strcase"
+	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -50,6 +51,7 @@ import (
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/config"
 	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 	sched "k8s.io/kubernetes/pkg/scheduler"
+	"k8s.io/kubernetes/pkg/util/oom"
 )
 
 // featureGates is applied process-wide (the kube: gate is a singleton
@@ -361,6 +363,27 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 			cmd.Flags().Set("volume-plugin-dir", c.Nano().Options().DataDirAt(v1.DataDirVolumePlugins))
 			run := kubelet.Run
+			kubelet.UnsecuredDependencies = func(ctx context.Context, s *kubeletoptions.KubeletServer, featureGate featuregate.FeatureGate) (*kubeletcore.Dependencies, error) {
+				return &kubeletcore.Dependencies{
+					CAdvisorInterface:    c.Nano().DefaultBackend(),
+					ContainerManager:     c.Nano().DefaultBackend().Manager(),
+					HostUtil:             c.Nano().Host(),
+					Mounter:              c.Nano().Host(),
+					OSInterface:          c.Nano().Host(),
+					ProbeManager:         nil,
+					Recorder:             c.Nano(),
+					Subpather:            c.Nano().Host(),
+					VolumePlugins:        c.Nano().Host().VolumePlugins(),
+					RemoteImageService:   c.Nano().DefaultBackend().Driver(),
+					RemoteRuntimeService: c.Nano().DefaultBackend().Driver(),
+					OOMAdjuster:          oom.NewFakeOOMAdjuster(),
+					TracerProvider:       noopoteltrace.NewTracerProvider(),
+					TLSOptions: &kubeletserver.TLSOptions{
+						CertFile: s.TLSCertFile,
+						KeyFile:  s.TLSPrivateKeyFile,
+					},
+				}, nil
+			}
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
 				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
 				ks.ClusterDomain = c.Nano().Tunnel().Domain()
@@ -368,17 +391,6 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
-				deps.CAdvisorInterface = c.Nano().DefaultBackend()
-				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
-				deps.HostUtil = c.Nano().Host()
-				deps.Mounter = c.Nano().Host()
-				deps.OSInterface = c.Nano().Host()
-				deps.ProbeManager = nil
-				deps.RemoteImageService = c.Nano().DefaultBackend().Driver()
-				deps.RemoteRuntimeService = c.Nano().DefaultBackend().Driver()
-				deps.Recorder = c.Nano()
-				deps.Subpather = c.Nano().Host()
-				deps.VolumePlugins = c.Nano().Host().VolumePlugins()
 				return run(ctx, ks, deps, fg)
 			}
 			start := kubelet.StartKubelet
