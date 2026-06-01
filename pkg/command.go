@@ -63,8 +63,9 @@ var featureGates = []string{
 	"kube:WatchListClient=false",
 	// DEVNOTE: general:
 	"kube:KubeletInUserNamespace=true",
-	"kube:GracefulNodeShutdown=true",
-	"kube:GracefulNodeShutdownBasedOnPodPriority=true",
+	"kube:GracefulNodeShutdown=false",
+	"kube:WindowsGracefulNodeShutdown=false",
+	"kube:GracefulNodeShutdownBasedOnPodPriority=false",
 	"kube:ControllerManagerReleaseLeaderElectionLockOnExit=true",
 }
 
@@ -211,6 +212,7 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 		c.controllerManagerOnce.Do(func() {
 			cmd.Flags().Set("authentication-skip-lookup", "true")
 			cmd.Flags().Set("controller-shutdown-timeout", "0")
+			cmd.Flags().Set("flex-volume-plugin-dir", c.Nano().Options().DataDirAt(v1.DataDirVolumePlugins))
 			cmd.Flags().Set("leader-elect", "true")
 			cmd.Flags().Set("root-ca-file", c.Nano().RootCaFilePath())
 			cmd.Flags().Set("service-account-private-key-file", c.Nano().KeyFilePath())
@@ -357,16 +359,15 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("root-dir", c.Nano().Options().DataDirAt(v1.DataDirKubelet))
 			cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
 			cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
+			cmd.Flags().Set("volume-plugin-dir", c.Nano().Options().DataDirAt(v1.DataDirVolumePlugins))
 			run := kubelet.Run
 			kubelet.Run = func(ctx context.Context, ks *kubeletoptions.KubeletServer, deps *kubeletcore.Dependencies, fg featuregate.FeatureGate) error {
 				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
 				ks.ClusterDomain = c.Nano().Tunnel().Domain()
-				// ks.HostnameOverride = c.Nano().Tunnel().Hostname()
+				ks.HostnameOverride = c.Nano().Tunnel().LocalHost()
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
-				ks.ShutdownGracePeriod = metav1.Duration{Duration: 60 * time.Second}
-				ks.ShutdownGracePeriodCriticalPods = metav1.Duration{Duration: 30 * time.Second}
 				deps.CAdvisorInterface = c.Nano().DefaultBackend()
 				deps.ContainerManager = c.Nano().DefaultBackend().Manager()
 				deps.HostUtil = c.Nano().Host()
@@ -455,6 +456,7 @@ func (c *Command) KubeletCommand() *cobra.Command {
 
 func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	kubeconfigPath := c.Nano().WithLoopback(ctx.LoopbackClientConfig).KubeconfigPath() // TODO(partial): use WriteKubeconfig on v1.Client
+	c.Nano().Client().CoreV1().Namespaces().Get(ctx.Context, "default", metav1.GetOptions{})
 	c.Nano().Client().WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
 	c.ControllerManagerCommand().Flags().Set("kubeconfig", kubeconfigPath)
 	c.ControllerManagerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
@@ -463,8 +465,15 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	c.SchedulerCommand().Flags().Set("authorization-kubeconfig", kubeconfigPath)
 	c.SchedulerCommand().Flags().Set("authentication-kubeconfig", kubeconfigPath)
 	c.KubeletCommand().Flags().Set("kubeconfig", kubeconfigPath)
-	close(c.kubeconfigReady)
-	return nil
+
+	return wait.ExponentialBackoffWithContext(ctx.Context, retry.DefaultBackoff, func(ctx context.Context) (bool, error) {
+		_, err := c.Nano().Client().CoreV1().Namespaces().Get(ctx, "default", metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		close(c.kubeconfigReady)
+		return true, nil
+	})
 }
 
 func (c *Command) untaintNode(ctx hookCtx) error {

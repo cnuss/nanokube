@@ -235,8 +235,7 @@ func (k *nanokubeImpl) Environ() []string {
 
 func (k *nanokubeImpl) recorder() record.EventRecorder {
 	k.proxiedRecorderOnce.Do(func() {
-		tunnel := k.Tunnel()
-		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Options().Name(), Host: tunnel.Hostname()})
+		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Options().Name(), Host: k.Tunnel().LocalHost()})
 	})
 	return k.proxiedRecorder
 }
