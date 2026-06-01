@@ -45,12 +45,27 @@ jobs:
       - id: collect
         uses: cnuss/nanokube/.github/actions/collect@github
 
+  # Two releases per push, published in parallel:
+  #   branch  -> rolling prerelease named after the branch, branch-named assets
+  #              (nanokube-<branch>-<OS>-<ARCH>); lets the action install a
+  #              branch ref by download instead of building from source.
+  #   version -> versioned release, assets renamed to the captured version.
+  # ncipollo/release-action's allowUpdates refreshes the assets but leaves the
+  # git tag pinned to its original commit, so each leg force-moves its tag first.
   release:
     needs: collect
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: branch
+            prerelease: true
+          - kind: version
+            prerelease: false
     steps:
       - uses: actions/checkout@v5
 
@@ -60,49 +75,31 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - id: version
+      - id: tag
         run: |
-          BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
-          chmod +x "$BIN"
-          echo "version=$("$BIN" --version | sed 's/^Kubernetes //')" >> "$GITHUB_OUTPUT"
+          if [ "${{ matrix.kind }}" = "version" ]; then
+            BIN=./artifacts/nanokube-${{ github.ref_name }}-$(uname -s)-$(uname -m)
+            chmod +x "$BIN"
+            tag=$("$BIN" --version | sed 's/^Kubernetes //')
+            # Rename the assets from the branch ref to the captured version.
+            for f in ./artifacts/nanokube-${{ github.ref_name }}-*; do
+              mv "$f" "${f/nanokube-${{ github.ref_name }}-/nanokube-$tag-}"
+            done
+          else
+            tag="${{ github.ref_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      # ncipollo/release-action's allowUpdates refreshes the release assets but
-      # leaves the git tag pinned to its original commit, so each release below
-      # force-moves its tag to this push first.
-
-      # Rolling prerelease keyed on the branch, carrying the branch-named assets
-      # (nanokube-<branch>-<OS>-<ARCH>). Lets the action install a branch ref by
-      # download instead of building from source.
-      - name: Move branch tag to current commit
+      - name: Move tag to current commit
         run: |
-          git tag -f "${{ github.ref_name }}"
-          git push -f origin "refs/tags/${{ github.ref_name }}"
+          git tag -f "${{ steps.tag.outputs.tag }}"
+          git push -f origin "refs/tags/${{ steps.tag.outputs.tag }}"
 
       - uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          prerelease: true
-          allowUpdates: true
-          replacesArtifacts: true
-          artifacts: artifacts/*
-
-      # Rename the assets to the captured version and cut the versioned release.
-      - name: Rename assets to version
-        run: |
-          for f in ./artifacts/nanokube-${{ github.ref_name }}-*; do
-            mv "$f" "${f/nanokube-${{ github.ref_name }}-/nanokube-${{ steps.version.outputs.version }}-}"
-          done
-
-      - name: Move version tag to current commit
-        run: |
-          git tag -f "${{ steps.version.outputs.version }}"
-          git push -f origin "refs/tags/${{ steps.version.outputs.version }}"
-
-      - uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
+          tag: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          prerelease: ${{ matrix.prerelease }}
           allowUpdates: true
           replacesArtifacts: true
           artifacts: artifacts/*
