@@ -247,3 +247,24 @@ index f5160574bb4..bb3a1c661b4 100644
  	return handler
  }
  
+diff --git a/pkg/volume/csi/csi_plugin.go b/pkg/volume/csi/csi_plugin.go
+index b77f1c18569..4128ac838ec 100644
+--- a/pkg/volume/csi/csi_plugin.go
++++ b/pkg/volume/csi/csi_plugin.go
+@@ -346,8 +346,14 @@ func (p *csiPlugin) Init(host volume.VolumeHost) error {
+ 		},
+ 	}
+ 
+-	// Initializing the label management channels
+-	nim = nodeinfomanager.NewNodeInfoManager(host.GetNodeName(), host, migratedPlugins)
++	// Initializing the label management channels.
++	// nanokube: guard the assignment so KCM's csi.Init (which also runs in this
++	// process) doesn't clobber kubelet's nim with an empty NodeName. KCM hosts
++	// implement AttachDetachVolumeHost, not KubeletVolumeHost, so checking the
++	// type keeps nim bound to the kubelet's NodeName.
++	if _, ok := host.(volume.KubeletVolumeHost); ok {
++		nim = nodeinfomanager.NewNodeInfoManager(host.GetNodeName(), host, migratedPlugins)
++	}
+ 	PluginHandler.csiPlugin = p
+ 
+ 	// This function prevents Kubelet from posting Ready status until CSINode
