@@ -84,7 +84,7 @@ jobs:
           name: ${{ github.ref_name }}
           prerelease: true
           allowUpdates: true
-          removeArtifacts: true
+          replacesArtifacts: true
           artifacts: artifacts/*
 
       # Rename the assets to the captured version and cut the versioned release.
@@ -104,5 +104,5 @@ jobs:
           tag: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
           allowUpdates: true
-          removeArtifacts: true
+          replacesArtifacts: true
           artifacts: artifacts/*
