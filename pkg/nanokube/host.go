@@ -106,13 +106,14 @@ func (h *HostImpl) MountSensitiveWithoutSystemdWithMountFlags(source string, tar
 }
 
 func (h *HostImpl) PrepareSafeSubpath(subPath subpath.Subpath) (newHostPath string, cleanupAction func(), err error) {
-	klog.ErrorS(nil, "PrepareSafeSubpath", "subPath", subPath)
-	panic("unimplemented hostimpl preparesafesubpath")
+	// The container runtime bind-mounts the resolved host path directly, so no
+	// kernel-level safe bind mount is needed. The path is already validated for
+	// backsteps by the caller; hand it back unchanged with no cleanup.
+	return subPath.Path, nil, nil
 }
 
 func (h *HostImpl) SafeMakeDir(subdir string, base string, perm os.FileMode) error {
-	klog.ErrorS(nil, "SafeMakeDir", "subdir", subdir, "base", base, "perm", perm)
-	panic("unimplemented hostimpl safemakedir")
+	return os.MkdirAll(filepath.Join(base, subdir), perm)
 }
 
 func (h *HostImpl) Unmount(target string) error {
@@ -247,7 +248,11 @@ func (h *HostImpl) GetFileType(pathname string) (hostutil.FileType, error) {
 }
 
 func (h *HostImpl) GetMode(pathname string) (os.FileMode, error) {
-	panic("unimplemented hostimpl getmode")
+	fi, err := os.Stat(pathname)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Mode(), nil
 }
 
 func (h *HostImpl) GetOwner(pathname string) (int64, int64, error) {
@@ -267,7 +272,14 @@ func (h *HostImpl) MakeRShared(path string) error {
 }
 
 func (h *HostImpl) PathExists(pathname string) (bool, error) {
-	panic("unimplemented hostimpl pathexists")
+	_, err := os.Stat(pathname)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (h *HostImpl) PathIsDevice(pathname string) (bool, error) {
