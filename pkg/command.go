@@ -199,10 +199,11 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		c.runHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
 		c.runHooks["start-kubelet"] = c.runEHook(c.kubeconfigReady, c.KubeletCommand())
 		c.startHooks["update-kubeconfig"] = startHook("update-kubeconfig", c.Nano().Tunnel().HostnameReady(), c.updateKubeconfig)
-		c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
-		c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
-		c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
 		c.startHooks["record-events"] = startHook("record-events", c.kubeconfigReady, c.recordEvents)
+		c.startHooks["node-startup"] = startHook("node-startup", c.kubeconfigReady, c.nodeStartup)
+		c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
+		c.startHooks["update-status"] = startHook("update-status", c.Nano().NodeReady(), c.updateStatus)
+		c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
 		c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
 		return c.ApiServerCommand().RunE(cmd, args)
 	}
@@ -365,9 +366,11 @@ func (c *Command) With(cmd *cobra.Command) *Command {
                                  
   cluster ready
   %s
+  machine id: %s
 
 `,
 						c.Nano().Tunnel().URL(),
+						c.Nano().MachineID(),
 					)
 					close(c.startHooksDone)
 				}()
@@ -422,6 +425,10 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				ks.ClusterDNS = []string{"1.1.1.1"} // TODO(partial): install coredns
 				ks.ClusterDomain = c.Nano().Tunnel().Domain()
 				ks.HostnameOverride = c.Nano().Tunnel().LocalHost()
+				if ks.NodeLabels == nil {
+					ks.NodeLabels = map[string]string{}
+				}
+				ks.NodeLabels[v1.MachineIDLabel] = c.Nano().MachineID()
 				ks.PodLogsDir = c.Nano().Options().DataDirAt(v1.DataDirLogs)
 				ks.Port = 443
 				ks.RegisterNode = true
@@ -546,6 +553,10 @@ func (c *Command) untaintNode(ctx hookCtx) error {
 		node.Spec.Taints = slices.DeleteFunc(node.Spec.Taints, func(t corev1.Taint) bool {
 			return t.Key == cloudproviderapi.TaintExternalCloudProvider
 		})
+		// drain-node cordons on shutdown (spec.unschedulable=true), which the
+		// controller renders as a node.kubernetes.io/unschedulable:NoSchedule
+		// taint. Uncordon so the node is schedulable again after restart.
+		node.Spec.Unschedulable = false
 		_, err = nodes.Update(ctx.Context, node, metav1.UpdateOptions{})
 		return err
 	}); err != nil {
@@ -555,7 +566,7 @@ func (c *Command) untaintNode(ctx hookCtx) error {
 	return nil
 }
 
-func (c *Command) updateNodeStatus(ctx hookCtx) error {
+func (c *Command) updateStatus(ctx hookCtx) error {
 	nodeRef := c.Nano().NodeRef()
 	if nodeRef == nil {
 		return fmt.Errorf("node reference not found")
@@ -588,6 +599,38 @@ func (c *Command) updateNodeStatus(ctx hookCtx) error {
 		return fmt.Errorf("failed to update node status: %w", err)
 	}
 
+	return nil
+}
+
+func (c *Command) nodeStartup(ctx hookCtx) error {
+	nodes := c.Nano().Client().CoreV1().Nodes()
+	machineID := c.Nano().MachineID()
+
+	// Find the node this instance previously registered, keyed by its stable
+	// machine id rather than the (churning) hostname.
+	list, err := nodes.List(ctx.Context, metav1.ListOptions{
+		LabelSelector: v1.MachineIDLabel + "=" + machineID,
+	})
+	if err != nil || len(list.Items) == 0 {
+		// First-ever start: no prior node to recover. The kubelet registers
+		// fresh (NotReady->Ready) and emits the NodeReady event on its own.
+		return nil
+	}
+
+	// Force the node NotReady so the kubelet's subsequent Ready=true post is
+	// observed as a transition. The cluster-ready gate keys off that NodeReady
+	// event; without the transition (e.g. a kill -9 left the node Ready in
+	// storage) the gate would never fire and the start hooks would hang.
+	ready := corev1ac.NodeCondition().
+		WithType(corev1.NodeReady).
+		WithStatus(corev1.ConditionFalse).
+		WithReason("NanokubeStartup").
+		WithMessage("nanokube is starting up")
+	for i := range list.Items {
+		name := list.Items[i].Name
+		status := corev1ac.Node(name).WithStatus(corev1ac.NodeStatus().WithConditions(ready))
+		nodes.ApplyStatus(ctx.Context, status, metav1.ApplyOptions{FieldManager: c.Name(), Force: true})
+	}
 	return nil
 }
 
@@ -703,6 +746,20 @@ func (c *Command) drainNode() error {
 		return len(pending) == 0, nil
 	}); err != nil {
 		klog.ErrorS(err, "drain wait timed out", "node", nodeRef.Name, "remaining", len(pending))
+	}
+
+	// Mark the node NotReady so the next start observes a Ready false->true
+	// transition. The cluster-ready gate (NodeReady event) only fires on that
+	// transition; without it, a restart over persisted storage where the node
+	// is already Ready emits no event and the start hooks hang.
+	ready := corev1ac.NodeCondition().
+		WithType(corev1.NodeReady).
+		WithStatus(corev1.ConditionFalse).
+		WithReason("NanokubeShutdown").
+		WithMessage("nanokube is shutting down")
+	status := corev1ac.Node(nodeRef.Name).WithStatus(corev1ac.NodeStatus().WithConditions(ready))
+	if _, err := client.CoreV1().Nodes().ApplyStatus(ctx, status, metav1.ApplyOptions{FieldManager: c.Name(), Force: true}); err != nil {
+		klog.ErrorS(err, "mark node NotReady", "node", nodeRef.Name)
 	}
 	return nil
 }

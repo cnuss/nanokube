@@ -242,7 +242,6 @@ func (t *TunnelImpl) URL() *url.URL {
 	return t.__url__
 }
 
-
 func (t *TunnelImpl) CACerts() []*x509.Certificate {
 	t.caCertsOnce.Do(func() {
 		t.log.Info().Msg("loading CA certificates for tunnel")

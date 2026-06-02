@@ -38,6 +38,7 @@ var (
 	CertFile             FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.crt"))
 	KeyFile              FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.key"))
 	KubeconfigFile       FileName = FileName(filepath.Join(string(DataDirKube), "config"))
+	MachineIDFile        FileName = "machine-id"
 
 	NetworkHost        NetworkType = "host"
 	NetworkBridge      NetworkType = "bridge"
@@ -46,4 +47,8 @@ var (
 	NetworkProtocolUDP             = corev1.ProtocolUDP
 
 	SandboxExecSentinel = "__sandbox__"
+
+	// MachineIDLabel carries the persisted, hostname-independent instance id on
+	// the node so it can be looked up by selector at bootup.
+	MachineIDLabel = "nanokube.io/machine-id"
 )

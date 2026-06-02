@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 	_ "unsafe"
@@ -21,6 +22,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -142,6 +144,9 @@ type nanokubeImpl struct {
 	nodeReady     chan struct{}
 	nodeRef       *corev1.ObjectReference
 	nodeReadyOnce sync.Once
+
+	machineID     string
+	machineIDOnce sync.Once
 
 	proxiedRecorder     record.EventRecorder
 	proxiedRecorderOnce sync.Once
@@ -290,6 +295,29 @@ func (k *nanokubeImpl) NodeReady() <-chan struct{} {
 func (k *nanokubeImpl) NodeRef() *corev1.ObjectReference {
 	<-nanokube.Await(k.ctx, k.nodeReady)
 	return k.nodeRef
+}
+
+// MachineID returns a stable identifier for this nanokube instance, persisted
+// in the data directory. It is generated once on first start and reused across
+// restarts, providing a hostname-independent node name so a churning OS
+// hostname can't orphan the node or break bootup lookups.
+func (k *nanokubeImpl) MachineID() string {
+	k.machineIDOnce.Do(func() {
+		path := k.Options().FilePathAt(v1.MachineIDFile)
+		if data, err := os.ReadFile(path); err == nil {
+			if id := strings.TrimSpace(string(data)); id != "" {
+				k.machineID = id
+				return
+			}
+		}
+		id := uuid.NewString()
+		if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
+			k.CancelErr(fmt.Errorf("persist machine id: %w", err))
+			return
+		}
+		k.machineID = id
+	})
+	return k.machineID
 }
 
 func (k *nanokubeImpl) CertFilePath() string {

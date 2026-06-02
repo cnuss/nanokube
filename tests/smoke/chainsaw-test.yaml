@@ -5,6 +5,20 @@ metadata:
 spec:
   description: Apply the chainsaw-kube smoke manifest and assert the deployment becomes available.
   steps:
+    - name: assert-hostname
+      description: assert that the tunnel hostname is set properly
+      try:
+        - script:
+            content: |
+              CTX=$(kubectl config current-context)
+              CLUSTER=$(kubectl config view -o jsonpath="{.contexts[?(@.name=='$CTX')].context.cluster}")
+              SERVICE="https://$(kubectl get service kubernetes -n default -o jsonpath='{.spec.externalName}')"
+              KUBELET="https://$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalDNS")].address}')"
+              KUBECONFIG=$(kubectl config view -o jsonpath="{.clusters[?(@.name=='$CLUSTER')].cluster.server}")
+              test "$SERVICE" = "$KUBELET"
+              test "$SERVICE" = "$KUBECONFIG"
+            check:
+              ($error == null): true
     - name: apply-smoke-resources
       try:
         - apply:

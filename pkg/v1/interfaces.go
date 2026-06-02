@@ -67,6 +67,7 @@ type Nanokube interface {
 	KubeconfigPath() string
 	NodeReady() <-chan struct{}
 	NodeRef() *corev1.ObjectReference
+	MachineID() string
 
 	Storage() Storage
 	SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory

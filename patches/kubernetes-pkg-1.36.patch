@@ -35,7 +35,7 @@ index 5cc74fdf9b6..f6a00cddccf 100644
  		lease.Labels[apiv1.LabelHostname] = hostname
  
 diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
-index d8cfd44222c..84c568256d6 100644
+index d8cfd44222c..3b0e357dcdc 100644
 --- a/pkg/controlplane/controller/kubernetesservice/controller.go
 +++ b/pkg/controlplane/controller/kubernetesservice/controller.go
 @@ -21,6 +21,7 @@ import (
@@ -70,7 +70,28 @@ index d8cfd44222c..84c568256d6 100644
  	return servicePorts, serviceType
  }
  
-@@ -240,6 +251,14 @@ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, ser
+@@ -212,6 +223,20 @@ func createEndpointPortSpec(endpointPort int, endpointPortName string) []corev1.
+ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, serviceIP net.IP, servicePorts []corev1.ServicePort, serviceType corev1.ServiceType, reconcile bool) error {
+ 	if s, err := c.serviceLister.Services(metav1.NamespaceDefault).Get(serviceName); err == nil {
+ 		// The service already exists.
++		// nanokube: the tunnel hostname changes across restarts, but the
++		// upstream exists-path never updates spec.externalName, so the service
++		// stays pointed at the previous (now dead) tunnel. Force it to track
++		// the current TUNNEL_HOSTNAME whenever it drifts.
++		if serviceType == corev1.ServiceTypeExternalName {
++			want := os.Getenv("TUNNEL_HOSTNAME")
++			if want != "" && s.Spec.ExternalName != want {
++				svc := s.DeepCopy()
++				svc.Spec.ExternalName = want
++				_, err := c.client.CoreV1().Services(metav1.NamespaceDefault).Update(context.TODO(), svc, metav1.UpdateOptions{})
++				return err
++			}
++			return nil
++		}
+ 		// This path is no executed since 1.17 2a9a9fa, keeping it in case it needs to be revisited
+ 		if reconcile {
+ 			if svc, updated := getMasterServiceUpdateIfNeeded(s, servicePorts, serviceType); updated {
+@@ -240,6 +265,14 @@ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, ser
  		},
  	}
  
