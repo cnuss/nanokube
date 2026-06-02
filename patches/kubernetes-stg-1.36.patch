@@ -1,3 +1,13 @@
+diff --git a/staging/src/k8s.io/apimachinery/pkg/util/remotecommand/constants.go b/staging/src/k8s.io/apimachinery/pkg/util/remotecommand/constants.go
+index ba153ee24fc..4e9d1dcba21 100644
+--- a/staging/src/k8s.io/apimachinery/pkg/util/remotecommand/constants.go
++++ b/staging/src/k8s.io/apimachinery/pkg/util/remotecommand/constants.go
+@@ -64,4 +64,4 @@ const (
+ 	StreamClose  = 255
+ )
+ 
+-var SupportedStreamingProtocols = []string{StreamProtocolV4Name, StreamProtocolV3Name, StreamProtocolV2Name, StreamProtocolV1Name}
++var SupportedStreamingProtocols = []string{StreamProtocolV5Name, StreamProtocolV4Name, StreamProtocolV3Name, StreamProtocolV2Name, StreamProtocolV1Name}
 diff --git a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go b/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
 index 134e163eeb3..e8501e58869 100644
 --- a/staging/src/k8s.io/apiserver/pkg/endpoints/handlers/get.go
