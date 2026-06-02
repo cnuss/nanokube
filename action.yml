@@ -43,4 +43,4 @@ runs:
     # reach the cluster via the default kubeconfig (like helm/kind-action).
     - id: start
       shell: bash
-      run: nanokube start
+      run: nanokube start -v=2
