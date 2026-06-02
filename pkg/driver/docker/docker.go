@@ -389,7 +389,8 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 	dockerConfig.Hostname = ""
 	dockerConfig.ExposedPorts = nil
 
-	// Environment variables
+	// drop sandbox-inherited env so the workload image's PATH isn't shadowed
+	dockerConfig.Env = nil
 	for _, kv := range config.GetEnvs() {
 		dockerConfig.Env = append(dockerConfig.Env, kv.GetKey()+"="+kv.GetValue())
 	}
