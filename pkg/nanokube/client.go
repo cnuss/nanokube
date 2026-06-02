@@ -9,9 +9,11 @@ import (
 
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/tools/record"
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
@@ -19,6 +21,7 @@ import (
 
 type ClientImpl struct {
 	client.Interface
+
 	ctx        context.Context
 	clientset  *client.Clientset
 	config     *rest.Config
@@ -26,6 +29,9 @@ type ClientImpl struct {
 
 	informerFactory     informers.SharedInformerFactory
 	informerFactoryOnce sync.Once
+
+	sink     record.EventSink
+	sinkOnce sync.Once
 }
 
 var _ v1.Client = &ClientImpl{}
@@ -48,39 +54,15 @@ func NewClient(ctx context.Context, config *rest.Config) v1.Client {
 	}
 }
 
-func (c *ClientImpl) Ready() <-chan struct{} {
-	ready := make(chan struct{})
-	if c.clientset == nil {
-		// noop client: always ready
-		close(ready)
-		return ready
-	}
-	go func() {
-		defer close(ready)
-		for {
-			_, err := c.clientset.RESTClient().Get().AbsPath("/readyz").Do(c.ctx).Raw()
-			if err == nil {
-				return
-			}
-			select {
-			case <-time.After(500 * time.Millisecond):
-			case <-c.ctx.Done():
-				return
-			}
-		}
-	}()
-	return ready
+func (c *ClientImpl) Sink() record.EventSink {
+	c.sinkOnce.Do(func() {
+		c.sink = &typedcorev1.EventSinkImpl{Interface: c.Interface.CoreV1().Events("")}
+	})
+	return c.sink
 }
 
 func (c *ClientImpl) Clientset() *client.Clientset {
 	return c.clientset
-}
-
-func (c *ClientImpl) InformerFactory() informers.SharedInformerFactory {
-	c.informerFactoryOnce.Do(func() {
-		c.informerFactory = informers.NewSharedInformerFactory(c, 0)
-	})
-	return c.informerFactory
 }
 
 func (c *ClientImpl) WithHeartbeat(interval time.Duration) v1.Client {

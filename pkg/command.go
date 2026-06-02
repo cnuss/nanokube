@@ -202,6 +202,7 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 		c.startHooks["update-node-status"] = startHook("update-node-status", c.Nano().NodeReady(), c.updateNodeStatus)
 		c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
+		c.startHooks["record-events"] = startHook("record-events", c.kubeconfigReady, c.recordEvents)
 		c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
 		return c.ApiServerCommand().RunE(cmd, args)
 	}
@@ -428,6 +429,7 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 						klog.ErrorS(err, "shutdown container GC failed")
 					}
 					kl.NodeLeaseController().Stop()
+					c.Nano().Broadcaster().Shutdown()
 				}()
 			}
 			c.RunCommand().AddCommand(cmd)
@@ -625,6 +627,11 @@ func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
 		}
 		return nil
 	}
+}
+
+func (c *Command) recordEvents(ctx hookCtx) error {
+	c.Nano().Broadcaster().StartRecordingToSink(c.Nano().Client().Sink())
+	return nil
 }
 
 func (c *Command) drainNode() error {

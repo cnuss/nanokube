@@ -54,6 +54,7 @@ type Nanokube interface {
 
 	Host() Host
 	Client() Client
+	Broadcaster() record.EventBroadcaster
 	Tunnel() tunnel.Tunnel
 	StaticPods() []*corev1.Pod
 
@@ -160,10 +161,10 @@ type Driver interface {
 }
 
 type Client interface {
-	Ready
 	client.Interface
 	Clientset() *client.Clientset
-	InformerFactory() informers.SharedInformerFactory
+	Sink() record.EventSink
+
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client

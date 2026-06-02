@@ -21,6 +21,14 @@ spec:
               status:
                 availableReplicas: 1
                 readyReplicas: 1
+    - name: assert-events
+      description: kubctl receives events
+      try:
+        - script:
+            content: |
+              kubectl get events -w -n $NAMESPACE --no-headers -o custom-columns=MESSAGE:.message | grep -m2 "Container started"
+            check:
+              ($error == null): true
     - name: assert-pod-logs
       description: kubectl logs assertions
       try:
