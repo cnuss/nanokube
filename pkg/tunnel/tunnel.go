@@ -135,6 +135,14 @@ func NewTunnel() Tunnel {
 		__hostnameReady__: make(chan struct{}),
 	}
 
+	// Surface why the tunnel context was canceled. cancel is a
+	// CancelCauseFunc, so every t.cancel(err) records a cause that
+	// context.Cause reports here when Done fires.
+	go func() {
+		<-ctx.Done()
+		t.log.Warn().Err(context.Cause(ctx)).Msg("tunnel context canceled")
+	}()
+
 	return t
 }
 
