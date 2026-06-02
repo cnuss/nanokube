@@ -1136,7 +1136,6 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConf
 			Hostname:   config.GetHostname(),
 			Domainname: meta.GetNamespace() + ".svc.cluster.local",
 			Labels:     labels,
-			Env:        d.nano.Environ(),
 		}
 
 		networkMode := container.NetworkMode("bridge")

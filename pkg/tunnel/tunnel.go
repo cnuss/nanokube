@@ -72,6 +72,9 @@ type TunnelImpl struct {
 	specOnce sync.Once
 	__spec__ *spec
 
+	hostnameOnce sync.Once
+	__hostname__ string
+
 	caCertsOnce sync.Once
 	__caCerts__ []*x509.Certificate
 
@@ -183,7 +186,12 @@ func (t *TunnelImpl) LocalHost() string {
 }
 
 func (t *TunnelImpl) Hostname() string {
-	return t.spec().Hostname
+	t.hostnameOnce.Do(func() {
+		t.__hostname__ = t.spec().Hostname
+		os.Setenv("TUNNEL_HOSTNAME", t.__hostname__)
+	})
+
+	return t.__hostname__
 }
 
 func (t *TunnelImpl) Domain() string {
@@ -504,11 +512,6 @@ func (t *TunnelImpl) spec() *spec {
 			<-await(t.ctx, time.After(sleep))
 		}
 	})
-	// export the resolved hostname so the in-process apiserver can publish the
-	// default "kubernetes" service as an ExternalName CNAME to the tunnel.
-	if t.__spec__ != nil && t.__spec__.Hostname != "" {
-		os.Setenv("TUNNEL_HOSTNAME", t.__spec__.Hostname)
-	}
 	return t.__spec__
 }
 

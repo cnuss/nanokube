@@ -59,7 +59,6 @@ type Nanokube interface {
 
 	Services(baseURL *url.URL) []*restful.WebService
 
-	Environ() []string
 	CertFilePath() string
 	KeyFilePath() string
 	RootCaFilePath() string

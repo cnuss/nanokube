@@ -226,13 +226,6 @@ func (k *nanokubeImpl) Broadcaster() record.EventBroadcaster {
 	return k.broadcaster
 }
 
-func (k *nanokubeImpl) Environ() []string {
-	return []string{
-		"KUBERNETES_SERVICE_HOST=" + k.Tunnel().Hostname(),
-		"KUBERNETES_SERVICE_PORT=443",
-	}
-}
-
 func (k *nanokubeImpl) recorder() record.EventRecorder {
 	k.proxiedRecorderOnce.Do(func() {
 		k.proxiedRecorder = k.Broadcaster().NewRecorder(scheme.Scheme, corev1.EventSource{Component: k.Options().Name(), Host: k.Tunnel().LocalHost()})
