@@ -276,6 +276,7 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
 			cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 			apiserver.Run = func(ctx context.Context, opts apiserveroptions.CompletedOptions) error {
+				opts.GenericServerRunOptions.ExternalHost = c.Nano().Tunnel().Hostname()
 				opts.SecureServing.BindAddress = c.Nano().Tunnel().LocalIP()
 				opts.SecureServing.BindPort = c.Nano().Tunnel().LocalPort()
 				opts.Etcd.StorageConfig.Transport.ServerList = c.Nano().Storage().Servers()
