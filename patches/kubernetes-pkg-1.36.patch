@@ -116,6 +116,75 @@ index b9d366ad462..045e062d751 100644
  	// Use the kubelet-reported port, if present
  	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
  	if port <= 0 {
+diff --git a/pkg/kubelet/envvars/envvars.go b/pkg/kubelet/envvars/envvars.go
+index 789c20820cd..770e92aad6e 100644
+--- a/pkg/kubelet/envvars/envvars.go
++++ b/pkg/kubelet/envvars/envvars.go
+@@ -34,16 +34,23 @@ func FromServices(services []*v1.Service) []v1.EnvVar {
+ 	for i := range services {
+ 		service := services[i]
+ 
+-		// ignore services where ClusterIP is "None" or empty
+-		// the services passed to this method should be pre-filtered
+-		// only services that have the cluster IP set should be included here
+-		if !v1helper.IsServiceIPSet(service) {
++		// Resolve the address to advertise. Normal services use their
++		// ClusterIP. nanokube: an ExternalName service (e.g. the "kubernetes"
++		// service fronted by a tunnel hostname) has no ClusterIP, so advertise
++		// spec.externalName instead. Otherwise (None/empty), skip it.
++		var host string
++		switch {
++		case v1helper.IsServiceIPSet(service):
++			host = service.Spec.ClusterIP
++		case service.Spec.Type == v1.ServiceTypeExternalName && service.Spec.ExternalName != "":
++			host = service.Spec.ExternalName
++		default:
+ 			continue
+ 		}
+ 
+ 		// Host
+ 		name := makeEnvVariableName(service.Name) + "_SERVICE_HOST"
+-		result = append(result, v1.EnvVar{Name: name, Value: service.Spec.ClusterIP})
++		result = append(result, v1.EnvVar{Name: name, Value: host})
+ 		// First port - give it the backwards-compatible name
+ 		name = makeEnvVariableName(service.Name) + "_SERVICE_PORT"
+ 		result = append(result, v1.EnvVar{Name: name, Value: strconv.Itoa(int(service.Spec.Ports[0].Port))})
+@@ -56,7 +63,7 @@ func FromServices(services []*v1.Service) []v1.EnvVar {
+ 			}
+ 		}
+ 		// Docker-compatible vars.
+-		result = append(result, makeLinkVariables(service)...)
++		result = append(result, makeLinkVariables(service, host)...)
+ 	}
+ 	return result
+ }
+@@ -69,7 +76,7 @@ func makeEnvVariableName(str string) string {
+ 	return strings.ToUpper(strings.Replace(str, "-", "_", -1))
+ }
+ 
+-func makeLinkVariables(service *v1.Service) []v1.EnvVar {
++func makeLinkVariables(service *v1.Service, host string) []v1.EnvVar {
+ 	prefix := makeEnvVariableName(service.Name)
+ 	all := []v1.EnvVar{}
+ 	for i := range service.Spec.Ports {
+@@ -80,7 +87,7 @@ func makeLinkVariables(service *v1.Service) []v1.EnvVar {
+ 			protocol = string(sp.Protocol)
+ 		}
+ 
+-		hostPort := net.JoinHostPort(service.Spec.ClusterIP, strconv.Itoa(int(sp.Port)))
++		hostPort := net.JoinHostPort(host, strconv.Itoa(int(sp.Port)))
+ 
+ 		if i == 0 {
+ 			// Docker special-cases the first port.
+@@ -105,7 +112,7 @@ func makeLinkVariables(service *v1.Service) []v1.EnvVar {
+ 			},
+ 			{
+ 				Name:  portPrefix + "_ADDR",
+-				Value: service.Spec.ClusterIP,
++				Value: host,
+ 			},
+ 		}...)
+ 	}
 diff --git a/pkg/kubelet/kubelet.go b/pkg/kubelet/kubelet.go
 index 5bf378bab58..d0cc2c02816 100644
 --- a/pkg/kubelet/kubelet.go
@@ -196,6 +265,24 @@ index 5bf378bab58..d0cc2c02816 100644
  // ListenAndServeReadOnly runs the kubelet HTTP server in read-only mode.
  func (kl *Kubelet) ListenAndServeReadOnly(ctx context.Context, address net.IP, port uint, tp trace.TracerProvider) {
  	server.ListenAndServeKubeletReadOnlyServer(ctx, kl, kl.resourceAnalyzer, kl.containerManager.GetHealthCheckers(), kl.flagz, address, port, tp)
+diff --git a/pkg/kubelet/kubelet_pods.go b/pkg/kubelet/kubelet_pods.go
+index f3c4795a273..626b47ec95a 100644
+--- a/pkg/kubelet/kubelet_pods.go
++++ b/pkg/kubelet/kubelet_pods.go
+@@ -700,8 +700,11 @@ func (kl *Kubelet) getServiceEnvVarMap(ns string, enableServiceLinks bool) (map[
+ 	// project the services in namespace ns onto the master services
+ 	for i := range services {
+ 		service := services[i]
+-		// ignore services where ClusterIP is "None" or empty
+-		if !v1helper.IsServiceIPSet(service) {
++		// ignore services where ClusterIP is "None" or empty. nanokube: keep
++		// ExternalName services (e.g. the tunnel-fronted "kubernetes" service)
++		// so FromServices can advertise them by spec.externalName.
++		if !v1helper.IsServiceIPSet(service) &&
++			!(service.Spec.Type == v1.ServiceTypeExternalName && service.Spec.ExternalName != "") {
+ 			continue
+ 		}
+ 		serviceName := service.Name
 diff --git a/pkg/kubelet/server/server.go b/pkg/kubelet/server/server.go
 index fe96a4ab366..c7d9a6e01c5 100644
 --- a/pkg/kubelet/server/server.go
