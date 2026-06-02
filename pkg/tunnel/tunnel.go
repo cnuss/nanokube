@@ -83,6 +83,9 @@ type TunnelImpl struct {
 
 	hostnameReadyOnce sync.Once
 	__hostnameReady__ chan struct{}
+
+	urlOnce sync.Once
+	__url__ *url.URL
 }
 
 type spec struct {
@@ -227,13 +230,18 @@ func (t *TunnelImpl) Domain() string {
 }
 
 func (t *TunnelImpl) URL() *url.URL {
-	hostname := t.Hostname()
-	return &url.URL{
-		Scheme: "https",
-		Host:   hostname,
-		Path:   "/",
-	}
+	t.urlOnce.Do(func() {
+		hostname := t.Hostname()
+		<-await(t.ctx, t.HostnameReady())
+		t.__url__ = &url.URL{
+			Scheme: "https",
+			Host:   hostname,
+			Path:   "/",
+		}
+	})
+	return t.__url__
 }
+
 
 func (t *TunnelImpl) CACerts() []*x509.Certificate {
 	t.caCertsOnce.Do(func() {
@@ -542,7 +550,7 @@ func (t *TunnelImpl) spec() *spec {
 	return t.__spec__
 }
 
-func await(ctx context.Context, ch <-chan time.Time) <-chan struct{} {
+func await[T any](ctx context.Context, ch <-chan T) <-chan struct{} {
 	out := make(chan struct{})
 	go func() {
 		select {
