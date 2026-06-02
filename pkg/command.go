@@ -499,11 +499,12 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	client := c.Nano().Client()
 
 	return wait.PollUntilContextCancel(ctx.Context, 200*time.Millisecond, true, func(ctx context.Context) (bool, error) {
-		_, err := client.RbacV1().ClusterRoleBindings().Get(ctx, "system:node", metav1.GetOptions{})
+		svc, err := client.CoreV1().Services(metav1.NamespaceDefault).Get(ctx, "kubernetes", metav1.GetOptions{})
 		if err != nil {
 			klog.V(2).InfoS("waiting for API server to be ready: %v", err)
 			return false, nil
 		}
+		klog.InfoS("Kubernetes Service is ready", "service", svc)
 		err = client.WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
 		if err != nil {
 			klog.ErrorS(err, "failed to write kubeconfig")
