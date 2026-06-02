@@ -411,7 +411,7 @@ func (d *driver) CreateContainer(ctx context.Context, podSandboxID string, confi
 		user = username
 	}
 	if user == "" {
-		user = nanokube.NewTagBuilder(d).WithTags(sandbox.Config.Labels).SecurityContext()
+		user = nanokube.NewTagBuilder(d).WithTags(sandbox.Config.Labels).SecurityContextFor(meta.GetName())
 	}
 	dockerConfig.User = user
 
@@ -1129,11 +1129,23 @@ func (d *driver) RunPodSandbox(ctx context.Context, config *criv1.PodSandboxConf
 		}
 	}
 
+	// TODO(hack): Probably ust save all sandbox annotations as a blob
+	// Persist per-container security-context annotations onto the sandbox labels
+	// so CreateContainer can read them back via inspect — the kubelet hands
+	// CreateContainer a regenerated sandboxConfig that drops these annotations.
+	scPrefix := nanokube.NewTagBuilder(d).Key(nanokube.KeySecurityContext)
+	for k, v := range config.GetAnnotations() {
+		if strings.HasPrefix(k, scPrefix) {
+			labels[k] = v
+		}
+	}
+
 	if status == nil {
 		dockerConfig := &container.Config{
 			Image:      "busybox", // TODO(partial): create nanokube/pause with minimal tooling
 			Entrypoint: []string{"tail", "-f", "/dev/null"},
 			Hostname:   config.GetHostname(),
+			// TODO(partial): make this match dns
 			Domainname: meta.GetNamespace() + ".svc.cluster.local",
 			Labels:     labels,
 		}

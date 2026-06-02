@@ -319,22 +319,31 @@ func (c *managerImpl) Admit(attributes *lifecycle.PodAdmitAttributes) lifecycle.
 	pod := attributes.Pod
 	tb := nanokube.NewTagBuilder(c.backend.Driver())
 
-	// Inject security context as annotation so CreateContainer can apply it on
-	// platforms where kubelet doesn't populate LinuxContainerConfig (e.g. macOS).
-	if sc := pod.Spec.SecurityContext; sc != nil {
-		if pod.Annotations == nil {
-			pod.Annotations = make(map[string]string)
+	// TODO(hack): Make a helper function instead of defining stashSC here tb.WithSecurityContext(...)
+	// Stash each container's security context (uid[:gid]) as an annotation keyed
+	// by container name, so CreateContainer can apply it on platforms where the
+	// kubelet doesn't populate LinuxContainerConfig (e.g. macOS).
+	stashSC := func(name string, sc *corev1.SecurityContext) {
+		if sc == nil || sc.RunAsUser == nil {
+			return
 		}
-		var user string
-		if sc.RunAsUser != nil {
-			user = strconv.FormatInt(*sc.RunAsUser, 10)
-		}
+		user := strconv.FormatInt(*sc.RunAsUser, 10)
 		if sc.RunAsGroup != nil {
 			user += ":" + strconv.FormatInt(*sc.RunAsGroup, 10)
 		}
-		if user != "" {
-			pod.Annotations[tb.Key(nanokube.KeySecurityContext)] = user
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
 		}
+		pod.Annotations[tb.Key(nanokube.KeySecurityContext)+"/"+name] = user
+	}
+	for i := range pod.Spec.InitContainers {
+		stashSC(pod.Spec.InitContainers[i].Name, pod.Spec.InitContainers[i].SecurityContext)
+	}
+	for i := range pod.Spec.Containers {
+		stashSC(pod.Spec.Containers[i].Name, pod.Spec.Containers[i].SecurityContext)
+	}
+	for i := range pod.Spec.EphemeralContainers {
+		stashSC(pod.Spec.EphemeralContainers[i].Name, pod.Spec.EphemeralContainers[i].SecurityContext)
 	}
 
 	// Inject host aliases as annotation so RunPodSandbox can set ExtraHosts

@@ -196,6 +196,15 @@ func (b *TagBuilder) SecurityContext() string {
 	return b.get(KeySecurityContext)
 }
 
+// SecurityContextFor returns the per-container security context (uid[:gid])
+// stashed by name, falling back to the pod-level value.
+func (b *TagBuilder) SecurityContextFor(name string) string {
+	if sc := b.get(KeySecurityContext + "/" + name); sc != "" {
+		return sc
+	}
+	return b.get(KeySecurityContext)
+}
+
 func (b *TagBuilder) PodSandboxConfig() *runtimev1.PodSandboxConfig {
 	cfg := &runtimev1.PodSandboxConfig{}
 	if blob := b.get(keySandboxConfig); blob != "" {
