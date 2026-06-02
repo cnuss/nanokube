@@ -35,33 +35,45 @@ index 5cc74fdf9b6..f6a00cddccf 100644
  		lease.Labels[apiv1.LabelHostname] = hostname
  
 diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
-index d8cfd44222c..b2b1c9e71a3 100644
+index d8cfd44222c..0a940d90b15 100644
 --- a/pkg/controlplane/controller/kubernetesservice/controller.go
 +++ b/pkg/controlplane/controller/kubernetesservice/controller.go
-@@ -85,6 +85,12 @@ func New(config Config, client kubernetes.Interface, serviceInformer v1informers
- // Start begins the core controller loops that must exist for bootstrapping
- // a cluster.
- func (c *Controller) Start(stopCh <-chan struct{}) {
-+	// nanokube: skip bootstrap of the default "kubernetes" Service and its
-+	// endpoint reconciliation. The controller is left constructed so Stop()
-+	// can be called safely, but no work is performed.
-+	klog.Info("nanokube: kubernetesservice.Controller.Start is a no-op")
-+	return
-+
- 	if !cache.WaitForCacheSync(stopCh, c.serviceSynced) {
- 		runtime.HandleError(fmt.Errorf("timed out waiting for caches to sync"))
- 		return
-@@ -111,6 +117,10 @@ func (c *Controller) Start(stopCh <-chan struct{}) {
+@@ -21,6 +21,7 @@ import (
+ 	"fmt"
+ 	"net"
+ 	"net/http"
++	"os"
+ 	"sync"
+ 	"time"
  
- // Stop cleans up this API Servers endpoint reconciliation leases so another master can take over more quickly.
- func (c *Controller) Stop() {
-+	// nanokube: matched no-op for Start; nothing was started, nothing to stop.
-+	klog.Info("nanokube: kubernetesservice.Controller.Stop is a no-op")
-+	return
-+
- 	c.lock.Lock()
- 	defer c.lock.Unlock()
+@@ -195,6 +196,12 @@ func createPortAndServiceSpec(servicePort int, targetServicePort int, nodePort i
+ 		servicePorts[0].NodePort = int32(nodePort)
+ 		serviceType = corev1.ServiceTypeNodePort
+ 	}
++	// nanokube: when fronted by a cloudflared tunnel, publish the default
++	// "kubernetes" service as an ExternalName CNAME to the tunnel hostname so
++	// in-cluster clients dial the tunnel rather than a non-routable ClusterIP.
++	if os.Getenv("TUNNEL_HOSTNAME") != "" {
++		serviceType = corev1.ServiceTypeExternalName
++	}
+ 	return servicePorts, serviceType
+ }
  
+@@ -240,6 +247,14 @@ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, ser
+ 		},
+ 	}
+ 
++	// nanokube: ExternalName services carry no ClusterIP or IP family; they
++	// resolve via CNAME to spec.externalName (the tunnel hostname).
++	if serviceType == corev1.ServiceTypeExternalName {
++		svc.Spec.ClusterIP = ""
++		svc.Spec.IPFamilyPolicy = nil
++		svc.Spec.ExternalName = os.Getenv("TUNNEL_HOSTNAME")
++	}
++
+ 	_, err := c.client.CoreV1().Services(metav1.NamespaceDefault).Create(context.TODO(), svc, metav1.CreateOptions{})
+ 	if errors.IsAlreadyExists(err) {
+ 		return c.CreateOrUpdateMasterServiceIfNeeded(serviceName, serviceIP, servicePorts, serviceType, reconcile)
 diff --git a/pkg/kubelet/client/kubelet_client.go b/pkg/kubelet/client/kubelet_client.go
 index b9d366ad462..045e062d751 100644
 --- a/pkg/kubelet/client/kubelet_client.go

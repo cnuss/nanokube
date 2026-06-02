@@ -504,6 +504,11 @@ func (t *TunnelImpl) spec() *spec {
 			<-await(t.ctx, time.After(sleep))
 		}
 	})
+	// export the resolved hostname so the in-process apiserver can publish the
+	// default "kubernetes" service as an ExternalName CNAME to the tunnel.
+	if t.__spec__ != nil && t.__spec__.Hostname != "" {
+		os.Setenv("TUNNEL_HOSTNAME", t.__spec__.Hostname)
+	}
 	return t.__spec__
 }
 
