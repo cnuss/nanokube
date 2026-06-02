@@ -357,6 +357,18 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				}
 				go func() {
 					startWg.Wait()
+					fmt.Printf(`                 
+                 _       _       
+ ___ ___ ___ ___| |_ _ _| |_ ___ 
+|   | .'|   | . | '_| | | . | -_|
+|_|_|__,|_|_|___|_,_|___|___|___|
+                                 
+  cluster ready
+  %s
+
+`,
+						c.Nano().Tunnel().URL(),
+					)
 					close(c.startHooksDone)
 				}()
 

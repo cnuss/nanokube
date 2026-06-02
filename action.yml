@@ -39,8 +39,6 @@ runs:
         echo "$bindir" >> "$GITHUB_PATH"
         "$bindir/nanokube" --version
 
-    # Start nanokube. It daemonizes and writes ~/.kube/config, so later steps
-    # reach the cluster via the default kubeconfig (like helm/kind-action).
     - id: start
       shell: bash
       run: nanokube start -v=2
