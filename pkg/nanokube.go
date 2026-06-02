@@ -455,9 +455,10 @@ func (k *nanokubeImpl) Tunnel() tunnel.Tunnel {
 	//          Leaving scaffolding in place to allow for multiple tunnels in the future, but for now just return a single shared tunnel.
 	tunnelName := v1.SharedTunnel
 
-	t, _ := k.tunnels.LoadOrStore(tunnelName, func() tunnel.Tunnel {
-		return tunnel.NewTunnel()
-	}())
+	if t, ok := k.tunnels.Load(tunnelName); ok {
+		return t.(tunnel.Tunnel)
+	}
+	t, _ := k.tunnels.LoadOrStore(tunnelName, tunnel.NewTunnel())
 	return t.(tunnel.Tunnel)
 }
 

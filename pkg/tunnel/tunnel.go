@@ -72,9 +72,6 @@ type TunnelImpl struct {
 	specOnce sync.Once
 	__spec__ *spec
 
-	hostnameOnce sync.Once
-	__hostname__ string
-
 	caCertsOnce sync.Once
 	__caCerts__ []*x509.Certificate
 
@@ -137,6 +134,7 @@ func NewTunnel() Tunnel {
 		__listening__:     make(chan struct{}),
 		__hostnameReady__: make(chan struct{}),
 	}
+
 	return t
 }
 
@@ -186,12 +184,7 @@ func (t *TunnelImpl) LocalHost() string {
 }
 
 func (t *TunnelImpl) Hostname() string {
-	t.hostnameOnce.Do(func() {
-		t.__hostname__ = t.spec().Hostname
-		os.Setenv("TUNNEL_HOSTNAME", t.__hostname__)
-	})
-
-	return t.__hostname__
+	return t.spec().Hostname
 }
 
 func (t *TunnelImpl) Domain() string {
@@ -428,6 +421,8 @@ func (t *TunnelImpl) spec() *spec {
 				return
 			}
 			t.__spec__ = &spec
+			os.Setenv("TUNNEL_HOSTNAME", spec.Hostname)
+
 			t.log.Info().Any("spec", spec).Msg("fetched tunnel spec from environment variable")
 			return
 		}
@@ -501,6 +496,7 @@ func (t *TunnelImpl) spec() *spec {
 			if err == nil {
 				if bytes, err := json.Marshal(spec); err == nil {
 					os.Setenv("TUNNEL_SPEC", string(bytes))
+					os.Setenv("TUNNEL_HOSTNAME", spec.Hostname)
 				}
 				t.__spec__ = spec
 				t.log.Info().Any("spec", spec).Msg("fetched tunnel spec from API")
