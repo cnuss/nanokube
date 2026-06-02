@@ -35,7 +35,7 @@ index 5cc74fdf9b6..f6a00cddccf 100644
  		lease.Labels[apiv1.LabelHostname] = hostname
  
 diff --git a/pkg/controlplane/controller/kubernetesservice/controller.go b/pkg/controlplane/controller/kubernetesservice/controller.go
-index d8cfd44222c..0a940d90b15 100644
+index d8cfd44222c..84c568256d6 100644
 --- a/pkg/controlplane/controller/kubernetesservice/controller.go
 +++ b/pkg/controlplane/controller/kubernetesservice/controller.go
 @@ -21,6 +21,7 @@ import (
@@ -46,7 +46,18 @@ index d8cfd44222c..0a940d90b15 100644
  	"sync"
  	"time"
  
-@@ -195,6 +196,12 @@ func createPortAndServiceSpec(servicePort int, targetServicePort int, nodePort i
+@@ -172,6 +173,10 @@ func (c *Controller) UpdateKubernetesService(reconcile bool) error {
+ 	if err := c.CreateOrUpdateMasterServiceIfNeeded(kubernetesServiceName, c.ServiceIP, servicePorts, serviceType, reconcile); err != nil {
+ 		return err
+ 	}
++	// nanokube: ExternalName services have no endpoints; skip reconciliation.
++	if serviceType == corev1.ServiceTypeExternalName {
++		return nil
++	}
+ 	endpointPorts := createEndpointPortSpec(c.PublicServicePort, "https")
+ 	if err := c.EndpointReconciler.ReconcileEndpoints(kubernetesServiceName, c.PublicIP, endpointPorts, reconcile); err != nil {
+ 		return err
+@@ -195,6 +200,12 @@ func createPortAndServiceSpec(servicePort int, targetServicePort int, nodePort i
  		servicePorts[0].NodePort = int32(nodePort)
  		serviceType = corev1.ServiceTypeNodePort
  	}
@@ -59,7 +70,7 @@ index d8cfd44222c..0a940d90b15 100644
  	return servicePorts, serviceType
  }
  
-@@ -240,6 +247,14 @@ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, ser
+@@ -240,6 +251,14 @@ func (c *Controller) CreateOrUpdateMasterServiceIfNeeded(serviceName string, ser
  		},
  	}
  
