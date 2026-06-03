@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/storage"
 	kubestorage "k8s.io/apiserver/pkg/storage"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
@@ -255,4 +256,5 @@ type Storage interface {
 
 type StorageClient interface {
 	kubestorage.Interface
+	storage.Versioner
 }

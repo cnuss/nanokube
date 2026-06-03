@@ -221,6 +221,8 @@ func (klogWriter) Write(p []byte) (int, error) {
 
 func (klogWriter) Sync() error { return nil }
 
+// -- kubestorage.Interface METHODS --
+
 func (sc *StorageClientImpl) Versioner() storage.Versioner {
 	// klog.Infof("Storage.Versioner %s", sc.resource)
 	return sc.inner.Versioner()
@@ -283,4 +285,26 @@ func (sc *StorageClientImpl) EnableResourceSizeEstimation(fn storage.KeysFunc) e
 func (sc *StorageClientImpl) CompactRevision() int64 {
 	// klog.Infof("Storage.CompactRevision %s", sc.resource)
 	return sc.inner.CompactRevision()
+}
+
+// -- VERSIONER METHODS --
+
+func (sc *StorageClientImpl) ObjectResourceVersion(obj runtime.Object) (uint64, error) {
+	return sc.inner.Versioner().ObjectResourceVersion(obj)
+}
+
+func (sc *StorageClientImpl) ParseResourceVersion(resourceVersion string) (uint64, error) {
+	return sc.inner.Versioner().ParseResourceVersion(resourceVersion)
+}
+
+func (sc *StorageClientImpl) PrepareObjectForStorage(obj runtime.Object) error {
+	return sc.inner.Versioner().PrepareObjectForStorage(obj)
+}
+
+func (sc *StorageClientImpl) UpdateList(obj runtime.Object, resourceVersion uint64, continueValue string, remainingItemCount *int64) error {
+	return sc.inner.Versioner().UpdateList(obj, resourceVersion, continueValue, remainingItemCount)
+}
+
+func (sc *StorageClientImpl) UpdateObject(obj runtime.Object, resourceVersion uint64) error {
+	return sc.inner.Versioner().UpdateObject(obj, resourceVersion)
 }
