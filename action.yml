@@ -16,9 +16,16 @@ runs:
         rest=${GITHUB_ACTION_PATH##*/_actions/}   # <owner>/<repo>/<ref>
         version=${rest##*/}                        # <ref>  (tag or branch)
         repo=${rest%/*}                            # <owner>/<repo>
+        # Branch refs resolve to the rolling prerelease, tagged <branch>-pre.0;
+        # tag refs resolve to the versioned release. Assets keep the bare ref.
+        release="$version"
+        if git ls-remote --heads "https://github.com/${repo}.git" "$version" | grep -q .; then
+          release="${version}-pre.0"
+        fi
         echo "repo=$repo"       >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
-        echo "resolved $repo @ $version"
+        echo "release=$release" >> "$GITHUB_OUTPUT"
+        echo "resolved $repo @ $version (release $release)"
 
     # Download the prebuilt binary for this runner and put it on PATH. Both tag
     # and branch refs resolve to a release: tags to the versioned release, and
@@ -29,8 +36,9 @@ runs:
       run: |
         repo="${{ steps.resolve.outputs.repo }}"
         version="${{ steps.resolve.outputs.version }}"
+        release="${{ steps.resolve.outputs.release }}"
         asset="nanokube-${version}-$(uname -s)-$(uname -m)"
-        url="https://github.com/${repo}/releases/download/${version}/${asset}"
+        url="https://github.com/${repo}/releases/download/${release}/${asset}"
         bindir="${RUNNER_TEMP}/nanokube-bin"
         mkdir -p "$bindir"
         echo "fetching $url"

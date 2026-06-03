@@ -86,7 +86,7 @@ jobs:
               mv "$f" "${f/nanokube-${{ github.ref_name }}-/nanokube-$tag-}"
             done
           else
-            tag="${{ github.ref_name }}"
+            tag="${{ github.ref_name }}-pre.0"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
