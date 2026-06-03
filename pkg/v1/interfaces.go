@@ -11,12 +11,11 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
+	"go.etcd.io/etcd/client/v3/kubernetes"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
-	kubestorage "k8s.io/apiserver/pkg/storage"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
@@ -241,15 +240,28 @@ type Host interface {
 }
 
 type Storage interface {
-	generic.RESTOptionsGetter
+	Cancel(reason error)
+
+	WithTransportConfig(cfg storagebackend.TransportConfig) Storage
+	Client() *kubernetes.Client
 
 	SetConfig(config *server.Config) *server.Config
-	WithResource(inner kubestorage.Interface, resource schema.GroupResource) StorageClient
 
-	Servers() []string
-	Shutdown()
+	Port() int
+	Endpoints() []string
+	ClientURLs() []url.URL
 }
 
-type StorageClient interface {
-	kubestorage.Interface
-}
+// type Storage interface {
+// 	generic.RESTOptionsGetter
+
+// 	SetConfig(config *server.Config) *server.Config
+// 	WithResource(inner kubestorage.Interface, resource schema.GroupResource) StorageClient
+
+// 	Servers() []string
+// 	Shutdown()
+// }
+
+// type StorageClient interface {
+// 	kubestorage.Interface
+// }

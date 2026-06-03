@@ -18,7 +18,6 @@ import (
 	_ "unsafe"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
-	"github.com/cnuss/nanokube/pkg/storage"
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
@@ -49,7 +48,6 @@ func NewNanokube(ctx context.Context) v1.Nanokube {
 		cancel:                        cancel,
 		options:                       nanokube.NewOptions(),
 		exitCode:                      make(chan int, 1),
-		storageProvided:               make(chan struct{}),
 		sharedInformerFactoryProvided: make(chan struct{}),
 		loopbackProvided:              make(chan struct{}),
 		nodeReady:                     make(chan struct{}),
@@ -100,9 +98,8 @@ type nanokubeImpl struct {
 	host     v1.Host
 	hostOnce sync.Once
 
-	storage         v1.Storage
-	storageOnce     sync.Once
-	storageProvided chan struct{}
+	storage     v1.Storage
+	storageOnce sync.Once
 
 	backends     sync.Map
 	backendsOnce sync.Once
@@ -204,11 +201,11 @@ var FeatureGates = map[string]bool{
 }
 
 func (k *nanokubeImpl) Storage() v1.Storage {
-	k.storageOnce.Do(func() {
-		k.storage = storage.NewStorage(k)
-		close(k.storageProvided)
-	})
-	return k.storage
+	// k.storageOnce.Do(func() {
+	// 	k.storage = nanokube.NewStorage()
+	// })
+	// return k.storage
+	return nanokube.StorageRef()
 }
 
 func (k *nanokubeImpl) SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory {
