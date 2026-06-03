@@ -4,6 +4,11 @@ author: "cnuss"
 branding:
   icon: "box"
   color: "blue"
+inputs:
+  verbosity:
+    description: "klog verbosity level passed to nanokube start (-v)"
+    required: false
+    default: "0"
 runs:
   using: "composite"
   steps:
@@ -49,4 +54,9 @@ runs:
 
     - id: start
       shell: bash
-      run: nanokube start -v=2
+      run: |
+        args=""
+        if [ "${{ inputs.verbosity }}" != "0" ]; then
+          args="-v=${{ inputs.verbosity }}"
+        fi
+        nanokube start $args
