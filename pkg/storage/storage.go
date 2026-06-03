@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -39,6 +41,9 @@ type StorageImpl struct {
 	servers     []string
 	serversOnce sync.Once
 
+	client     *clientv3.Client
+	clientOnce sync.Once
+
 	started      atomic.Bool
 	ready        chan struct{}
 	shutdown     chan struct{}
@@ -47,6 +52,7 @@ type StorageImpl struct {
 }
 
 type StorageClientImpl struct {
+	client   clientv3.Client
 	storage  v1.Storage
 	inner    kubestorage.Interface
 	resource schema.GroupResource
@@ -85,6 +91,7 @@ func (s *StorageImpl) SetConfig(config *server.Config) *server.Config {
 
 func (s *StorageImpl) WithResource(inner kubestorage.Interface, resource schema.GroupResource) v1.StorageClient {
 	return &StorageClientImpl{
+		client:   *s.Client(),
 		storage:  s,
 		inner:    inner,
 		resource: resource,
@@ -188,6 +195,21 @@ func (s *StorageImpl) Servers() []string {
 	})
 
 	return s.servers
+}
+
+func (s *StorageImpl) Client() *clientv3.Client {
+	s.clientOnce.Do(func() {
+		client, err := clientv3.New(clientv3.Config{
+			Endpoints:   s.Servers(),
+			DialTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			s.nano.CancelErr(err)
+			return
+		}
+		s.client = client
+	})
+	return s.client
 }
 
 type klogWriter struct{}
