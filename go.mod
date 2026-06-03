@@ -11,7 +11,6 @@ require (
 	github.com/docker/go-connections v0.6.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/emicklei/go-restful/v3 v3.13.0
-	github.com/fatih/color v1.19.0
 	github.com/felixge/httpsnoop v1.0.4
 	github.com/go-logr/logr v1.4.3
 	github.com/google/cadvisor v0.56.2

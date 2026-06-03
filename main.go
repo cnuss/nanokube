@@ -11,6 +11,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/driver/awslambda"
 	"github.com/cnuss/nanokube/pkg/driver/docker"
 	"github.com/cnuss/nanokube/pkg/driver/podman"
+	"github.com/cnuss/nanokube/pkg/klogz"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"k8s.io/component-base/cli"
 	"k8s.io/klog/v2"
@@ -21,7 +22,11 @@ import (
 )
 
 func init() {
-	// TODO: re-enable setupLogging once signal/cancel plumbing is reworked.
+	// Register the zerolog-backed "nanokube" log format before any component
+	// registers its logging flags (which freezes the format registry).
+	if err := klogz.Register(); err != nil {
+		klog.ErrorS(err, "unable to register nanokube log format")
+	}
 
 	if !v1.HTTP2 {
 		os.Setenv("DISABLE_HTTP2", "true")

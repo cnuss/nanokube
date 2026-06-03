@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/klogz"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"github.com/stoewer/go-strcase"
@@ -193,7 +194,6 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		}
 		return nil
 	}
-
 	c.Command.RunE = func(cmd *cobra.Command, args []string) error {
 		c.runHooks["start-kube-controller-manager"] = c.runEHook(c.kubeconfigReady, c.ControllerManagerCommand())
 		c.runHooks["start-kube-scheduler"] = c.runEHook(c.kubeconfigReady, c.SchedulerCommand())
@@ -230,6 +230,12 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("feature-gates", strings.Join(featureGates, ","))
 		}
 	})
+	// Route every component's logs through the nanokube zerolog format so foreign
+	// non-V logs are demoted. All components share this format + verbosity, so the
+	// per-component logsapi applies stay identical (ReapplyHandlingIgnoreUnchanged).
+	if cmd.Flags().Lookup("logging-format") != nil {
+		cmd.Flags().Set("logging-format", klogz.FormatName)
+	}
 
 	switch name {
 	case "kube-controller-manager":
