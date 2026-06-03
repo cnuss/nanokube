@@ -272,7 +272,7 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("allow-privileged", "true")
 			cmd.Flags().Set("api-audiences", "https://kubernetes.default.svc")
 			cmd.Flags().Set("authorization-mode", "RBAC,Node")
-			cmd.Flags().Set("etcd-servers", "http://") // TODO(partial): mark as not required
+			cmd.Flags().Set("etcd-servers", "file://"+c.Nano().Options().DataDirAt(v1.DataDirEtcd)) // HACK: embed datadir into kube-apiserver's etcd server list
 			cmd.Flags().Set("kubelet-preferred-address-types", "ExternalDNS")
 			cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
 			cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
@@ -287,7 +287,6 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				opts.GenericServerRunOptions.ExternalHost = c.Nano().Tunnel().URL().Host
 				opts.SecureServing.BindAddress = c.Nano().Tunnel().LocalIP()
 				opts.SecureServing.BindPort = c.Nano().Tunnel().LocalPort()
-				opts.Etcd.StorageConfig.Transport.ServerList = c.Nano().Storage().Servers()
 				config := &apiserver.Config{Options: opts}
 
 				genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
@@ -389,8 +388,8 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				startWg.Wait()
 				runWg.Wait()
 
-				// TODO(partial): find a better spot for storage shutdown
-				c.Nano().Storage().Shutdown()
+				// TODO(partial): find a better spot for storage shutdown?
+				c.Nano().Storage().Cancel(err)
 				return err
 			}
 			c.RunCommand().AddCommand(cmd)
