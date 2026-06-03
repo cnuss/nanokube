@@ -3,10 +3,13 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -24,8 +28,11 @@ import (
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/storage"
 	kubestorage "k8s.io/apiserver/pkg/storage"
+	"k8s.io/apiserver/pkg/storage/etcd3"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
+	"k8s.io/apiserver/pkg/storage/value"
+	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -44,6 +51,9 @@ type StorageImpl struct {
 	client     *clientv3.Client
 	clientOnce sync.Once
 
+	kubeClient     *kubernetes.Client
+	kubeClientOnce sync.Once
+
 	started      atomic.Bool
 	ready        chan struct{}
 	shutdown     chan struct{}
@@ -52,10 +62,17 @@ type StorageImpl struct {
 }
 
 type StorageClientImpl struct {
-	client   clientv3.Client
-	storage  v1.Storage
-	inner    kubestorage.Interface
-	resource schema.GroupResource
+	client      clientv3.Client
+	storage     v1.Storage
+	inner       kubestorage.Interface
+	resource    schema.GroupResource
+	codec       runtime.Codec
+	transformer value.Transformer
+	// pathPrefix is the etcd key prefix for all keys (e.g. "/registry/"),
+	// normalized to start at "/" and end in "/".
+	pathPrefix string
+	// resourcePrefix is the per-resource key segment (e.g. "/pods").
+	resourcePrefix string
 }
 
 var _ v1.StorageClient = &StorageClientImpl{}
@@ -89,12 +106,21 @@ func (s *StorageImpl) SetConfig(config *server.Config) *server.Config {
 	return s.config
 }
 
-func (s *StorageImpl) WithResource(inner kubestorage.Interface, resource schema.GroupResource) v1.StorageClient {
+func (s *StorageImpl) WithResource(inner kubestorage.Interface, config *storagebackend.ConfigForResource, resourcePrefix string) v1.StorageClient {
+	// Match upstream etcd3 store: pathPrefix starts at "/" and ends in "/".
+	pathPrefix := path.Join("/", config.Prefix)
+	if !strings.HasSuffix(pathPrefix, "/") {
+		pathPrefix += "/"
+	}
 	return &StorageClientImpl{
-		client:   *s.Client(),
-		storage:  s,
-		inner:    inner,
-		resource: resource,
+		client:         *s.Client(),
+		storage:        s,
+		inner:          inner,
+		resource:       config.GroupResource,
+		codec:          config.Codec,
+		transformer:    config.Transformer,
+		pathPrefix:     pathPrefix,
+		resourcePrefix: resourcePrefix,
 	}
 }
 
@@ -104,7 +130,6 @@ func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runt
 	if err != nil {
 		return opts, err
 	}
-	decorator := opts.Decorator
 	opts.Decorator = func(
 		config *storagebackend.ConfigForResource,
 		resourcePrefix string,
@@ -115,12 +140,33 @@ func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runt
 		trigger storage.IndexerFuncs,
 		indexers *cache.Indexers,
 	) (kubestorage.Interface, factory.DestroyFunc, error) {
-		inner, destroy, err := decorator(config, resourcePrefix, keyFunc, newFunc, newListFunc, getAttrsFunc, trigger, indexers)
+		// Build a raw etcd3 store directly against the embedded etcd instead of
+		// delegating to the apiserver's decorator, mirroring newETCD3Storage.
+		transformer := config.Transformer
+		if transformer == nil {
+			transformer = identity.NewEncryptCheckTransformer()
+		}
+		versioner := storage.APIObjectVersioner{}
+		decoder := etcd3.NewDefaultDecoder(config.Codec, versioner)
+		inner, err := etcd3.New(
+			s.kube(),
+			nil, // compactor: embedded etcd handles compaction
+			config.Codec,
+			newFunc,
+			newListFunc,
+			config.Prefix,
+			resourcePrefix,
+			config.GroupResource,
+			transformer,
+			config.LeaseManagerConfig,
+			decoder,
+			versioner,
+		)
 		if err != nil {
-			return inner, destroy, err
+			return nil, nil, err
 		}
 		klog.Infof("Wrapping storage for %s", resource)
-		return s.WithResource(inner, resource), destroy, nil
+		return s.WithResource(inner, config, resourcePrefix), inner.Close, nil
 	}
 	return opts, nil
 }
@@ -210,6 +256,22 @@ func (s *StorageImpl) Client() *clientv3.Client {
 		s.client = client
 	})
 	return s.client
+}
+
+// kube wraps the shared clientv3 client in the etcd3 kubernetes.Client helper
+// (single-RTT optimistic ops) required by etcd3.New. It reuses Client() so
+// there is only one connection to the embedded etcd.
+func (s *StorageImpl) kube() *kubernetes.Client {
+	s.kubeClientOnce.Do(func() {
+		c := s.Client()
+		if c == nil {
+			return
+		}
+		kc := &kubernetes.Client{Client: c}
+		kc.Kubernetes = kc
+		s.kubeClient = kc
+	})
+	return s.kubeClient
 }
 
 type klogWriter struct{}
@@ -307,4 +369,42 @@ func (sc *StorageClientImpl) UpdateList(obj runtime.Object, resourceVersion uint
 
 func (sc *StorageClientImpl) UpdateObject(obj runtime.Object, resourceVersion uint64) error {
 	return sc.inner.Versioner().UpdateObject(obj, resourceVersion)
+}
+
+// -- TRANSFORMER METHODS (value.Transformer) --
+
+func (sc *StorageClientImpl) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
+	return sc.transformer.TransformFromStorage(ctx, data, dataCtx)
+}
+
+func (sc *StorageClientImpl) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
+	return sc.transformer.TransformToStorage(ctx, data, dataCtx)
+}
+
+// -- SERIALIZER METHODS (runtime.Serializer == runtime.Codec) --
+
+func (sc *StorageClientImpl) Encode(obj runtime.Object, w io.Writer) error {
+	return sc.codec.Encode(obj, w)
+}
+
+func (sc *StorageClientImpl) Decode(data []byte, defaults *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	return sc.codec.Decode(data, defaults, into)
+}
+
+func (sc *StorageClientImpl) Identifier() runtime.Identifier {
+	return sc.codec.Identifier()
+}
+
+// -- ACCESSORS --
+
+func (sc *StorageClientImpl) PathPrefix() string {
+	return sc.pathPrefix
+}
+
+func (sc *StorageClientImpl) GroupResource() schema.GroupResource {
+	return sc.resource
+}
+
+func (sc *StorageClientImpl) ResourcePrefix() string {
+	return sc.resourcePrefix
 }

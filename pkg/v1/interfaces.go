@@ -13,12 +13,15 @@ import (
 	"github.com/emicklei/go-restful/v3"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/storage"
 	kubestorage "k8s.io/apiserver/pkg/storage"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
+	storagevalue "k8s.io/apiserver/pkg/storage/value"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
@@ -246,7 +249,7 @@ type Storage interface {
 	generic.RESTOptionsGetter
 
 	SetConfig(config *server.Config) *server.Config
-	WithResource(inner kubestorage.Interface, resource schema.GroupResource) StorageClient
+	WithResource(inner kubestorage.Interface, config *storagebackend.ConfigForResource, resourcePrefix string) StorageClient
 
 	Servers() []string
 	Shutdown()
@@ -257,4 +260,10 @@ type Storage interface {
 type StorageClient interface {
 	kubestorage.Interface
 	storage.Versioner
+	storagevalue.Transformer
+	runtime.Serializer
+
+	PathPrefix() string
+	GroupResource() schema.GroupResource
+	ResourcePrefix() string
 }
