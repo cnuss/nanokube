@@ -1,7 +1,6 @@
 // Package klogz routes all klog output through a single zerolog logger and
-// demotes unconditional (non-V) logs that originate outside nanokube to V(1),
-// so that at the default verbosity only nanokube's own logs and foreign errors
-// are shown.
+// drops unconditional (non-V) logs that originate outside nanokube, so that
+// only nanokube's own logs and foreign errors are shown.
 //
 // It plugs in as a component-base log format ("nanokube") rather than calling
 // klog.SetLogger directly, so component-base installs the logger through its
@@ -94,8 +93,7 @@ func (s *sink) Enabled(level int) bool {
 }
 
 func (s *sink) Info(level int, msg string, kv ...any) {
-	// Unconditional foreign logs (level 0, caller outside nanokube) are demoted
-	// to V(1) so they are hidden at the default verbosity.
+	// Drop unconditional foreign logs (level 0, caller outside nanokube).
 	if level == 0 && !fromNanokube() {
 		return
 	}
