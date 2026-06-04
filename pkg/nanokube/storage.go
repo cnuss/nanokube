@@ -68,6 +68,10 @@ type StorageImpl struct {
 	serverOnce     sync.Once
 	serverProvided chan struct{}
 
+	restOnce     sync.Once
+	rest         generic.RESTOptionsGetter
+	restProvided chan struct{}
+
 	portOnce sync.Once
 	port     int
 }
@@ -82,6 +86,7 @@ func StorageRef() v1.Storage {
 			cancel:            cancel,
 			transportProvided: make(chan struct{}),
 			serverProvided:    make(chan struct{}),
+			restProvided:      make(chan struct{}),
 		}
 	})
 	return storage
@@ -194,6 +199,9 @@ func (s *StorageImpl) WithServer(cfg *server.Config) v1.Storage {
 	s.serverOnce.Do(func() {
 		s.server = cfg
 		close(s.serverProvided)
+		s.rest = s.server.RESTOptionsGetter
+		s.server.RESTOptionsGetter = s
+		close(s.restProvided)
 	})
 	return s
 }
@@ -204,8 +212,8 @@ func (s *StorageImpl) Server() *server.Config {
 }
 
 func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runtime.Object) (generic.RESTOptions, error) {
-	<-Await(s.ctx, s.serverProvided, s.transportProvided)
-	opts, err := s.server.RESTOptionsGetter.GetRESTOptions(resource, example)
+	<-Await(s.ctx, s.serverProvided, s.restProvided)
+	opts, err := s.rest.GetRESTOptions(resource, example)
 	if err != nil {
 		return opts, err
 	}
