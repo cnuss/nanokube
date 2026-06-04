@@ -17,9 +17,15 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
+	kubestorage "k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
+	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
 	_ "k8s.io/apiserver/pkg/storage/storagebackend/factory"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
 
@@ -42,7 +48,7 @@ func init() {
 		panic("storage: newETCD3Client linkname target is nil; kubernetes factory internals changed")
 	}
 	newETCD3Client = func(cfg storagebackend.TransportConfig) (*kubernetes.Client, error) {
-		client := StorageRef().WithTransportConfig(cfg).Client()
+		client := StorageRef().WithTransport(cfg).Client()
 		if client == nil {
 			return nil, fmt.Errorf("embedded etcd client unavailable")
 		}
@@ -54,9 +60,13 @@ type StorageImpl struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 
-	cfg         storagebackend.TransportConfig
-	cfgOnce     sync.Once
-	cfgProvided chan struct{}
+	transport         storagebackend.TransportConfig
+	transportOnce     sync.Once
+	transportProvided chan struct{}
+
+	server         *server.Config
+	serverOnce     sync.Once
+	serverProvided chan struct{}
 
 	portOnce sync.Once
 	port     int
@@ -68,9 +78,10 @@ func StorageRef() v1.Storage {
 	storageOnce.Do(func() {
 		ctx, cancel := context.WithCancelCause(context.Background())
 		storage = &StorageImpl{
-			ctx:         ctx,
-			cancel:      cancel,
-			cfgProvided: make(chan struct{}),
+			ctx:               ctx,
+			cancel:            cancel,
+			transportProvided: make(chan struct{}),
+			serverProvided:    make(chan struct{}),
 		}
 	})
 	return storage
@@ -85,7 +96,7 @@ func (s *StorageImpl) Cancel(reason error) {
 // resource's destroyFunc, so callers must NOT share one: a single closed
 // connection would break every other resource's in-flight requests.
 func (s *StorageImpl) Client() *kubernetes.Client {
-	<-Await(s.ctx, s.cfgProvided)
+	<-Await(s.ctx, s.transportProvided)
 	kc, err := kubernetes.New(clientv3.Config{
 		Endpoints: s.Endpoints(),
 	})
@@ -96,12 +107,12 @@ func (s *StorageImpl) Client() *kubernetes.Client {
 	return kc
 }
 
-func (s *StorageImpl) WithTransportConfig(cfg storagebackend.TransportConfig) v1.Storage {
-	s.cfgOnce.Do(func() {
-		s.cfg = cfg
+func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Storage {
+	s.transportOnce.Do(func() {
+		s.transport = cfg
 
 		// HACK: embed datadir into kube-apiserver's etcd server list
-		dataDir := strings.TrimPrefix(s.cfg.ServerList[0], "file://")
+		dataDir := strings.TrimPrefix(s.transport.ServerList[0], "file://")
 		peerURL, _ := url.Parse("http://127.0.0.1:0")
 
 		cfg := embed.NewConfig()
@@ -140,14 +151,14 @@ func (s *StorageImpl) WithTransportConfig(cfg storagebackend.TransportConfig) v1
 		<-Await(s.ctx, server.Server.ReadyNotify())
 		klog.InfoS("storage is ready", "port", s.Port())
 
-		close(s.cfgProvided)
+		close(s.transportProvided)
 	})
 	return s
 }
 
-func (s *StorageImpl) SetConfig(config *server.Config) *server.Config {
-	// TODO(partial): in case we want to intercept API Server Config
-	return config
+func (s *StorageImpl) Transport() storagebackend.TransportConfig {
+	<-Await(s.ctx, s.transportProvided)
+	return s.transport
 }
 
 func (s *StorageImpl) Port() int {
@@ -177,6 +188,46 @@ func (s *StorageImpl) ClientURLs() []url.URL {
 		urls[i] = *u
 	}
 	return urls
+}
+
+func (s *StorageImpl) WithServer(cfg *server.Config) v1.Storage {
+	s.serverOnce.Do(func() {
+		s.server = cfg
+		close(s.serverProvided)
+	})
+	return s
+}
+
+func (s *StorageImpl) Server() *server.Config {
+	<-Await(s.ctx, s.serverProvided)
+	return s.server
+}
+
+func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runtime.Object) (generic.RESTOptions, error) {
+	<-Await(s.ctx, s.serverProvided, s.transportProvided)
+	opts, err := s.server.RESTOptionsGetter.GetRESTOptions(resource, example)
+	if err != nil {
+		return opts, err
+	}
+	decorator := opts.Decorator
+	opts.Decorator = func(
+		config *storagebackend.ConfigForResource,
+		resourcePrefix string,
+		keyFunc func(obj runtime.Object) (string, error),
+		newFunc func() runtime.Object,
+		newListFunc func() runtime.Object,
+		getAttrsFunc kubestorage.AttrFunc,
+		trigger kubestorage.IndexerFuncs,
+		indexers *cache.Indexers,
+	) (kubestorage.Interface, factory.DestroyFunc, error) {
+		inner, destroy, err := decorator(config, resourcePrefix, keyFunc, newFunc, newListFunc, getAttrsFunc, trigger, indexers)
+		if err != nil {
+			return inner, destroy, err
+		}
+		klog.V(2).InfoS("intercepted storage decorator call", "resourcePrefix", resourcePrefix)
+		return inner, destroy, nil
+	}
+	return opts, nil
 }
 
 type klogWriter struct{}
