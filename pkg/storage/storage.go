@@ -1,4 +1,4 @@
-package nanokube
+package storage
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,7 +25,6 @@ import (
 	kubestorage "k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
-	_ "k8s.io/apiserver/pkg/storage/storagebackend/factory"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -56,9 +56,34 @@ func init() {
 	}
 }
 
+// await returns a channel that closes once all of sigs have closed, or
+// immediately if ctx is done. Lets call sites "wait for all of these signals,
+// but respect ctx" without scattering selects. Check ctx.Err() after the
+// receive if the all-fired vs canceled distinction matters.
+func await(ctx context.Context, sigs ...<-chan struct{}) <-chan struct{} {
+	out := make(chan struct{})
+	go func() {
+		defer close(out)
+		for _, sig := range sigs {
+			select {
+			case <-sig:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+
 type StorageImpl struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
+
+	clientOnce sync.Once
+	client     *kubernetes.Client
+
+	etcdOnce sync.Once
+	etcd     *embed.Etcd
 
 	transport         storagebackend.TransportConfig
 	transportOnce     sync.Once
@@ -68,7 +93,6 @@ type StorageImpl struct {
 	serverOnce     sync.Once
 	serverProvided chan struct{}
 
-	restOnce     sync.Once
 	rest         generic.RESTOptionsGetter
 	restProvided chan struct{}
 
@@ -96,25 +120,66 @@ func (s *StorageImpl) Cancel(reason error) {
 	s.cancel(reason)
 }
 
-// Client builds a fresh etcd client per call. The k8s storagebackend factory
-// (newETCD3Client) owns the client it receives and Close()s it in each
-// resource's destroyFunc, so callers must NOT share one: a single closed
-// connection would break every other resource's in-flight requests.
+// Client returns the single, process-wide etcd client, built once. Every
+// operation lands directly on the embedded etcd server's methods — no grpc
+// transport, no serialization, no loopback TCP. clientv3 still owns Op/response
+// translation and stream bookkeeping; we only swap the underlying pb.*Client
+// stubs for in-process shims over the corresponding v3rpc.New*Server handlers.
+//
+// This client is shared by every resource. The storagebackend factory calls
+// client.Close() in each resource's destroyFunc, and clientv3.Client.Close()
+// would otherwise tear down the shared Watcher and Lease (killing every other
+// resource's watches — the cause of persistent "storage is (re)initializing").
+// We defang that by wrapping Watcher and Lease so their Close() is a no-op; the
+// embedded server owns their real lifecycle and outlives any single resource.
+// (Close still calls c.cancel(), but no operation derives from the client's own
+// ctx — KV/Watch/Lease all use the per-call ctx — so that is inert here.)
 func (s *StorageImpl) Client() *kubernetes.Client {
-	<-Await(s.ctx, s.transportProvided)
-	kc, err := kubernetes.New(clientv3.Config{
-		Endpoints: s.Endpoints(),
+	s.clientOnce.Do(func() {
+		etcd := s.Etcd()
+		if etcd == nil {
+			return // start failed; ctx is cancelled, newETCD3Client surfaces nil
+		}
+		srv := etcd.Server
+
+		sc := serverClient{
+			KVServer:          v3rpc.NewKVServer(srv),
+			WatchServer:       v3rpc.NewWatchServer(srv),
+			LeaseServer:       v3rpc.NewLeaseServer(srv),
+			MaintenanceServer: v3rpc.NewMaintenanceServer(srv, nil),
+			ClusterServer:     v3rpc.NewClusterServer(srv),
+			AuthServer:        v3rpc.NewAuthServer(srv),
+		}
+
+		cli := clientv3.NewCtxClient(s.ctx)
+		cli.KV = clientv3.NewKVFromKVClient(sc, cli)
+		cli.Lease = noopCloseLease{clientv3.NewLeaseFromLeaseClient(sc, cli, 0)}
+		cli.Watcher = noopCloseWatcher{clientv3.NewWatchFromWatchClient(sc, cli)}
+		cli.Maintenance = clientv3.NewMaintenanceFromMaintenanceClient(sc, cli)
+		cli.Cluster = clientv3.NewClusterFromClusterClient(sc, cli)
+		cli.Auth = clientv3.NewAuthFromAuthClient(sc, cli)
+
+		kc := &kubernetes.Client{Client: cli}
+		kc.Kubernetes = kc // re-arm the single-RTT Get/OptimisticPut path
+		s.client = kc
 	})
-	if err != nil {
-		s.cancel(fmt.Errorf("build etcd client: %w", err))
-		return nil
-	}
-	return kc
+	return s.client
 }
 
 func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Storage {
 	s.transportOnce.Do(func() {
 		s.transport = cfg
+		close(s.transportProvided)
+	})
+	return s
+}
+
+// Etcd lazily starts the embedded etcd server once, after a transport config has
+// been provided via WithTransport, and returns it. It blocks until the server is
+// ready. Returns nil if startup failed (ctx is then cancelled with the cause).
+func (s *StorageImpl) Etcd() *embed.Etcd {
+	s.etcdOnce.Do(func() {
+		<-await(s.ctx, s.transportProvided)
 
 		// HACK: embed datadir into kube-apiserver's etcd server list
 		dataDir := strings.TrimPrefix(s.transport.ServerList[0], "file://")
@@ -153,16 +218,16 @@ func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Stora
 			klog.InfoS("storage is done")
 		}()
 
-		<-Await(s.ctx, server.Server.ReadyNotify())
+		<-await(s.ctx, server.Server.ReadyNotify())
 		klog.InfoS("storage is ready", "port", s.Port())
 
-		close(s.transportProvided)
+		s.etcd = server
 	})
-	return s
+	return s.etcd
 }
 
 func (s *StorageImpl) Transport() storagebackend.TransportConfig {
-	<-Await(s.ctx, s.transportProvided)
+	<-await(s.ctx, s.transportProvided)
 	return s.transport
 }
 
@@ -207,12 +272,12 @@ func (s *StorageImpl) WithServer(cfg *server.Config) v1.Storage {
 }
 
 func (s *StorageImpl) Server() *server.Config {
-	<-Await(s.ctx, s.serverProvided)
+	<-await(s.ctx, s.serverProvided)
 	return s.server
 }
 
 func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runtime.Object) (generic.RESTOptions, error) {
-	<-Await(s.ctx, s.serverProvided, s.restProvided)
+	<-await(s.ctx, s.serverProvided, s.restProvided)
 	opts, err := s.rest.GetRESTOptions(resource, example)
 	if err != nil {
 		return opts, err

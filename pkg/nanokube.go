@@ -18,6 +18,7 @@ import (
 	_ "unsafe"
 
 	"github.com/cnuss/nanokube/pkg/nanokube"
+	"github.com/cnuss/nanokube/pkg/storage"
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
@@ -205,7 +206,7 @@ func (k *nanokubeImpl) Storage() v1.Storage {
 	// 	k.storage = nanokube.NewStorage()
 	// })
 	// return k.storage
-	return nanokube.StorageRef()
+	return storage.StorageRef()
 }
 
 func (k *nanokubeImpl) SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory {

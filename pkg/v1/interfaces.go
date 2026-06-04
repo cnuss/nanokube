@@ -12,6 +12,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
+	"go.etcd.io/etcd/server/v3/embed"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server"
@@ -244,6 +245,7 @@ type Storage interface {
 
 	WithTransport(cfg storagebackend.TransportConfig) Storage
 	Transport() storagebackend.TransportConfig
+	Etcd() *embed.Etcd
 	Client() *kubernetes.Client
 
 	WithServer(config *server.Config) Storage
