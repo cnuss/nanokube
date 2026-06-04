@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/breml/rootcerts v0.3.5
 	github.com/cloudflare/cloudflared v0.0.0-20260415224023-df54d2771019
-	github.com/cnuss/daemonize v0.1.22
+	github.com/cnuss/daemonize v0.1.23
 	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
