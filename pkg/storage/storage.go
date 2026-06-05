@@ -12,10 +12,9 @@ import (
 	_ "unsafe"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
-	"go.etcd.io/etcd/server/v3/etcdserver/api/v3rpc"
+	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -39,27 +38,18 @@ var (
 
 func init() {
 	// HACK: override newETCD3Client to use our embedded etcd server.
-	//
-	// newETCD3Client is an unexported internal of the k8s 1.36 storagebackend
-	// factory, bound via go:linkname above. If a kubernetes bump renames or
-	// changes its signature, the linkname target goes nil and this assignment
-	// panics at init — loud by design, so the coupling can't drift silently.
 	if newETCD3Client == nil {
 		panic("storage: newETCD3Client linkname target is nil; kubernetes factory internals changed")
 	}
 	newETCD3Client = func(cfg storagebackend.TransportConfig) (*kubernetes.Client, error) {
-		client := StorageRef().WithTransport(cfg).Client()
-		if client == nil {
+		kubernetes := StorageRef().WithTransport(cfg).Client().Kubernetes()
+		if kubernetes == nil {
 			return nil, fmt.Errorf("embedded etcd client unavailable")
 		}
-		return client, nil
+		return kubernetes, nil
 	}
 }
 
-// await returns a channel that closes once all of sigs have closed, or
-// immediately if ctx is done. Lets call sites "wait for all of these signals,
-// but respect ctx" without scattering selects. Check ctx.Err() after the
-// receive if the all-fired vs canceled distinction matters.
 func await(ctx context.Context, sigs ...<-chan struct{}) <-chan struct{} {
 	out := make(chan struct{})
 	go func() {
@@ -80,10 +70,13 @@ type StorageImpl struct {
 	cancel context.CancelCauseFunc
 
 	clientOnce sync.Once
-	client     *kubernetes.Client
+	client     v1.StorageClient
 
-	etcdOnce sync.Once
-	etcd     *embed.Etcd
+	embeddedOnce sync.Once
+	embedded     *embed.Etcd
+
+	serverOnce sync.Once
+	server     *etcdserver.EtcdServer
 
 	transport         storagebackend.TransportConfig
 	transportOnce     sync.Once
@@ -117,48 +110,28 @@ func (s *StorageImpl) Cancel(reason error) {
 	s.cancel(reason)
 }
 
-// Client returns the single, process-wide etcd client, built once. Every
-// operation lands directly on the embedded etcd server's methods — no grpc
-// transport, no serialization, no loopback TCP. clientv3 still owns Op/response
-// translation and stream bookkeeping; we only swap the underlying pb.*Client
-// stubs for in-process shims over the corresponding v3rpc.New*Server handlers.
-//
-// This client is shared by every resource. The storagebackend factory calls
-// client.Close() in each resource's destroyFunc, and clientv3.Client.Close()
-// would otherwise tear down the shared Watcher and Lease (killing every other
-// resource's watches — the cause of persistent "storage is (re)initializing").
-// We defang that by wrapping Watcher and Lease so their Close() is a no-op; the
-// embedded server owns their real lifecycle and outlives any single resource.
-// (Close still calls c.cancel(), but no operation derives from the client's own
-// ctx — KV/Watch/Lease all use the per-call ctx — so that is inert here.)
-func (s *StorageImpl) Client() *kubernetes.Client {
+func (s *StorageImpl) Server() *etcdserver.EtcdServer {
+	s.serverOnce.Do(func() {
+		<-await(s.ctx, s.transportProvided)
+		url, err := url.Parse(s.transport.ServerList[0])
+		if err != nil {
+			s.cancel(fmt.Errorf("invalid transport server list URL: %w", err))
+			return
+		}
+
+		if url.Scheme == "embed" {
+			s.server = s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://")).Server
+			return
+		}
+
+		s.cancel(fmt.Errorf("unsupported transport scheme: %s", url.Scheme))
+	})
+	return s.server
+}
+
+func (s *StorageImpl) Client() v1.StorageClient {
 	s.clientOnce.Do(func() {
-		etcd := s.Etcd()
-		if etcd == nil {
-			return // start failed; ctx is cancelled, newETCD3Client surfaces nil
-		}
-		srv := etcd.Server
-
-		sc := serverClient{
-			KVServer:          v3rpc.NewKVServer(srv),
-			WatchServer:       v3rpc.NewWatchServer(srv),
-			LeaseServer:       v3rpc.NewLeaseServer(srv),
-			MaintenanceServer: v3rpc.NewMaintenanceServer(srv, nil),
-			ClusterServer:     v3rpc.NewClusterServer(srv),
-			AuthServer:        v3rpc.NewAuthServer(srv),
-		}
-
-		cli := clientv3.NewCtxClient(s.ctx)
-		cli.KV = clientv3.NewKVFromKVClient(sc, cli)
-		cli.Lease = noopCloseLease{clientv3.NewLeaseFromLeaseClient(sc, cli, 0)}
-		cli.Watcher = noopCloseWatcher{clientv3.NewWatchFromWatchClient(sc, cli)}
-		cli.Maintenance = clientv3.NewMaintenanceFromMaintenanceClient(sc, cli)
-		cli.Cluster = clientv3.NewClusterFromClusterClient(sc, cli)
-		cli.Auth = clientv3.NewAuthFromAuthClient(sc, cli)
-
-		kc := &kubernetes.Client{Client: cli}
-		kc.Kubernetes = kc // re-arm the single-RTT Get/OptimisticPut path
-		s.client = kc
+		s.client = NewClient(s.ctx).WithServer(s.Server())
 	})
 	return s.client
 }
@@ -171,15 +144,9 @@ func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Stora
 	return s
 }
 
-// Etcd lazily starts the embedded etcd server once, after a transport config has
-// been provided via WithTransport, and returns it. It blocks until the server is
-// ready. Returns nil if startup failed (ctx is then cancelled with the cause).
-func (s *StorageImpl) Etcd() *embed.Etcd {
-	s.etcdOnce.Do(func() {
+func (s *StorageImpl) embeddedEtcd(dataDir string) *embed.Etcd {
+	s.embeddedOnce.Do(func() {
 		<-await(s.ctx, s.transportProvided)
-
-		// HACK: embed datadir into kube-apiserver's etcd server list
-		dataDir := strings.TrimPrefix(s.transport.ServerList[0], "file://")
 		peerURL, _ := url.Parse("http://127.0.0.1:0")
 
 		cfg := embed.NewConfig()
@@ -218,9 +185,9 @@ func (s *StorageImpl) Etcd() *embed.Etcd {
 		<-await(s.ctx, server.Server.ReadyNotify())
 		klog.InfoS("storage is ready", "port", s.Port())
 
-		s.etcd = server
+		s.embedded = server
 	})
-	return s.etcd
+	return s.embedded
 }
 
 func (s *StorageImpl) Transport() storagebackend.TransportConfig {

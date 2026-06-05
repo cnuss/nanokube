@@ -125,7 +125,7 @@ var (
 type klogWriter struct{}
 
 func (klogWriter) Write(p []byte) (int, error) {
-	klog.V(2).Info(strings.TrimRight(string(p), "\n"))
+	klog.V(4).Info(strings.TrimRight(string(p), "\n"))
 	return len(p), nil
 }
 

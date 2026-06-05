@@ -12,7 +12,7 @@ import (
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
-	"go.etcd.io/etcd/server/v3/embed"
+	"go.etcd.io/etcd/server/v3/etcdserver"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server"
@@ -243,8 +243,8 @@ type Host interface {
 type Storage interface {
 	Cancel(reason error)
 
-	Etcd() *embed.Etcd
-	Client() *kubernetes.Client
+	Server() *etcdserver.EtcdServer
+	Client() StorageClient
 
 	WithTransport(cfg storagebackend.TransportConfig) Storage
 	Transport() storagebackend.TransportConfig
@@ -256,16 +256,8 @@ type Storage interface {
 	ClientURLs() []url.URL
 }
 
-// type Storage interface {
-// 	generic.RESTOptionsGetter
+type StorageClient interface {
+	WithServer(s *etcdserver.EtcdServer) StorageClient
 
-// 	SetConfig(config *server.Config) *server.Config
-// 	WithResource(inner kubestorage.Interface, resource schema.GroupResource) StorageClient
-
-// 	Servers() []string
-// 	Shutdown()
-// }
-
-// type StorageClient interface {
-// 	kubestorage.Interface
-// }
+	Kubernetes() *kubernetes.Client
+}
