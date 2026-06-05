@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	kineserver "github.com/k3s-io/kine/pkg/server"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
@@ -55,6 +56,15 @@ func (c *ClientImpl) WithServer(s *etcdserver.EtcdServer) v1.StorageClient {
 		WithMaintenance(v3rpc.NewMaintenanceServer(s, nil)).
 		WithCluster(v3rpc.NewClusterServer(s)).
 		WithAuth(v3rpc.NewAuthServer(s))
+}
+
+func (c *ClientImpl) WithBridge(b *kineserver.KVServerBridge) v1.StorageClient {
+	return c.WithKV(b).
+		WithWatch(b).
+		WithLease(b).
+		WithMaintenance(b).
+		WithCluster(b).
+		WithAuth(nil) // kine has no AuthServer; close the gate so auth calls fail fast instead of blocking
 }
 
 func (c *ClientImpl) WithKV(kv pb.KVServer) v1.StorageClient {

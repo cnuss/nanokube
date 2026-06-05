@@ -9,9 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	_ "unsafe"
 
 	v1 "github.com/cnuss/nanokube/pkg/v1"
+	"github.com/k3s-io/kine/pkg/drivers"
+	"github.com/k3s-io/kine/pkg/drivers/sqlite"
+	kine "github.com/k3s-io/kine/pkg/server"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
@@ -67,6 +71,9 @@ type StorageImpl struct {
 	embeddedOnce sync.Once
 	embedded     *embed.Etcd
 
+	sqliteOnce   sync.Once
+	sqliteBridge *kine.KVServerBridge
+
 	transport         storagebackend.TransportConfig
 	transportOnce     sync.Once
 	transportProvided chan struct{}
@@ -113,6 +120,11 @@ func (s *StorageImpl) Client() v1.StorageClient {
 			return
 		}
 
+		if url.Scheme == "sqlite" {
+			s.client = NewClient(s.ctx).WithBridge(s.sqliteEtcd(strings.TrimPrefix(s.transport.ServerList[0], "sqlite://")))
+			return
+		}
+
 		s.cancel(fmt.Errorf("unsupported transport scheme: %s", url.Scheme))
 	})
 	return s.client
@@ -124,6 +136,51 @@ func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Stora
 		close(s.transportProvided)
 	})
 	return s
+}
+
+// sqliteEtcd lazily builds a kine SQLite-backed bridge that implements the
+// etcdserverpb KV/Watch/Lease/Maintenance/Cluster servers over a local SQLite
+// database, once a transport config has been provided. dataDir is a directory;
+// the database lives at dataDir/state.db. Returns nil if setup failed (ctx is
+// then cancelled with the cause).
+func (s *StorageImpl) sqliteEtcd(dataDir string) *kine.KVServerBridge {
+	s.sqliteOnce.Do(func() {
+		await(s.ctx, s.transportProvided)
+
+		if err := os.MkdirAll(dataDir, 0o700); err != nil {
+			s.cancel(fmt.Errorf("sqlite: create data dir: %w", err))
+			return
+		}
+		dsn := filepath.Join(dataDir, "state.db") + "?_journal=WAL&cache=shared&_busy_timeout=30000&_txlock=immediate"
+
+		// Compaction params normally come from kine's CLI defaults; calling the
+		// driver directly we must set them or backend.Start rejects the zero
+		// values ("compact-batch-size 0 too small"). Values mirror kine's flag
+		// defaults in pkg/app/app.go (v0.16.2). CompactInterval stays 0 so the
+		// apiserver drives compaction, matching kine's own default.
+		_, backend, err := sqlite.New(s.ctx, &sync.WaitGroup{}, &drivers.Config{
+			DataSourceName:        dsn,
+			CompactInterval:       0,
+			CompactIntervalJitter: 0,
+			CompactTimeout:        5 * time.Second,
+			CompactMinRetain:      1000,
+			CompactBatchSize:      1000,
+			PollBatchSize:         500,
+		})
+		if err != nil {
+			s.cancel(fmt.Errorf("sqlite: create backend: %w", err))
+			return
+		}
+
+		if err := backend.Start(s.ctx); err != nil {
+			s.cancel(fmt.Errorf("sqlite: start backend: %w", err))
+			return
+		}
+
+		s.sqliteBridge = kine.New(backend, "unix", 5*time.Second, "3.6.11")
+		klog.InfoS("storage is ready", "backend", "sqlite", "path", dsn)
+	})
+	return s.sqliteBridge
 }
 
 func (s *StorageImpl) embeddedEtcd(dataDir string) *embed.Etcd {
