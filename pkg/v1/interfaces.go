@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
+	kineserver "github.com/k3s-io/kine/pkg/server"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/etcdserver"
@@ -258,6 +259,7 @@ type Storage interface {
 
 type StorageClient interface {
 	WithServer(s *etcdserver.EtcdServer) StorageClient
+	WithBridge(b *kineserver.KVServerBridge) StorageClient
 
 	WithKV(kv etcdserverpb.KVServer) StorageClient
 	WithWatch(watch etcdserverpb.WatchServer) StorageClient
