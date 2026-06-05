@@ -14,7 +14,6 @@ import (
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
-	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -50,19 +49,12 @@ func init() {
 	}
 }
 
-func await(ctx context.Context, sigs ...<-chan struct{}) <-chan struct{} {
-	out := make(chan struct{})
-	go func() {
-		defer close(out)
-		for _, sig := range sigs {
-			select {
-			case <-sig:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return out
+func await(ctx context.Context, sig <-chan struct{}) {
+	select {
+	case <-sig:
+	case <-ctx.Done():
+		return
+	}
 }
 
 type StorageImpl struct {
@@ -74,9 +66,6 @@ type StorageImpl struct {
 
 	embeddedOnce sync.Once
 	embedded     *embed.Etcd
-
-	serverOnce sync.Once
-	server     *etcdserver.EtcdServer
 
 	transport         storagebackend.TransportConfig
 	transportOnce     sync.Once
@@ -110,9 +99,9 @@ func (s *StorageImpl) Cancel(reason error) {
 	s.cancel(reason)
 }
 
-func (s *StorageImpl) Server() *etcdserver.EtcdServer {
-	s.serverOnce.Do(func() {
-		<-await(s.ctx, s.transportProvided)
+func (s *StorageImpl) Client() v1.StorageClient {
+	s.clientOnce.Do(func() {
+		await(s.ctx, s.transportProvided)
 		url, err := url.Parse(s.transport.ServerList[0])
 		if err != nil {
 			s.cancel(fmt.Errorf("invalid transport server list URL: %w", err))
@@ -120,18 +109,11 @@ func (s *StorageImpl) Server() *etcdserver.EtcdServer {
 		}
 
 		if url.Scheme == "embed" {
-			s.server = s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://")).Server
+			s.client = NewClient(s.ctx).WithServer(s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://")).Server)
 			return
 		}
 
 		s.cancel(fmt.Errorf("unsupported transport scheme: %s", url.Scheme))
-	})
-	return s.server
-}
-
-func (s *StorageImpl) Client() v1.StorageClient {
-	s.clientOnce.Do(func() {
-		s.client = NewClient(s.ctx).WithServer(s.Server())
 	})
 	return s.client
 }
@@ -146,7 +128,7 @@ func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Stora
 
 func (s *StorageImpl) embeddedEtcd(dataDir string) *embed.Etcd {
 	s.embeddedOnce.Do(func() {
-		<-await(s.ctx, s.transportProvided)
+		await(s.ctx, s.transportProvided)
 		peerURL, _ := url.Parse("http://127.0.0.1:0")
 
 		cfg := embed.NewConfig()
@@ -182,8 +164,8 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *embed.Etcd {
 			klog.InfoS("storage is done")
 		}()
 
-		<-await(s.ctx, server.Server.ReadyNotify())
-		klog.InfoS("storage is ready", "port", s.Port())
+		await(s.ctx, server.Server.ReadyNotify())
+		klog.InfoS("storage is ready", "backend", "embedded", "path", cfg.Dir, "port", s.Port())
 
 		s.embedded = server
 	})
@@ -191,7 +173,7 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *embed.Etcd {
 }
 
 func (s *StorageImpl) Transport() storagebackend.TransportConfig {
-	<-await(s.ctx, s.transportProvided)
+	await(s.ctx, s.transportProvided)
 	return s.transport
 }
 
@@ -235,12 +217,12 @@ func (s *StorageImpl) WithServerConfig(cfg *server.Config) v1.Storage {
 }
 
 func (s *StorageImpl) ServerConfig() *server.Config {
-	<-await(s.ctx, s.serverConfigProvided)
+	await(s.ctx, s.serverConfigProvided)
 	return s.serverConfig
 }
 
 func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runtime.Object) (generic.RESTOptions, error) {
-	<-await(s.ctx, s.serverConfigProvided)
+	await(s.ctx, s.serverConfigProvided)
 	opts, err := s.rest.GetRESTOptions(resource, example)
 	if err != nil {
 		return opts, err

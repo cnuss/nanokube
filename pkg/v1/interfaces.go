@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	corev1 "k8s.io/api/core/v1"
@@ -243,9 +244,6 @@ type Host interface {
 type Storage interface {
 	Cancel(reason error)
 
-	Server() *etcdserver.EtcdServer
-	Client() StorageClient
-
 	WithTransport(cfg storagebackend.TransportConfig) Storage
 	Transport() storagebackend.TransportConfig
 	WithServerConfig(config *server.Config) Storage
@@ -254,10 +252,19 @@ type Storage interface {
 	Port() int
 	Endpoints() []string
 	ClientURLs() []url.URL
+
+	Client() StorageClient
 }
 
 type StorageClient interface {
 	WithServer(s *etcdserver.EtcdServer) StorageClient
+
+	WithKV(kv etcdserverpb.KVServer) StorageClient
+	WithWatch(watch etcdserverpb.WatchServer) StorageClient
+	WithLease(lease etcdserverpb.LeaseServer) StorageClient
+	WithMaintenance(maintenance etcdserverpb.MaintenanceServer) StorageClient
+	WithCluster(cluster etcdserverpb.ClusterServer) StorageClient
+	WithAuth(auth etcdserverpb.AuthServer) StorageClient
 
 	Kubernetes() *kubernetes.Client
 }
