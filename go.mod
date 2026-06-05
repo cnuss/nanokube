@@ -24,6 +24,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stoewer/go-strcase v1.3.0
+	go.etcd.io/bbolt v1.4.3
 	go.etcd.io/etcd/api/v3 v3.6.11
 	go.etcd.io/etcd/client/v3 v3.6.11
 	go.etcd.io/etcd/server/v3 v3.6.11
@@ -156,7 +157,6 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
-	go.etcd.io/bbolt v1.4.3 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.6.11 // indirect
 	go.etcd.io/etcd/pkg/v3 v3.6.11 // indirect
 	go.etcd.io/raft/v3 v3.6.0 // indirect
