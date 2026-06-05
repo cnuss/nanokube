@@ -245,6 +245,8 @@ type Host interface {
 type Storage interface {
 	Cancel(reason error)
 
+	WithTunnel(tunnel tunnel.Tunnel) Storage
+	Tunnel() tunnel.Tunnel
 	WithTransport(cfg storagebackend.TransportConfig) Storage
 	Transport() storagebackend.TransportConfig
 	WithServerConfig(config *server.Config) Storage

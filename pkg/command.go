@@ -330,7 +330,11 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				}
 
 				// TODO(partial): is this the right place for this?
-				c.Nano().Tunnel().WithListener(server.GenericAPIServer.SecureServingInfo.Listener)
+				c.Nano().Storage().WithTunnel(
+					c.Nano().Tunnel().WithListener(
+						server.GenericAPIServer.SecureServingInfo.Listener,
+					),
+				)
 
 				go func() {
 					<-c.kubeletServerProvided

@@ -12,6 +12,7 @@ import (
 	"time"
 	_ "unsafe"
 
+	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/k3s-io/kine/pkg/drivers"
 	"github.com/k3s-io/kine/pkg/drivers/sqlite"
@@ -77,6 +78,10 @@ type StorageImpl struct {
 	sqliteOnce   sync.Once
 	sqliteBridge *kine.KVServerBridge
 
+	tunnelOnce     sync.Once
+	tunnel         tunnel.Tunnel
+	tunnelProvided chan struct{}
+
 	transport         storagebackend.TransportConfig
 	transportOnce     sync.Once
 	transportProvided chan struct{}
@@ -98,6 +103,7 @@ func StorageRef() v1.Storage {
 		storage = &StorageImpl{
 			ctx:                  ctx,
 			cancel:               cancel,
+			tunnelProvided:       make(chan struct{}),
 			transportProvided:    make(chan struct{}),
 			serverConfigProvided: make(chan struct{}),
 		}
@@ -133,12 +139,30 @@ func (s *StorageImpl) Client() v1.StorageClient {
 	return s.client
 }
 
+func (s *StorageImpl) WithTunnel(tunnel tunnel.Tunnel) v1.Storage {
+	s.tunnelOnce.Do(func() {
+		s.tunnel = tunnel
+		close(s.tunnelProvided)
+	})
+	return s
+}
+
+func (s *StorageImpl) Tunnel() tunnel.Tunnel {
+	await(s.ctx, s.tunnelProvided)
+	return s.tunnel
+}
+
 func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Storage {
 	s.transportOnce.Do(func() {
 		s.transport = cfg
 		close(s.transportProvided)
 	})
 	return s
+}
+
+func (s *StorageImpl) Transport() storagebackend.TransportConfig {
+	await(s.ctx, s.transportProvided)
+	return s.transport
 }
 
 // sqliteEtcd lazily builds a kine SQLite-backed bridge that implements the
@@ -198,6 +222,7 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		))
 
 		cfg := embed.NewConfig()
+		// cfg.Name = s.Tunnel().Hostname()
 		cfg.Dir = dataDir
 		cfg.ListenClientUrls = s.ClientURLs()
 		cfg.AdvertiseClientUrls = s.ClientURLs()
@@ -301,11 +326,6 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		s.embedded = srv
 	})
 	return s.embedded
-}
-
-func (s *StorageImpl) Transport() storagebackend.TransportConfig {
-	await(s.ctx, s.transportProvided)
-	return s.transport
 }
 
 func (s *StorageImpl) Port() int {
