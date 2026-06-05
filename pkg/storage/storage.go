@@ -89,12 +89,10 @@ type StorageImpl struct {
 	transportOnce     sync.Once
 	transportProvided chan struct{}
 
-	server         *server.Config
-	serverOnce     sync.Once
-	serverProvided chan struct{}
-
-	rest         generic.RESTOptionsGetter
-	restProvided chan struct{}
+	serverConfig         *server.Config
+	serverConfigOnce     sync.Once
+	serverConfigProvided chan struct{}
+	rest                 generic.RESTOptionsGetter
 
 	portOnce sync.Once
 	port     int
@@ -106,11 +104,10 @@ func StorageRef() v1.Storage {
 	storageOnce.Do(func() {
 		ctx, cancel := context.WithCancelCause(context.Background())
 		storage = &StorageImpl{
-			ctx:               ctx,
-			cancel:            cancel,
-			transportProvided: make(chan struct{}),
-			serverProvided:    make(chan struct{}),
-			restProvided:      make(chan struct{}),
+			ctx:                  ctx,
+			cancel:               cancel,
+			transportProvided:    make(chan struct{}),
+			serverConfigProvided: make(chan struct{}),
 		}
 	})
 	return storage
@@ -260,24 +257,23 @@ func (s *StorageImpl) ClientURLs() []url.URL {
 	return urls
 }
 
-func (s *StorageImpl) WithServer(cfg *server.Config) v1.Storage {
-	s.serverOnce.Do(func() {
-		s.server = cfg
-		close(s.serverProvided)
-		s.rest = s.server.RESTOptionsGetter
-		s.server.RESTOptionsGetter = s
-		close(s.restProvided)
+func (s *StorageImpl) WithServerConfig(cfg *server.Config) v1.Storage {
+	s.serverConfigOnce.Do(func() {
+		s.serverConfig = cfg
+		s.rest = s.serverConfig.RESTOptionsGetter
+		s.serverConfig.RESTOptionsGetter = s
+		close(s.serverConfigProvided)
 	})
 	return s
 }
 
-func (s *StorageImpl) Server() *server.Config {
-	<-await(s.ctx, s.serverProvided)
-	return s.server
+func (s *StorageImpl) ServerConfig() *server.Config {
+	<-await(s.ctx, s.serverConfigProvided)
+	return s.serverConfig
 }
 
 func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runtime.Object) (generic.RESTOptions, error) {
-	<-await(s.ctx, s.serverProvided, s.restProvided)
+	<-await(s.ctx, s.serverConfigProvided)
 	opts, err := s.rest.GetRESTOptions(resource, example)
 	if err != nil {
 		return opts, err

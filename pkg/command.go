@@ -299,7 +299,7 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 					return err
 				}
 
-				kubeAPIs, serviceResolver, pluginInitializer, err := apiserver.CreateKubeAPIServerConfig(opts, c.Nano().Storage().WithServer(genericConfig).Server(), c.Nano().SetSharedInformerFactory(versionedInformers), storageFactory)
+				kubeAPIs, serviceResolver, pluginInitializer, err := apiserver.CreateKubeAPIServerConfig(opts, c.Nano().Storage().WithServerConfig(genericConfig).ServerConfig(), c.Nano().SetSharedInformerFactory(versionedInformers), storageFactory)
 				if err != nil {
 					return err
 				}

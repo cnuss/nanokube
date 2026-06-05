@@ -243,13 +243,13 @@ type Host interface {
 type Storage interface {
 	Cancel(reason error)
 
-	WithTransport(cfg storagebackend.TransportConfig) Storage
-	Transport() storagebackend.TransportConfig
 	Etcd() *embed.Etcd
 	Client() *kubernetes.Client
 
-	WithServer(config *server.Config) Storage
-	Server() *server.Config
+	WithTransport(cfg storagebackend.TransportConfig) Storage
+	Transport() storagebackend.TransportConfig
+	WithServerConfig(config *server.Config) Storage
+	ServerConfig() *server.Config
 
 	Port() int
 	Endpoints() []string
