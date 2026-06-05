@@ -272,7 +272,8 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("allow-privileged", "true")
 			cmd.Flags().Set("api-audiences", "https://kubernetes.default.svc")
 			cmd.Flags().Set("authorization-mode", "RBAC,Node")
-			cmd.Flags().Set("etcd-servers", "unset://") // HACK: we use URL schemes to pick different etcd server implementations
+			// HACK: we use URL schemes to pick different etcd server implementations
+			cmd.Flags().Set("etcd-servers", fmt.Sprintf("embed://%s", c.Nano().Options().DataDirAt(v1.DataDirEtcd)))
 			cmd.Flags().Set("kubelet-preferred-address-types", "ExternalDNS")
 			cmd.Flags().Set("service-account-key-file", c.Nano().KeyFilePath())
 			cmd.Flags().Set("service-account-signing-key-file", c.Nano().KeyFilePath())
@@ -287,7 +288,6 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				opts.GenericServerRunOptions.ExternalHost = c.Nano().Tunnel().URL().Host
 				opts.SecureServing.BindAddress = c.Nano().Tunnel().LocalIP()
 				opts.SecureServing.BindPort = c.Nano().Tunnel().LocalPort()
-				opts.Etcd.StorageConfig.Transport.ServerList = []string{fmt.Sprintf("embed://%s", c.Nano().Options().DataDirAt(v1.DataDirEtcd))}
 				config := &apiserver.Config{Options: opts}
 
 				genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
