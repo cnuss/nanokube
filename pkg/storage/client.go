@@ -120,6 +120,10 @@ func (c *ClientImpl) Kubernetes() *kubernetes.Client {
 	return c.kubernetes
 }
 
+func (c *ClientImpl) Etcd() *clientv3.Client {
+	return c.Kubernetes().Client
+}
+
 var (
 	_ pb.KVClient          = &ClientImpl{}
 	_ pb.WatchClient       = &ClientImpl{}

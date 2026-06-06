@@ -13,10 +13,12 @@ import (
 	"github.com/emicklei/go-restful/v3"
 	kineserver "github.com/k3s-io/kine/pkg/server"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -243,20 +245,23 @@ type Host interface {
 }
 
 type Storage interface {
-	Cancel(reason error)
+	generic.RESTOptionsGetter
 
-	WithTunnel(tunnel tunnel.Tunnel) Storage
-	Tunnel() tunnel.Tunnel
-	WithTransport(cfg storagebackend.TransportConfig) Storage
-	Transport() storagebackend.TransportConfig
-	WithServerConfig(config *server.Config) Storage
-	ServerConfig() *server.Config
+	Cancel(reason error)
 
 	Port() int
 	Endpoints() []string
 	ClientURLs() []url.URL
 
 	Client() StorageClient
+
+	WithTunnel(tunnel tunnel.Tunnel) Storage
+	Tunnel() tunnel.Tunnel
+	WithTransport(cfg storagebackend.TransportConfig) Storage
+	WithServerConfig(config *server.Config) Storage
+	ServerConfig() *server.Config
+
+	StorageDecorator(opts generic.RESTOptions) generic.StorageDecorator
 }
 
 type StorageClient interface {
@@ -271,4 +276,5 @@ type StorageClient interface {
 	WithAuth(auth etcdserverpb.AuthServer) StorageClient
 
 	Kubernetes() *kubernetes.Client
+	Etcd() *clientv3.Client
 }

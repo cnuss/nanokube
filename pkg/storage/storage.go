@@ -172,8 +172,6 @@ func (s *StorageImpl) Transport() storagebackend.TransportConfig {
 // then cancelled with the cause).
 func (s *StorageImpl) sqliteEtcd(dataDir string) *kine.KVServerBridge {
 	s.sqliteOnce.Do(func() {
-		await(s.ctx, s.transportProvided)
-
 		if err := os.MkdirAll(dataDir, 0o700); err != nil {
 			s.cancel(fmt.Errorf("sqlite: create data dir: %w", err))
 			return
@@ -212,7 +210,6 @@ func (s *StorageImpl) sqliteEtcd(dataDir string) *kine.KVServerBridge {
 
 func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 	s.embeddedOnce.Do(func() {
-		await(s.ctx, s.transportProvided)
 		peerURL, _ := url.Parse("http://127.0.0.1:0")
 
 		lg := zap.New(zapcore.NewCore(
@@ -222,13 +219,13 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		))
 
 		cfg := embed.NewConfig()
-		// cfg.Name = s.Tunnel().Hostname()
+		cfg.Name = s.Tunnel().Hostname()
 		cfg.Dir = dataDir
 		cfg.ListenClientUrls = s.ClientURLs()
 		cfg.AdvertiseClientUrls = s.ClientURLs()
 		cfg.ListenPeerUrls = []url.URL{*peerURL}
 		cfg.AdvertisePeerUrls = []url.URL{*peerURL}
-		cfg.InitialCluster = "default=" + peerURL.String()
+		cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
 		cfg.AutoCompactionRetention = "0"
 		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(lg)
 		// Restart: if a WAL exists, this member is already initialized and joins
@@ -378,8 +375,12 @@ func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runt
 	if err != nil {
 		return opts, err
 	}
-	decorator := opts.Decorator
-	opts.Decorator = func(
+	opts.Decorator = s.StorageDecorator(opts)
+	return opts, nil
+}
+
+func (s *StorageImpl) StorageDecorator(opts generic.RESTOptions) generic.StorageDecorator {
+	return func(
 		config *storagebackend.ConfigForResource,
 		resourcePrefix string,
 		keyFunc func(obj runtime.Object) (string, error),
@@ -389,14 +390,18 @@ func (s *StorageImpl) GetRESTOptions(resource schema.GroupResource, example runt
 		trigger kubestorage.IndexerFuncs,
 		indexers *cache.Indexers,
 	) (kubestorage.Interface, factory.DestroyFunc, error) {
-		inner, destroy, err := decorator(config, resourcePrefix, keyFunc, newFunc, newListFunc, getAttrsFunc, trigger, indexers)
+		// TODO(upstream): i think there's an opportunity to provide an PR to kubernetes to make TransportConfig have a factory method that mints a etcd3 client
+		// For now, intercept the transport
+		s.WithTransport(config.Transport)
+
+		inner, destroy, err := opts.Decorator(config, resourcePrefix, keyFunc, newFunc, newListFunc, getAttrsFunc, trigger, indexers)
 		if err != nil {
 			return inner, destroy, err
 		}
+
 		klog.V(2).InfoS("intercepted storage decorator call", "resourcePrefix", resourcePrefix)
 		return inner, destroy, nil
 	}
-	return opts, nil
 }
 
 type klogWriter struct{}

@@ -206,7 +206,7 @@ func (k *nanokubeImpl) Storage() v1.Storage {
 	// 	k.storage = nanokube.NewStorage()
 	// })
 	// return k.storage
-	return storage.StorageRef()
+	return storage.StorageRef().WithTunnel(k.Tunnel())
 }
 
 func (k *nanokubeImpl) SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory {
