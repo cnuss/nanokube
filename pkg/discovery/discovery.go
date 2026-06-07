@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -14,18 +15,19 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
+	"go.etcd.io/etcd/client/pkg/v3/types"
 	"k8s.io/klog/v2"
 )
 
 // userAgent honestly identifies nanokube to kvdb.io.
 const (
-	userAgent        = "nanokube-discovery (+https://github.com/cnuss/nanokube)"
+	userAgent        = "nanokube (+https://github.com/cnuss/nanokube)"
 	discoveryService = "kvdb.io"
 )
 
 type Discovery interface {
 	Seed() string
-	Peers() string
+	Peers() types.URLsMap
 
 	WithTunnel(tunnel tunnel.Tunnel) Discovery
 	Tunnel() tunnel.Tunnel
@@ -65,10 +67,10 @@ func (d *discoveryImpl) client() *http.Client {
 	d.httpOnce.Do(func() {
 		d.http = &http.Client{
 			Transport: &http.Transport{
-				TLSHandshakeTimeout:   5 * time.Second,
-				ResponseHeaderTimeout: 5 * time.Second,
+				TLSHandshakeTimeout:   15 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
 			},
-			Timeout: 5 * time.Second,
+			Timeout: 15 * time.Second,
 		}
 	})
 	return d.http
@@ -118,8 +120,7 @@ func (d *discoveryImpl) Seed() string {
 		}
 
 		url := fmt.Sprintf("https://%s", discoveryService)
-		// payload := strings.NewReader(fmt.Sprintf("email=%s@nanokube.xyz", discoveryService))
-		payload := strings.NewReader(fmt.Sprintf("email=%s@cnuss.com", discoveryService)) // TODO(partial): move from cnuss.com
+		payload := strings.NewReader(fmt.Sprintf("email=%s@nanokube.xyz", discoveryService))
 
 		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, payload)
 		if err != nil {
@@ -156,43 +157,44 @@ func (d *discoveryImpl) Seed() string {
 	return d.seed
 }
 
-func (d *discoveryImpl) Peers() string {
-	url := fmt.Sprintf("https://%s/%s/?format=json&values=false", discoveryService, d.Seed())
-	klog.Infof("discovery: fetching peers from %s", url)
-	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, url, nil)
+func (d *discoveryImpl) Peers() types.URLsMap {
+	urls := types.URLsMap{
+		d.Tunnel().Hostname(): []url.URL{*d.Tunnel().URL()},
+	}
+	endpoint := fmt.Sprintf("https://%s/%s/?format=json&values=false", discoveryService, d.Seed())
+	klog.Infof("discovery: fetching peers from %s", endpoint)
+	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		d.cancel(fmt.Errorf("failed to create request: %w", err))
-		return ""
+		return urls
 	}
 	req.Header.Set("Cache-Control", "no-cache")
 	resp, err := do(d.ctx, d.client(), req)
 	if err != nil {
-		d.cancel(fmt.Errorf("failed to do request: %w", err))
-		return ""
+		return urls
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		d.cancel(fmt.Errorf("unexpected status code: %d", resp.StatusCode))
-		return ""
+		return urls
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		d.cancel(fmt.Errorf("failed to read response body: %w", err))
-		return ""
+		return urls
 	}
-	klog.Infof("discovery: peers raw body %s", body)
 	var hostnames []string
 	if err := json.Unmarshal(body, &hostnames); err != nil {
-		d.cancel(fmt.Errorf("failed to decode response body: %w", err))
-		return ""
+		return urls
 	}
 	if len(hostnames) == 0 {
-		d.cancel(fmt.Errorf("no peers found"))
-		return ""
+		return urls
 	}
-	peers := strings.Join(hostnames, ",")
-	klog.Infof("discovery: peers %s", peers)
-	return peers
+	for _, hostname := range hostnames {
+		u, err := url.Parse(fmt.Sprintf("https://%s:443", hostname))
+		if err != nil {
+			continue
+		}
+		urls[hostname] = []url.URL{*u}
+	}
+	return urls
 }
 
 func await[T any](ctx context.Context, ch <-chan T) <-chan struct{} {

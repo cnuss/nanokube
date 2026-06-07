@@ -45,6 +45,7 @@ type Tunnel interface {
 	LocalHost() string
 	LocalURL() *url.URL
 
+	Host() string
 	Hostname() string
 	Domain() string
 	URL() *url.URL
@@ -238,6 +239,12 @@ func (t *TunnelImpl) Hostname() string {
 	return t.__hostname__
 }
 
+func (t *TunnelImpl) Host() string {
+	hostname := t.Hostname()
+	host, _, _ := strings.Cut(hostname, ".")
+	return host
+}
+
 func (t *TunnelImpl) Domain() string {
 	hostname := t.Hostname()
 	_, domain, _ := strings.Cut(hostname, ".")
@@ -250,7 +257,7 @@ func (t *TunnelImpl) URL() *url.URL {
 		<-await(t.ctx, t.HostnameReady())
 		t.__url__ = &url.URL{
 			Scheme: "https",
-			Host:   hostname,
+			Host:   hostname + ":443",
 			Path:   "/",
 		}
 	})

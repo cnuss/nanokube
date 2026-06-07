@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -215,8 +216,6 @@ func (s *StorageImpl) sqliteEtcd(dataDir string) *kine.KVServerBridge {
 
 func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 	s.embeddedOnce.Do(func() {
-		peerURL, _ := url.Parse("http://127.0.0.1:0")
-
 		lg := zap.New(zapcore.NewCore(
 			zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
 			zapcore.AddSync(klogWriter{}),
@@ -224,41 +223,30 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		))
 
 		peers := s.Discovery().Peers()
-		klog.InfoS("etcd: discovery peers", "peers", peers)
+		klog.Infof("discovery: peers %v", peers.String())
 
 		cfg := embed.NewConfig()
 		cfg.Name = s.Discovery().Tunnel().Hostname()
 		cfg.Dir = dataDir
 		cfg.ListenClientUrls = s.ClientURLs()
 		cfg.AdvertiseClientUrls = s.ClientURLs()
-		cfg.ListenPeerUrls = []url.URL{}
-		// cfg.AdvertisePeerUrls = []url.URL{*s.Discovery().Tunnel().LocalURL()}
-		// cfg.InitialCluster = cfg.Name + "=" + s.Discovery().Tunnel().LocalURL().String()
-		cfg.AdvertisePeerUrls = []url.URL{*peerURL}
-		cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
-		cfg.AutoCompactionRetention = "0"
 		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(lg)
-		// Restart: if a WAL exists, this member is already initialized and joins
-		// as an existing cluster (initial cluster/token come from the WAL).
-		memberInitialized := false
-		if _, err := os.Stat(filepath.Join(cfg.Dir, "member", "wal")); err == nil {
+		cfg.AutoCompactionRetention = "0"
+		cfg.MaxLearners = math.MaxInt
+		cfg.AdvertisePeerUrls = peers[cfg.Name]
+
+		if len(peers) <= 1 {
+			cfg.ClusterState = embed.ClusterStateFlagNew
+			if _, err := os.Stat(filepath.Join(cfg.Dir, "member", "wal")); err == nil {
+				cfg.ClusterState = embed.ClusterStateFlagExisting
+			}
+		} else {
 			cfg.ClusterState = embed.ClusterStateFlagExisting
-			memberInitialized = true
 		}
 
 		if err := cfg.Validate(); err != nil {
 			s.cancel(fmt.Errorf("embed: validate config: %w", err))
 			return
-		}
-
-		// Inlined from embed.StartEtcd: build the etcd server directly and skip
-		// embed's client/peer/metrics listeners. nanokube reaches etcd through
-		// the in-process pb.*Server shims (see Client), never over the wire, so
-		// those listeners are unused — skipping them hands listener creation
-		// entirely to us.
-		freelist := bolt.FreelistMapType
-		if cfg.BackendFreelistType == "array" {
-			freelist = bolt.FreelistArrayType
 		}
 
 		// Trimmed to what a single-node, in-process member needs. Dropped:
@@ -275,6 +263,9 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			PeerURLs:   cfg.AdvertisePeerUrls,
 			NewCluster: cfg.IsNewCluster(),
 
+			InitialClusterToken: s.Discovery().Seed(),
+			InitialPeerURLsMap:  peers,
+
 			TickMs:                     cfg.TickMs,
 			ElectionTicks:              cfg.ElectionTicks(),
 			InitialElectionTickAdvance: cfg.InitialElectionTickAdvance,
@@ -288,10 +279,17 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 
 			MaxTxnOps:       cfg.MaxTxnOps,
 			MaxRequestBytes: cfg.MaxRequestBytes,
+			MaxLearners:     cfg.MaxLearners,
 
 			AutoCompactionRetention: 0, // apiserver drives compaction
 			AutoCompactionMode:      cfg.AutoCompactionMode,
-			BackendFreelistType:     freelist,
+
+			BackendFreelistType: func() bolt.FreelistType {
+				if cfg.BackendFreelistType == "array" {
+					return bolt.FreelistArrayType
+				}
+				return bolt.FreelistMapType
+			}(),
 
 			AuthToken:            cfg.AuthToken,
 			WarningApplyDuration: cfg.WarningApplyDuration,
@@ -299,18 +297,6 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			V2Deprecation:     cfg.V2DeprecationEffective(),
 			ServerFeatureGate: cfg.ServerFeatureGate,
 			Logger:            lg,
-		}
-
-		// A not-yet-initialized member derives its initial cluster + token from
-		// the configured peer URLs; an existing one reads them from the WAL.
-		if !memberInitialized {
-			urlsmap, token, err := cfg.PeerURLsMapAndToken("etcd")
-			if err != nil {
-				s.cancel(fmt.Errorf("embed: initial cluster: %w", err))
-				return
-			}
-			srvcfg.InitialPeerURLsMap = urlsmap
-			srvcfg.InitialClusterToken = token
 		}
 
 		srv, err := etcdserver.NewServer(srvcfg)
