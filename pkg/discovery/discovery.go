@@ -244,10 +244,14 @@ func (d *discoveryImpl) Peers() types.URLsMap {
 	for _, value := range values {
 		peer := strings.TrimPrefix(value, "peer:")
 		// Only accept peers registered with an explicit port; skip the rest.
-		if _, _, err := net.SplitHostPort(peer); err != nil {
+		host, _, err := net.SplitHostPort(peer)
+		if err != nil {
 			continue
 		}
-		peers[peer] = []url.URL{{Scheme: "https", Host: peer}}
+		// Key by the bare host (the etcd member name) with the port in the URL.
+		// Our own registration collapses onto the self entry above instead of
+		// adding a second key with the same URL.
+		peers[host] = []url.URL{{Scheme: "https", Host: peer}}
 	}
 	return peers
 }

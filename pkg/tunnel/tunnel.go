@@ -146,9 +146,9 @@ func NewTunnel() Tunnel {
 	log := zerolog.New(klogWriter{}).With().Str("component", "tunnel").Logger()
 
 	t := &TunnelImpl{
-		ctx:               ctx,
-		cancel:            cancel,
-		log:               &log,
+		ctx:                  ctx,
+		cancel:               cancel,
+		log:                  &log,
 		__listening__:        make(chan struct{}),
 		__listenerProvided__: make(chan struct{}),
 		__hostnameReady__:    make(chan struct{}),

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,12 +24,14 @@ import (
 	"go.etcd.io/etcd/server/v3/config"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/etcdhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/mux"
 	kubestorage "k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
@@ -99,6 +102,9 @@ type StorageImpl struct {
 
 	portOnce sync.Once
 	port     int
+
+	paths   []string
+	pathsMu sync.Mutex
 }
 
 var _ v1.Storage = &StorageImpl{}
@@ -109,6 +115,7 @@ func StorageRef() v1.Storage {
 		storage = &StorageImpl{
 			ctx:                  ctx,
 			cancel:               cancel,
+			paths:                []string{},
 			discoveryProvided:    make(chan struct{}),
 			transportProvided:    make(chan struct{}),
 			serverConfigProvided: make(chan struct{}),
@@ -225,15 +232,40 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		peers := s.Discovery().Peers()
 		klog.Infof("storage: peers %v", peers.String())
 
+		/*
+				--name "$name" \
+			    --data-dir "$DATA_DIR/$name" \
+			    --listen-client-urls "http://127.0.0.1:$cport" \
+			    --advertise-client-urls "http://127.0.0.1:$cport" \
+			    --listen-peer-urls "http://127.0.0.1:$pport" \
+			    --initial-advertise-peer-urls "${PEER_HOSTS[$i]}" \
+			    --initial-cluster "$INITIAL_CLUSTER" \
+			    --initial-cluster-token etcd-demo-cluster \
+			    --initial-cluster-state new \
+			    --heartbeat-interval 1000 \
+			    --election-timeout 10000 \
+			    --initial-election-tick-advance=false \
+			    --snapshot-catchup-entries 100000 \
+			    --snapshot-count 100000 \
+		*/
+
 		cfg := embed.NewConfig()
 		cfg.Name = s.Discovery().Tunnel().Hostname()
-		cfg.Dir = dataDir
-		cfg.ListenClientUrls = s.ClientURLs()
+
 		cfg.AdvertiseClientUrls = s.ClientURLs()
-		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(lg)
+		cfg.AdvertisePeerUrls = peers[cfg.Name] // depends on cfg.Name; must follow it
 		cfg.AutoCompactionRetention = "0"
+		cfg.Dir = dataDir
+		cfg.ElectionMs = 10000
+		cfg.InitialCluster = peers.String()
+		cfg.InitialClusterToken = s.Discovery().Seed()
+		cfg.InitialElectionTickAdvance = false
+		cfg.ListenClientUrls = s.ClientURLs()
 		cfg.MaxLearners = math.MaxInt
-		cfg.AdvertisePeerUrls = peers[cfg.Name]
+		cfg.SnapshotCatchUpEntries = 100000
+		cfg.SnapshotCount = 100000
+		cfg.TickMs = 1000
+		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(lg)
 
 		if len(peers) <= 1 {
 			cfg.ClusterState = embed.ClusterStateFlagNew
@@ -249,13 +281,6 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			return
 		}
 
-		// Trimmed to what a single-node, in-process member needs. Dropped:
-		// client/peer serving (CORS, HostWhitelist, SocketOpts, client-cert,
-		// Metrics, MaxConcurrentStreams) — we create no listeners; auth tuning
-		// (BcryptCost, TokenTTL) — auth is never enabled; and inert timers.
-		// Zero values would be wrong for AuthToken (token provider), Logger,
-		// ServerFeatureGate (deref'd), and WarningApplyDuration (0 logs every
-		// apply), so those are kept.
 		srvcfg := config.ServerConfig{
 			Name:       cfg.Name,
 			DataDir:    cfg.Dir,
@@ -263,8 +288,10 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			PeerURLs:   cfg.AdvertisePeerUrls,
 			NewCluster: cfg.IsNewCluster(),
 
-			InitialClusterToken: s.Discovery().Seed(),
+			// NewServer reads srvcfg, not cfg — the initial cluster map and token
+			// must be set here explicitly. cfg.InitialCluster only feeds Validate.
 			InitialPeerURLsMap:  peers,
+			InitialClusterToken: cfg.InitialClusterToken,
 
 			TickMs:                     cfg.TickMs,
 			ElectionTicks:              cfg.ElectionTicks(),
@@ -284,12 +311,7 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			AutoCompactionRetention: 0, // apiserver drives compaction
 			AutoCompactionMode:      cfg.AutoCompactionMode,
 
-			BackendFreelistType: func() bolt.FreelistType {
-				if cfg.BackendFreelistType == "array" {
-					return bolt.FreelistArrayType
-				}
-				return bolt.FreelistMapType
-			}(),
+			BackendFreelistType: bolt.FreelistMapType,
 
 			AuthToken:            cfg.AuthToken,
 			WarningApplyDuration: cfg.WarningApplyDuration,
@@ -399,6 +421,55 @@ func (s *StorageImpl) StorageDecorator(opts generic.RESTOptions) generic.Storage
 		klog.V(2).InfoS("intercepted storage decorator call", "resourcePrefix", resourcePrefix)
 		return inner, destroy, nil
 	}
+}
+
+func (s *StorageImpl) RaftHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		await(s.ctx, s.transportProvided)
+		url, err := url.Parse(s.transport.ServerList[0])
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid transport server list URL: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if url.Scheme == "embed" {
+			s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://")).RaftHandler().ServeHTTP(w, r)
+			return
+		}
+
+		http.Error(w, fmt.Sprintf("raft handler not configured for %s", url.Scheme), http.StatusNotImplemented)
+	})
+}
+
+func (s *StorageImpl) Paths() []string {
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+	return s.paths
+}
+
+func (s *StorageImpl) WithMux(mux *mux.PathRecorderMux) v1.Storage {
+	await(s.ctx, s.transportProvided)
+	url, err := url.Parse(s.transport.ServerList[0])
+	if err != nil {
+		s.cancel(fmt.Errorf("invalid transport server list URL: %w", err))
+		return s
+	}
+
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+
+	if url.Scheme == "embed" {
+		server := s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://"))
+		handler := etcdhttp.NewPeerHandler(server.Logger(), server)
+		mux.UnlistedHandle("/raft", handler)
+		s.paths = append(s.paths, "/raft")
+		mux.UnlistedHandlePrefix("/raft/", handler)
+		s.paths = append(s.paths, "/raft/")
+		mux.UnlistedHandle("/members", handler)
+		s.paths = append(s.paths, "/members")
+	}
+
+	return s
 }
 
 type klogWriter struct{}
