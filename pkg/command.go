@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/klogz"
+	"github.com/cnuss/nanokube/pkg/nanokube"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/spf13/cobra"
 	"github.com/stoewer/go-strcase"
@@ -74,21 +75,6 @@ var featureGates = []string{
 	"kube:WindowsGracefulNodeShutdown=false",
 	"kube:GracefulNodeShutdownBasedOnPodPriority=false",
 	"kube:ControllerManagerReleaseLeaderElectionLockOnExit=true",
-}
-
-var kubeletPaths = []string{
-	"/attach/",
-	"/checkpoint/",
-	"/containerLogs/",
-	"/debug/",
-	"/exec/",
-	"/logs/",
-	"/metrics/",
-	"/pods/",
-	"/portForward/",
-	"/run/",
-	"/runningpods/",
-	"/stats/",
 }
 
 type Command struct {
@@ -333,17 +319,41 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				c.Nano().Tunnel().WithListener(server.GenericAPIServer.SecureServingInfo.Listener)
 
 				go func() {
-					<-c.kubeletServerProvided
+					klog.Infof("apiserver: injecting handlers...")
+					<-nanokube.Await(c.ctx, c.kubeletServerProvided)
 					defer close(c.pathsProvided)
-					for _, p := range kubeletPaths {
+
+					// Add storage/etcd handlers
+					c.paths = append(c.paths, c.Nano().Storage().WithMux(server.GenericAPIServer.Handler.NonGoRestfulMux).Paths()...)
+
+					for _, p := range []string{
+						// TODO(partial): prune these down
+						"/attach/",
+						"/checkpoint/",
+						"/containerLogs/",
+						"/debug/",
+						"/exec/",
+						"/logs/",
+						"/metrics/",
+						"/pods/",
+						"/portForward/",
+						"/run/",
+						"/runningpods/",
+						"/stats/",
+					} {
 						server.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandlePrefix(p, &c.kubeletServer)
 						c.paths = append(c.paths, p)
 					}
+
 					for _, ws := range c.Nano().Services(c.Nano().Tunnel().URL()) {
 						server.GenericAPIServer.Handler.GoRestfulContainer.Add(ws)
 						c.paths = append(c.paths, ws.RootPath())
 					}
+
+					klog.Infof("apiserver: added custom paths: %v", c.paths)
+
 					for name, hook := range c.stopHooks {
+						klog.Infof("apiserver: adding shutdown hook %s", name)
 						server.GenericAPIServer.AddPreShutdownHook(name, hook)
 					}
 				}()

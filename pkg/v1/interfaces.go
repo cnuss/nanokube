@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/mux"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/informers"
@@ -265,6 +266,9 @@ type Storage interface {
 	ServerConfig() *server.Config
 
 	StorageDecorator(opts generic.RESTOptions) generic.StorageDecorator
+
+	WithMux(mux *mux.PathRecorderMux) Storage
+	Paths() []string
 }
 
 type StorageClient interface {

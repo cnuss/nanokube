@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,12 +24,14 @@ import (
 	"go.etcd.io/etcd/server/v3/config"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/etcdhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/mux"
 	kubestorage "k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/storagebackend/factory"
@@ -98,6 +102,9 @@ type StorageImpl struct {
 
 	portOnce sync.Once
 	port     int
+
+	paths   []string
+	pathsMu sync.Mutex
 }
 
 var _ v1.Storage = &StorageImpl{}
@@ -108,6 +115,7 @@ func StorageRef() v1.Storage {
 		storage = &StorageImpl{
 			ctx:                  ctx,
 			cancel:               cancel,
+			paths:                []string{},
 			discoveryProvided:    make(chan struct{}),
 			transportProvided:    make(chan struct{}),
 			serverConfigProvided: make(chan struct{}),
@@ -208,15 +216,13 @@ func (s *StorageImpl) sqliteEtcd(dataDir string) *kine.KVServerBridge {
 		}
 
 		s.sqliteBridge = kine.New(backend, "unix", 5*time.Second, "3.6.11")
-		klog.InfoS("storage is ready", "backend", "sqlite", "path", dsn)
+		klog.Infof("storage: sqlite backend is ready at %s", dsn)
 	})
 	return s.sqliteBridge
 }
 
 func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 	s.embeddedOnce.Do(func() {
-		peerURL, _ := url.Parse("http://127.0.0.1:0")
-
 		lg := zap.New(zapcore.NewCore(
 			zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
 			zapcore.AddSync(klogWriter{}),
@@ -224,26 +230,50 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		))
 
 		peers := s.Discovery().Peers()
-		klog.InfoS("etcd: discovery peers", "peers", peers)
+		klog.Infof("storage: peers %v", peers.String())
+
+		/*
+				--name "$name" \
+			    --data-dir "$DATA_DIR/$name" \
+			    --listen-client-urls "http://127.0.0.1:$cport" \
+			    --advertise-client-urls "http://127.0.0.1:$cport" \
+			    --listen-peer-urls "http://127.0.0.1:$pport" \
+			    --initial-advertise-peer-urls "${PEER_HOSTS[$i]}" \
+			    --initial-cluster "$INITIAL_CLUSTER" \
+			    --initial-cluster-token etcd-demo-cluster \
+			    --initial-cluster-state new \
+			    --heartbeat-interval 1000 \
+			    --election-timeout 10000 \
+			    --initial-election-tick-advance=false \
+			    --snapshot-catchup-entries 100000 \
+			    --snapshot-count 100000 \
+		*/
 
 		cfg := embed.NewConfig()
 		cfg.Name = s.Discovery().Tunnel().Hostname()
-		cfg.Dir = dataDir
-		cfg.ListenClientUrls = s.ClientURLs()
+
 		cfg.AdvertiseClientUrls = s.ClientURLs()
-		cfg.ListenPeerUrls = []url.URL{}
-		// cfg.AdvertisePeerUrls = []url.URL{*s.Discovery().Tunnel().LocalURL()}
-		// cfg.InitialCluster = cfg.Name + "=" + s.Discovery().Tunnel().LocalURL().String()
-		cfg.AdvertisePeerUrls = []url.URL{*peerURL}
-		cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
+		cfg.AdvertisePeerUrls = peers[cfg.Name] // depends on cfg.Name; must follow it
 		cfg.AutoCompactionRetention = "0"
+		cfg.Dir = dataDir
+		cfg.ElectionMs = 10000
+		cfg.InitialCluster = peers.String()
+		cfg.InitialClusterToken = s.Discovery().Seed()
+		cfg.InitialElectionTickAdvance = false
+		cfg.ListenClientUrls = s.ClientURLs()
+		cfg.MaxLearners = math.MaxInt
+		cfg.SnapshotCatchUpEntries = 100000
+		cfg.SnapshotCount = 100000
+		cfg.TickMs = 1000
 		cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(lg)
-		// Restart: if a WAL exists, this member is already initialized and joins
-		// as an existing cluster (initial cluster/token come from the WAL).
-		memberInitialized := false
-		if _, err := os.Stat(filepath.Join(cfg.Dir, "member", "wal")); err == nil {
+
+		if len(peers) <= 1 {
+			cfg.ClusterState = embed.ClusterStateFlagNew
+			if _, err := os.Stat(filepath.Join(cfg.Dir, "member", "wal")); err == nil {
+				cfg.ClusterState = embed.ClusterStateFlagExisting
+			}
+		} else {
 			cfg.ClusterState = embed.ClusterStateFlagExisting
-			memberInitialized = true
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -251,29 +281,17 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			return
 		}
 
-		// Inlined from embed.StartEtcd: build the etcd server directly and skip
-		// embed's client/peer/metrics listeners. nanokube reaches etcd through
-		// the in-process pb.*Server shims (see Client), never over the wire, so
-		// those listeners are unused — skipping them hands listener creation
-		// entirely to us.
-		freelist := bolt.FreelistMapType
-		if cfg.BackendFreelistType == "array" {
-			freelist = bolt.FreelistArrayType
-		}
-
-		// Trimmed to what a single-node, in-process member needs. Dropped:
-		// client/peer serving (CORS, HostWhitelist, SocketOpts, client-cert,
-		// Metrics, MaxConcurrentStreams) — we create no listeners; auth tuning
-		// (BcryptCost, TokenTTL) — auth is never enabled; and inert timers.
-		// Zero values would be wrong for AuthToken (token provider), Logger,
-		// ServerFeatureGate (deref'd), and WarningApplyDuration (0 logs every
-		// apply), so those are kept.
 		srvcfg := config.ServerConfig{
 			Name:       cfg.Name,
 			DataDir:    cfg.Dir,
 			ClientURLs: cfg.AdvertiseClientUrls,
 			PeerURLs:   cfg.AdvertisePeerUrls,
 			NewCluster: cfg.IsNewCluster(),
+
+			// NewServer reads srvcfg, not cfg — the initial cluster map and token
+			// must be set here explicitly. cfg.InitialCluster only feeds Validate.
+			InitialPeerURLsMap:  peers,
+			InitialClusterToken: cfg.InitialClusterToken,
 
 			TickMs:                     cfg.TickMs,
 			ElectionTicks:              cfg.ElectionTicks(),
@@ -288,10 +306,12 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 
 			MaxTxnOps:       cfg.MaxTxnOps,
 			MaxRequestBytes: cfg.MaxRequestBytes,
+			MaxLearners:     cfg.MaxLearners,
 
 			AutoCompactionRetention: 0, // apiserver drives compaction
 			AutoCompactionMode:      cfg.AutoCompactionMode,
-			BackendFreelistType:     freelist,
+
+			BackendFreelistType: bolt.FreelistMapType,
 
 			AuthToken:            cfg.AuthToken,
 			WarningApplyDuration: cfg.WarningApplyDuration,
@@ -301,34 +321,23 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			Logger:            lg,
 		}
 
-		// A not-yet-initialized member derives its initial cluster + token from
-		// the configured peer URLs; an existing one reads them from the WAL.
-		if !memberInitialized {
-			urlsmap, token, err := cfg.PeerURLsMapAndToken("etcd")
-			if err != nil {
-				s.cancel(fmt.Errorf("embed: initial cluster: %w", err))
-				return
-			}
-			srvcfg.InitialPeerURLsMap = urlsmap
-			srvcfg.InitialClusterToken = token
-		}
-
 		srv, err := etcdserver.NewServer(srvcfg)
 		if err != nil {
 			s.cancel(fmt.Errorf("embed: new server: %w", err))
 			return
 		}
+
 		srv.Start()
 
 		go func() {
 			<-s.ctx.Done()
-			klog.InfoS("shutting down storage")
+			klog.Infof("storage: shutting down embedded backend at %s", cfg.Dir)
 			srv.Stop()
-			klog.InfoS("storage is done")
+			klog.Infof("storage: embedded backend at %s is done", cfg.Dir)
 		}()
 
 		await(s.ctx, srv.ReadyNotify())
-		klog.InfoS("storage is ready", "backend", "embedded", "path", cfg.Dir)
+		klog.Infof("storage: embedded backend is ready at %s", cfg.Dir)
 
 		s.embedded = srv
 	})
@@ -412,6 +421,55 @@ func (s *StorageImpl) StorageDecorator(opts generic.RESTOptions) generic.Storage
 		klog.V(2).InfoS("intercepted storage decorator call", "resourcePrefix", resourcePrefix)
 		return inner, destroy, nil
 	}
+}
+
+func (s *StorageImpl) RaftHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		await(s.ctx, s.transportProvided)
+		url, err := url.Parse(s.transport.ServerList[0])
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid transport server list URL: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if url.Scheme == "embed" {
+			s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://")).RaftHandler().ServeHTTP(w, r)
+			return
+		}
+
+		http.Error(w, fmt.Sprintf("raft handler not configured for %s", url.Scheme), http.StatusNotImplemented)
+	})
+}
+
+func (s *StorageImpl) Paths() []string {
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+	return s.paths
+}
+
+func (s *StorageImpl) WithMux(mux *mux.PathRecorderMux) v1.Storage {
+	await(s.ctx, s.transportProvided)
+	url, err := url.Parse(s.transport.ServerList[0])
+	if err != nil {
+		s.cancel(fmt.Errorf("invalid transport server list URL: %w", err))
+		return s
+	}
+
+	s.pathsMu.Lock()
+	defer s.pathsMu.Unlock()
+
+	if url.Scheme == "embed" {
+		server := s.embeddedEtcd(strings.TrimPrefix(s.transport.ServerList[0], "embed://"))
+		handler := etcdhttp.NewPeerHandler(server.Logger(), server)
+		mux.UnlistedHandle("/raft", handler)
+		s.paths = append(s.paths, "/raft")
+		mux.UnlistedHandlePrefix("/raft/", handler)
+		s.paths = append(s.paths, "/raft/")
+		mux.UnlistedHandle("/members", handler)
+		s.paths = append(s.paths, "/members")
+	}
+
+	return s
 }
 
 type klogWriter struct{}

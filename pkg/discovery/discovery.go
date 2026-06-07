@@ -1,11 +1,14 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -14,18 +17,19 @@ import (
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
+	"go.etcd.io/etcd/client/pkg/v3/types"
 	"k8s.io/klog/v2"
 )
 
 // userAgent honestly identifies nanokube to kvdb.io.
 const (
-	userAgent        = "nanokube-discovery (+https://github.com/cnuss/nanokube)"
+	userAgent        = "nanokube (+https://github.com/cnuss/nanokube)"
 	discoveryService = "kvdb.io"
 )
 
 type Discovery interface {
 	Seed() string
-	Peers() string
+	Peers() types.URLsMap
 
 	WithTunnel(tunnel tunnel.Tunnel) Discovery
 	Tunnel() tunnel.Tunnel
@@ -65,10 +69,10 @@ func (d *discoveryImpl) client() *http.Client {
 	d.httpOnce.Do(func() {
 		d.http = &http.Client{
 			Transport: &http.Transport{
-				TLSHandshakeTimeout:   5 * time.Second,
-				ResponseHeaderTimeout: 5 * time.Second,
+				TLSHandshakeTimeout:   15 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
 			},
-			Timeout: 5 * time.Second,
+			Timeout: 15 * time.Second,
 		}
 	})
 	return d.http
@@ -77,10 +81,16 @@ func (d *discoveryImpl) client() *http.Client {
 func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 	d.tunnelOnce.Do(func() {
 		klog.Infof("discovery: registering tunnel %s with discovery service", tunnel.Hostname())
-		payload := tunnel.LocalHost()
-		url := fmt.Sprintf("https://%s/%s/%s", discoveryService, d.Seed(), tunnel.Hostname())
+		payload, err := json.Marshal(tunnel.Spec())
+		if err != nil {
+			d.cancel(fmt.Errorf("failed to marshal tunnel spec: %w", err))
+			return
+		}
 
-		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, strings.NewReader(payload))
+		host := net.JoinHostPort(tunnel.Hostname(), strconv.Itoa(tunnel.Port()))
+		url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), host)
+
+		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
 		if err != nil {
 			d.cancel(fmt.Errorf("failed to create request: %w", err))
 			return
@@ -108,90 +118,141 @@ func (d *discoveryImpl) Tunnel() tunnel.Tunnel {
 
 func (d *discoveryImpl) Seed() string {
 	d.seedOnce.Do(func() {
-		if seed := os.Getenv("NANOKUBE_SEED"); seed != "" {
-			d.seed = seed
-			return
-		}
-		if data, err := os.ReadFile(d.seedFile); err == nil {
-			d.seed = string(data)
-			return
+		create := func() (*string, error) {
+			klog.Infof("discovery: registering with discovery service %s", discoveryService)
+
+			os.Setenv("NANOKUBE_SEED", "")
+			err := os.Remove(d.seedFile)
+			if err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("failed to remove seed file: %w", err)
+			}
+
+			url := fmt.Sprintf("https://%s", discoveryService)
+			payload := strings.NewReader(fmt.Sprintf("email=%s@nanokube.xyz", discoveryService))
+
+			req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, payload)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := do(d.ctx, d.client(), req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to do request: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusCreated {
+				return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			}
+			location := resp.Header.Get("Location")
+			if location == "" {
+				return nil, fmt.Errorf("missing Location header")
+			}
+			seed := strings.Trim(path.Base(location), "/")
+			return &seed, nil
 		}
 
-		url := fmt.Sprintf("https://%s", discoveryService)
-		// payload := strings.NewReader(fmt.Sprintf("email=%s@nanokube.xyz", discoveryService))
-		payload := strings.NewReader(fmt.Sprintf("email=%s@cnuss.com", discoveryService)) // TODO(partial): move from cnuss.com
+		getOrCreate := func() (*string, error) {
+			var seed string
+			if val := os.Getenv("NANOKUBE_SEED"); val != "" {
+				seed = val
+			}
+			if val, err := os.ReadFile(d.seedFile); err == nil {
+				seed = string(val)
+			}
+			if seed == "" {
+				return create()
+			}
 
-		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, payload)
+			url := fmt.Sprintf("https://%s/%s/", discoveryService, seed)
+			req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			req.Header.Set("Cache-Control", "no-cache")
+			resp, err := do(d.ctx, d.client(), req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to do request: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return &seed, nil
+			}
+			if resp.StatusCode != http.StatusNotFound {
+				return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			}
+
+			klog.Warningf("discovery: existing seed %s not found, creating new one", seed)
+			return create()
+		}
+
+		seed, err := getOrCreate()
 		if err != nil {
-			d.cancel(fmt.Errorf("failed to create request: %w", err))
+			d.cancel(err)
 			return
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := do(d.ctx, d.client(), req)
-		if err != nil {
-			d.cancel(fmt.Errorf("failed to do request: %w", err))
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated {
-			d.cancel(fmt.Errorf("unexpected status code: %d", resp.StatusCode))
-			return
-		}
-		location := resp.Header.Get("Location")
-		if location == "" {
-			d.cancel(fmt.Errorf("missing Location header"))
-			return
-		}
-		seed := strings.Trim(path.Base(location), "/")
-		d.seed = seed
-		err = os.WriteFile(d.seedFile, []byte(seed), 0o600)
+		err = os.WriteFile(d.seedFile, []byte(*seed), 0o600)
 		if err != nil {
 			klog.Errorf("discovery: failed to write seed file: %v", err)
 			d.cancel(fmt.Errorf("failed to write seed file: %w", err))
 			return
 		}
-		os.Setenv("NANOKUBE_SEED", seed)
-		klog.Infof("discovery: obtained seed bucket %s", seed)
+		klog.Infof("discovery: obtained seed %s", *seed)
+		os.Setenv("NANOKUBE_SEED", *seed)
+		d.seed = *seed
 	})
 	return d.seed
 }
 
-func (d *discoveryImpl) Peers() string {
-	url := fmt.Sprintf("https://%s/%s/?format=json&values=false", discoveryService, d.Seed())
-	klog.Infof("discovery: fetching peers from %s", url)
-	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, url, nil)
+func (d *discoveryImpl) Peers() types.URLsMap {
+	peers := types.URLsMap{
+		d.Tunnel().Hostname(): []url.URL{{
+			Scheme: "https",
+			Host:   net.JoinHostPort(d.Tunnel().Hostname(), strconv.Itoa(d.Tunnel().Port())),
+		}},
+	}
+	payload := url.Values{}
+	payload.Set("prefix", "peer:")
+	payload.Set("format", "json")
+	payload.Set("values", "false")
+	endpoint := fmt.Sprintf("https://%s/%s/?%s", discoveryService, d.Seed(), payload.Encode())
+
+	klog.Infof("discovery: fetching peers for seed %s", d.Seed())
+	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		d.cancel(fmt.Errorf("failed to create request: %w", err))
-		return ""
+		return peers
 	}
 	req.Header.Set("Cache-Control", "no-cache")
 	resp, err := do(d.ctx, d.client(), req)
 	if err != nil {
-		d.cancel(fmt.Errorf("failed to do request: %w", err))
-		return ""
+		return peers
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		d.cancel(fmt.Errorf("unexpected status code: %d", resp.StatusCode))
-		return ""
+		return peers
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		d.cancel(fmt.Errorf("failed to read response body: %w", err))
-		return ""
+		return peers
 	}
-	klog.Infof("discovery: peers raw body %s", body)
-	var hostnames []string
-	if err := json.Unmarshal(body, &hostnames); err != nil {
-		d.cancel(fmt.Errorf("failed to decode response body: %w", err))
-		return ""
+	var values []string
+	if err := json.Unmarshal(body, &values); err != nil {
+		return peers
 	}
-	if len(hostnames) == 0 {
-		d.cancel(fmt.Errorf("no peers found"))
-		return ""
+	if len(values) == 0 {
+		return peers
 	}
-	peers := strings.Join(hostnames, ",")
-	klog.Infof("discovery: peers %s", peers)
+	for _, value := range values {
+		peer := strings.TrimPrefix(value, "peer:")
+		// Only accept peers registered with an explicit port; skip the rest.
+		host, _, err := net.SplitHostPort(peer)
+		if err != nil {
+			continue
+		}
+		// Key by the bare host (the etcd member name) with the port in the URL.
+		// Our own registration collapses onto the self entry above instead of
+		// adding a second key with the same URL.
+		peers[host] = []url.URL{{Scheme: "https", Host: peer}}
+	}
 	return peers
 }
 

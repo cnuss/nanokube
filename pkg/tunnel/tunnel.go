@@ -45,12 +45,16 @@ type Tunnel interface {
 	LocalHost() string
 	LocalURL() *url.URL
 
+	Host() string
 	Hostname() string
 	Domain() string
+	Port() int
 	URL() *url.URL
 	CACerts() []*x509.Certificate
+	Spec() *Spec
 
 	WithListener(listener net.Listener) Tunnel
+	Listener() net.Listener
 	Listening() <-chan struct{}
 	HostnameReady() <-chan struct{}
 }
@@ -74,7 +78,7 @@ type TunnelImpl struct {
 	__localURL__ *url.URL
 
 	specOnce sync.Once
-	__spec__ *spec
+	__spec__ *Spec
 
 	hostnameOnce sync.Once
 	__hostname__ string
@@ -85,6 +89,10 @@ type TunnelImpl struct {
 	listeningOnce sync.Once
 	__listening__ chan struct{}
 
+	listenerOnce         sync.Once
+	__listener__         net.Listener
+	__listenerProvided__ chan struct{}
+
 	hostnameReadyOnce sync.Once
 	__hostnameReady__ chan struct{}
 
@@ -92,7 +100,7 @@ type TunnelImpl struct {
 	__url__ *url.URL
 }
 
-type spec struct {
+type Spec struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Hostname   string `json:"hostname"`
@@ -138,11 +146,12 @@ func NewTunnel() Tunnel {
 	log := zerolog.New(klogWriter{}).With().Str("component", "tunnel").Logger()
 
 	t := &TunnelImpl{
-		ctx:               ctx,
-		cancel:            cancel,
-		log:               &log,
-		__listening__:     make(chan struct{}),
-		__hostnameReady__: make(chan struct{}),
+		ctx:                  ctx,
+		cancel:               cancel,
+		log:                  &log,
+		__listening__:        make(chan struct{}),
+		__listenerProvided__: make(chan struct{}),
+		__hostnameReady__:    make(chan struct{}),
 	}
 
 	// If a resolved spec was inherited via the environment (e.g. across the
@@ -150,7 +159,7 @@ func NewTunnel() Tunnel {
 	// tunnel reuses the exact same hostname/credentials instead of resolving a
 	// second trycloudflare tunnel.
 	if env := os.Getenv("TUNNEL_SPEC"); env != "" {
-		var s spec
+		var s Spec
 		if err := json.Unmarshal([]byte(env), &s); err != nil {
 			log.Error().Err(err).Msg("unable to parse TUNNEL_SPEC from environment")
 		} else {
@@ -224,7 +233,7 @@ func (t *TunnelImpl) LocalURL() *url.URL {
 		t.__localURL__ = &url.URL{
 			Scheme: "https",
 			Host:   net.JoinHostPort(t.LocalIP().String(), strconv.Itoa(t.LocalPort())),
-			// Path:   "/", // TODO(partial): etcd hates the path component
+			Path:   "/",
 		}
 	})
 	return t.__localURL__
@@ -232,16 +241,34 @@ func (t *TunnelImpl) LocalURL() *url.URL {
 
 func (t *TunnelImpl) Hostname() string {
 	t.hostnameOnce.Do(func() {
-		t.__hostname__ = t.spec().Hostname
+		t.__hostname__ = t.Spec().Hostname
 		os.Setenv("TUNNEL_HOSTNAME", t.__hostname__)
 	})
 	return t.__hostname__
+}
+
+func (t *TunnelImpl) Host() string {
+	hostname := t.Hostname()
+	host, _, _ := strings.Cut(hostname, ".")
+	return host
 }
 
 func (t *TunnelImpl) Domain() string {
 	hostname := t.Hostname()
 	_, domain, _ := strings.Cut(hostname, ".")
 	return domain
+}
+
+func (t *TunnelImpl) Port() int {
+	_, port, err := net.SplitHostPort(t.Hostname())
+	if err != nil {
+		return 443
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return 443
+	}
+	return p
 }
 
 func (t *TunnelImpl) URL() *url.URL {
@@ -294,6 +321,11 @@ func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
 			return
 		}
 
+		t.listenerOnce.Do(func() {
+			t.__listener__ = listener
+			close(t.__listenerProvided__)
+		})
+
 		go func() {
 			t.log.Info().Msg("starting tunnel with local listener")
 			promMu.Lock()
@@ -307,7 +339,7 @@ func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
 
 			tunnelConfig := &supervisor.TunnelConfig{
 				ClientConfig: func() *client.Config {
-					featureSelector, _ := features.NewFeatureSelector(t.ctx, t.spec().AccountTag, nil, false, t.log)
+					featureSelector, _ := features.NewFeatureSelector(t.ctx, t.Spec().AccountTag, nil, false, t.log)
 					cfg, _ := client.NewConfig(cloudflaredVersion, fmt.Sprintf("%s_%s", runtime.GOOS, runtime.GOARCH), featureSelector)
 					return cfg
 				}(),
@@ -315,7 +347,7 @@ func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
 				Region:          "",
 				EdgeIPVersion:   allregions.Auto,
 				HAConnections:   1,
-				Tags:            []pogs.Tag{{Name: "ID", Value: t.spec().ID}}, // TODO(experimental): reuse tunnel ID as connector ID; cloudflared normally generates a fresh UUID per process
+				Tags:            []pogs.Tag{{Name: "ID", Value: t.Spec().ID}}, // TODO(experimental): reuse tunnel ID as connector ID; cloudflared normally generates a fresh UUID per process
 				Log:             t.log,
 				LogTransport:    t.log,
 				Observer:        connection.NewObserver(t.log, t.log),
@@ -323,18 +355,18 @@ func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
 				Retries:         5,
 				RunFromTerminal: false,
 				NamedTunnel: func() *connection.TunnelProperties {
-					tunnelID, _ := uuid.Parse(t.spec().ID)
+					tunnelID, _ := uuid.Parse(t.Spec().ID)
 					return &connection.TunnelProperties{
 						Credentials: connection.Credentials{
-							AccountTag:   t.spec().AccountTag,
-							TunnelSecret: t.spec().Secret,
+							AccountTag:   t.Spec().AccountTag,
+							TunnelSecret: t.Spec().Secret,
 							TunnelID:     tunnelID,
 						},
 						QuickTunnelUrl: t.Hostname(),
 					}
 				}(),
 				ProtocolSelector: func() connection.ProtocolSelector {
-					protocolSelector, _ := connection.NewProtocolSelector("auto", t.spec().AccountTag, false, false, edgediscovery.ProtocolPercentage, connection.ResolveTTL, t.log)
+					protocolSelector, _ := connection.NewProtocolSelector("auto", t.Spec().AccountTag, false, false, edgediscovery.ProtocolPercentage, connection.ResolveTTL, t.log)
 					return protocolSelector
 				}(),
 				EdgeTLSConfigs: func() map[connection.Protocol]*tls.Config {
@@ -462,15 +494,20 @@ func (t *TunnelImpl) HostnameReady() <-chan struct{} {
 	return t.__hostnameReady__
 }
 
+func (t *TunnelImpl) Listener() net.Listener {
+	<-await(t.ctx, t.__listenerProvided__)
+	return t.__listener__
+}
+
 func (t *TunnelImpl) Listening() <-chan struct{} {
 	return t.__listening__
 }
 
-func (t *TunnelImpl) spec() *spec {
+func (t *TunnelImpl) Spec() *Spec {
 	t.specOnce.Do(func() {
 		t.log.Info().Msg("fetching tunnel spec")
 		if env := os.Getenv("TUNNEL_SPEC"); env != "" {
-			var spec spec
+			var spec Spec
 			if err := json.Unmarshal([]byte(env), &spec); err != nil {
 				t.cancel(fmt.Errorf("unable to parse TUNNEL_SPEC: %w", err))
 				return
@@ -489,7 +526,7 @@ func (t *TunnelImpl) spec() *spec {
 			Timeout: 15 * time.Second,
 		}
 
-		fetch := func() (*spec, error) {
+		fetch := func() (*Spec, error) {
 			req, err := http.NewRequest(http.MethodPost, "https://api.trycloudflare.com/tunnel", nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create request: %w", err)
@@ -526,7 +563,7 @@ func (t *TunnelImpl) spec() *spec {
 					Code    int    `json:"code"`
 					Message string `json:"message"`
 				} `json:"errors"`
-				Result spec `json:"result"`
+				Result Spec `json:"result"`
 			}
 
 			var data response
@@ -539,7 +576,7 @@ func (t *TunnelImpl) spec() *spec {
 				for _, e := range data.Errors {
 					errorMessages = append(errorMessages, fmt.Sprintf("%d: %s", e.Code, e.Message))
 				}
-				return nil, fmt.Errorf("tunnel credential request failed: %s", strings.Join(errorMessages, "; "))
+				return nil, fmt.Errorf("tunnel credentials request failed: %s", strings.Join(errorMessages, "; "))
 			}
 			return &data.Result, nil
 		}
