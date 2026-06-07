@@ -149,6 +149,18 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 	run.SetContext(c.Nano())
 	c.Command.AddCommand(run)
 
+	seed := &cobra.Command{
+		Use:   "seed",
+		Short: "Get or create the seed for this cluster",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			seed := c.Nano().Discovery().Seed()
+			fmt.Println(seed)
+			return nil
+		},
+	}
+	seed.SetContext(c.Nano())
+	c.Command.AddCommand(seed)
+
 	// export mirrors `kind export logs <dir>`: copy nanokube's daemon log
 	// (managed by daemonize) into a directory for CI artifact upload.
 	export := &cobra.Command{

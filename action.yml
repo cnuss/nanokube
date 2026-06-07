@@ -9,13 +9,22 @@ inputs:
     description: "klog verbosity level passed to nanokube start (-v)"
     required: false
     default: "0"
+  seed:
+    description: "Reuse an existing cluster seed (sets NANOKUBE_SEED). If empty, a new seed is created."
+    required: false
+    default: ""
+outputs:
+  seed:
+    description: "The discovery seed for this cluster"
+    value: ${{ steps.seed.outputs.seed }}
 runs:
   using: "composite"
   steps:
     # Derive the repo (owner/name) and version (ref) from the path GitHub
     # checked this action out to, so nothing is hardcoded if the repo moves.
     #   GITHUB_ACTION_PATH = .../_actions/<owner>/<repo>/<ref>
-    - id: resolve
+    - name: Resolve repo and version
+      id: resolve
       shell: bash
       run: |
         rest=${GITHUB_ACTION_PATH##*/_actions/}   # <owner>/<repo>/<ref>
@@ -36,7 +45,8 @@ runs:
     # and branch refs resolve to a release: tags to the versioned release, and
     # branches to a rolling prerelease named after the branch.
     #   https://github.com/<repo>/releases/download/<version>/nanokube-<version>-<OS>-<ARCH>
-    - id: install
+    - name: Install nanokube
+      id: install
       shell: bash
       run: |
         repo="${{ steps.resolve.outputs.repo }}"
@@ -52,11 +62,34 @@ runs:
         echo "$bindir" >> "$GITHUB_PATH"
         "$bindir/nanokube" --version
 
-    - id: start
+    - name: Resolve cluster seed
+      id: seed
       shell: bash
       run: |
-        args=""
-        if [ "${{ inputs.verbosity }}" != "0" ]; then
-          args="-v=${{ inputs.verbosity }}"
+        if [ -n "${{ inputs.seed }}" ]; then
+          export NANOKUBE_SEED="${{ inputs.seed }}"
+          echo "NANOKUBE_SEED=$NANOKUBE_SEED" >> "$GITHUB_ENV"
         fi
+        seed="$(nanokube seed)"
+        # Mask the seed in logs unless step debug logging is on (RUNNER_DEBUG=1),
+        # so it stays visible when someone is actively debugging the run.
+        if [ "$RUNNER_DEBUG" != "1" ]; then
+          echo "::add-mask::$seed"
+        fi
+        echo "seed=$seed" >> "$GITHUB_OUTPUT"
+
+    - name: Start nanokube
+      id: start
+      shell: bash
+      run: |
+        verbosity="${{ inputs.verbosity }}"
+        # Bump verbosity when step debug logging is on (RUNNER_DEBUG=1).
+        if [ "$RUNNER_DEBUG" = "1" ]; then
+          verbosity=$((verbosity + 2))
+        fi
+        args=""
+        if [ "$verbosity" != "0" ]; then
+          args="-v=$verbosity"
+        fi
+
         nanokube start $args

@@ -80,7 +80,7 @@ func (d *discoveryImpl) client() *http.Client {
 
 func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 	d.tunnelOnce.Do(func() {
-		klog.Infof("discovery: registering tunnel %s with discovery service", tunnel.Hostname())
+		klog.V(2).Infof("discovery: registering tunnel %s with discovery service", tunnel.Hostname())
 		payload, err := json.Marshal(tunnel.Spec())
 		if err != nil {
 			d.cancel(fmt.Errorf("failed to marshal tunnel spec: %w", err))
@@ -119,7 +119,7 @@ func (d *discoveryImpl) Tunnel() tunnel.Tunnel {
 func (d *discoveryImpl) Seed() string {
 	d.seedOnce.Do(func() {
 		create := func() (*string, error) {
-			klog.Infof("discovery: registering with discovery service %s", discoveryService)
+			klog.V(2).Infof("discovery: registering with discovery service %s", discoveryService)
 
 			os.Setenv("NANOKUBE_SEED", "")
 			err := os.Remove(d.seedFile)
@@ -196,7 +196,7 @@ func (d *discoveryImpl) Seed() string {
 			d.cancel(fmt.Errorf("failed to write seed file: %w", err))
 			return
 		}
-		klog.Infof("discovery: obtained seed %s", *seed)
+		klog.V(2).Infof("discovery: obtained seed %s", *seed)
 		os.Setenv("NANOKUBE_SEED", *seed)
 		d.seed = *seed
 	})
