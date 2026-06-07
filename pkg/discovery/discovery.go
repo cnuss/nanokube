@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
@@ -32,7 +34,10 @@ type Discovery interface {
 	Peers() types.URLsMap
 
 	WithTunnel(tunnel tunnel.Tunnel) Discovery
+	WithoutTunnel(tunnel tunnel.Tunnel) Discovery
 	Tunnel() tunnel.Tunnel
+
+	Shutdown()
 }
 
 type discoveryImpl struct {
@@ -49,6 +54,8 @@ type discoveryImpl struct {
 
 	seed     string
 	seedOnce sync.Once
+
+	shutdownOnce sync.Once
 }
 
 // NewDiscovery builds a Discovery bound to ctx. cancel is the parent's
@@ -62,7 +69,32 @@ func NewDiscovery(ctx context.Context, cancel context.CancelCauseFunc, seedFile 
 		seedFile:       seedFile,
 		tunnelProvided: make(chan struct{}),
 	}
+
+	// Run Shutdown (e.g. to deregister this node from discovery) on SIGINT/SIGTERM
+	// or when the provided ctx is done. Shutdown is once-guarded, so either
+	// trigger runs it exactly once.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		defer signal.Stop(sig)
+		select {
+		case <-sig:
+		case <-ctx.Done():
+		}
+		discovery.Shutdown()
+	}()
+
 	return discovery
+}
+
+// Shutdown releases discovery resources on process termination. Empty for now;
+// will deregister this node's peer entry from the discovery service.
+func (d *discoveryImpl) Shutdown() {
+	d.shutdownOnce.Do(func() {
+		// Deregister this node's peer entry. WithoutTunnel no-ops if no tunnel
+		// was ever registered (d.tunnel nil / tunnelOnce never fired).
+		d.WithoutTunnel(d.tunnel)
+	})
 }
 
 func (d *discoveryImpl) client() *http.Client {
@@ -87,27 +119,71 @@ func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 			return
 		}
 
-		host := net.JoinHostPort(tunnel.Hostname(), strconv.Itoa(tunnel.Port()))
-		url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), host)
+		go func() {
+			hostname := tunnel.URL().Hostname() // DEVNOTE: blocks until tunnel is up
+			host := net.JoinHostPort(hostname, strconv.Itoa(tunnel.Port()))
+			url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), host)
 
-		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			d.cancel(fmt.Errorf("failed to create request: %w", err))
-			return
-		}
-		resp, err := do(d.ctx, d.client(), req)
-		if err != nil {
-			d.cancel(fmt.Errorf("failed to do request: %w", err))
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			d.cancel(fmt.Errorf("unexpected status code: %d", resp.StatusCode))
-			return
-		}
+			req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
+			if err != nil {
+				d.cancel(fmt.Errorf("failed to create request: %w", err))
+				return
+			}
+			resp, err := do(d.ctx, d.client(), req)
+			if err != nil {
+				d.cancel(fmt.Errorf("failed to do request: %w", err))
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				d.cancel(fmt.Errorf("unexpected status code: %d", resp.StatusCode))
+				return
+			}
+		}()
 		d.tunnel = tunnel
 		close(d.tunnelProvided)
 	})
+	return d
+}
+
+// WithoutTunnel deregisters the tunnel's peer entry from the discovery service.
+// No-op if the argument is nil or no tunnel was ever registered (tunnelOnce
+// never fired). Uses a detached context so it still runs during shutdown when
+// d.ctx is already cancelled.
+func (d *discoveryImpl) WithoutTunnel(tunnel tunnel.Tunnel) Discovery {
+	if tunnel == nil {
+		return d
+	}
+	select {
+	case <-d.tunnelProvided:
+	default:
+		// tunnelOnce never completed — nothing was registered.
+		return d
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	host := net.JoinHostPort(tunnel.Hostname(), strconv.Itoa(tunnel.Port()))
+	url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), host)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		klog.Errorf("discovery: deregister tunnel %s: create request: %v", tunnel.Hostname(), err)
+		return d
+	}
+	resp, err := do(ctx, d.client(), req)
+	if err != nil {
+		klog.Errorf("discovery: deregister tunnel %s: %v", tunnel.Hostname(), err)
+		return d
+	}
+	defer resp.Body.Close()
+	// kvdb.io deletes are async and return 202 Accepted, not 200; accept any 2xx.
+	if resp.StatusCode/100 != 2 {
+		klog.Errorf("discovery: deregister tunnel %s: unexpected status code: %d", tunnel.Hostname(), resp.StatusCode)
+		return d
+	}
+	klog.V(2).Infof("discovery: deregistered tunnel %s from discovery service", tunnel.Hostname())
 	return d
 }
 
@@ -181,7 +257,7 @@ func (d *discoveryImpl) Seed() string {
 				return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 			}
 
-			klog.Warningf("discovery: existing seed %s not found, creating new one", seed)
+			klog.V(2).Infof("discovery: existing seed %s not found, creating new one", seed)
 			return create()
 		}
 

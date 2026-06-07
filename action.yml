@@ -71,11 +71,10 @@ runs:
           echo "NANOKUBE_SEED=$NANOKUBE_SEED" >> "$GITHUB_ENV"
         fi
         seed="$(nanokube seed)"
-        # Mask the seed in logs unless step debug logging is on (RUNNER_DEBUG=1),
-        # so it stays visible when someone is actively debugging the run.
-        if [ "$RUNNER_DEBUG" != "1" ]; then
-          echo "::add-mask::$seed"
-        fi
+        # TODO(re-enable masking): temporarily unmasked so the storage seed is
+        # visible in logs while debugging multi-node bootstrap. Restore:
+        #   if [ "$RUNNER_DEBUG" != "1" ]; then echo "::add-mask::$seed"; fi
+        echo "seed=$seed"
         echo "seed=$seed" >> "$GITHUB_OUTPUT"
 
     - name: Start nanokube
