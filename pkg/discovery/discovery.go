@@ -108,7 +108,10 @@ func (d *discoveryImpl) Tunnel() tunnel.Tunnel {
 
 func (d *discoveryImpl) Seed() string {
 	d.seedOnce.Do(func() {
-		// TODO: switch to datadir
+		if seed := os.Getenv("NANOKUBE_SEED"); seed != "" {
+			d.seed = seed
+			return
+		}
 		if data, err := os.ReadFile(d.seedFile); err == nil {
 			d.seed = string(data)
 			return
@@ -147,6 +150,7 @@ func (d *discoveryImpl) Seed() string {
 			d.cancel(fmt.Errorf("failed to write seed file: %w", err))
 			return
 		}
+		os.Setenv("NANOKUBE_SEED", seed)
 		klog.Infof("discovery: obtained seed bucket %s", seed)
 	})
 	return d.seed
