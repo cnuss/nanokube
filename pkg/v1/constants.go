@@ -39,6 +39,7 @@ var (
 	KeyFile              FileName = FileName(filepath.Join(string(DataDirCerts), "apiserver.key"))
 	KubeconfigFile       FileName = FileName(filepath.Join(string(DataDirKube), "config"))
 	MachineIDFile        FileName = "machine-id"
+	SeedFile             FileName = ".seed"
 
 	NetworkHost        NetworkType = "host"
 	NetworkBridge      NetworkType = "bridge"

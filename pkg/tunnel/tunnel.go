@@ -43,6 +43,7 @@ type Tunnel interface {
 	LocalIP() net.IP
 	LocalPort() int
 	LocalHost() string
+	LocalURL() *url.URL
 
 	Hostname() string
 	Domain() string
@@ -68,6 +69,9 @@ type TunnelImpl struct {
 
 	localPortOnce sync.Once
 	__localPort__ int
+
+	localURLOnce sync.Once
+	__localURL__ *url.URL
 
 	specOnce sync.Once
 	__spec__ *spec
@@ -213,6 +217,17 @@ func (t *TunnelImpl) LocalHost() string {
 		t.log.Info().Str("localHost", t.__localHost__).Msg("determined local hostname for tunnel")
 	})
 	return t.__localHost__
+}
+
+func (t *TunnelImpl) LocalURL() *url.URL {
+	t.localURLOnce.Do(func() {
+		t.__localURL__ = &url.URL{
+			Scheme: "https",
+			Host:   net.JoinHostPort(t.LocalIP().String(), strconv.Itoa(t.LocalPort())),
+			// Path:   "/", // TODO(partial): etcd hates the path component
+		}
+	})
+	return t.__localURL__
 }
 
 func (t *TunnelImpl) Hostname() string {

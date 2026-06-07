@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/cnuss/nanokube/pkg/discovery"
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
 	kineserver "github.com/k3s-io/kine/pkg/server"
@@ -72,6 +73,8 @@ type Nanokube interface {
 	NodeReady() <-chan struct{}
 	NodeRef() *corev1.ObjectReference
 	MachineID() string
+
+	Discovery() discovery.Discovery
 
 	Storage() Storage
 	SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory
@@ -255,8 +258,8 @@ type Storage interface {
 
 	Client() StorageClient
 
-	WithTunnel(tunnel tunnel.Tunnel) Storage
-	Tunnel() tunnel.Tunnel
+	WithDiscovery(discovery discovery.Discovery) Storage
+	Discovery() discovery.Discovery
 	WithTransport(cfg storagebackend.TransportConfig) Storage
 	WithServerConfig(config *server.Config) Storage
 	ServerConfig() *server.Config

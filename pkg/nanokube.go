@@ -17,6 +17,7 @@ import (
 	"time"
 	_ "unsafe"
 
+	"github.com/cnuss/nanokube/pkg/discovery"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/storage"
 	"github.com/cnuss/nanokube/pkg/tunnel"
@@ -98,6 +99,9 @@ type nanokubeImpl struct {
 
 	host     v1.Host
 	hostOnce sync.Once
+
+	discovery     discovery.Discovery
+	discoveryOnce sync.Once
 
 	storage     v1.Storage
 	storageOnce sync.Once
@@ -201,12 +205,15 @@ var FeatureGates = map[string]bool{
 	string(features.ExtendWebSocketsToKubelet): false,
 }
 
+func (k *nanokubeImpl) Discovery() discovery.Discovery {
+	k.discoveryOnce.Do(func() {
+		k.discovery = discovery.NewDiscovery(k.ctx, k.CancelErr, k.Options().FilePathAt(v1.SeedFile)).WithTunnel(k.Tunnel())
+	})
+	return k.discovery
+}
+
 func (k *nanokubeImpl) Storage() v1.Storage {
-	// k.storageOnce.Do(func() {
-	// 	k.storage = nanokube.NewStorage()
-	// })
-	// return k.storage
-	return storage.StorageRef().WithTunnel(k.Tunnel())
+	return storage.StorageRef().WithDiscovery(k.Discovery())
 }
 
 func (k *nanokubeImpl) SetSharedInformerFactory(factory informers.SharedInformerFactory) informers.SharedInformerFactory {
@@ -442,6 +449,7 @@ func (k *nanokubeImpl) CancelErr(reason error) {
 }
 
 func (k *nanokubeImpl) Cancel(reason v1.Error) {
+	klog.Warningf("nanokube cancel: %v", reason)
 	k.cancelErrsMu.Lock()
 	k.cancelErrs = append(k.cancelErrs, reason)
 	k.cancelErrsMu.Unlock()
@@ -454,6 +462,15 @@ func (k *nanokubeImpl) Cancel(reason v1.Error) {
 	k.cancel(reason)
 	var fatal v1.Error
 	if errors.As(reason, &fatal) {
+		// TODO(swallowed-cancel): runtime.Goexit only unwinds the calling
+		// goroutine. When a fatal cancel fires on a side goroutine (e.g. the
+		// apiserver storage prober, or inside a sync.Once.Do), this kills that
+		// goroutine silently — the process keeps running and the cause set on
+		// k.ctx is never observed (the run loop waits on cobra/genericapiserver's
+		// stop channel, not k.ctx.Done()). Worse, Goexit inside a Once marks it
+		// done, publishing a half-built object to other waiters. Make fatal
+		// cancellation actually terminate the process: have the main run loop
+		// select on k.ctx.Done() and exit with Errors(), or os.Exit here.
 		runtime.Goexit()
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"time"
 	_ "unsafe"
 
-	"github.com/cnuss/nanokube/pkg/tunnel"
+	"github.com/cnuss/nanokube/pkg/discovery"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/k3s-io/kine/pkg/drivers"
 	"github.com/k3s-io/kine/pkg/drivers/sqlite"
@@ -49,9 +49,14 @@ func init() {
 		panic("storage: newETCD3Client linkname target is nil; kubernetes factory internals changed")
 	}
 	newETCD3Client = func(cfg storagebackend.TransportConfig) (*kubernetes.Client, error) {
-		kubernetes := StorageRef().WithTransport(cfg).Client().Kubernetes()
+		ref := StorageRef().WithTransport(cfg)
+		client := ref.Client()
+		if client == nil {
+			return nil, fmt.Errorf("embedded etcd client unavailable: %w", context.Cause(ref.(*StorageImpl).ctx))
+		}
+		kubernetes := client.Kubernetes()
 		if kubernetes == nil {
-			return nil, fmt.Errorf("embedded etcd client unavailable")
+			return nil, fmt.Errorf("embedded etcd client unavailable: %w", context.Cause(ref.(*StorageImpl).ctx))
 		}
 		return kubernetes, nil
 	}
@@ -78,9 +83,9 @@ type StorageImpl struct {
 	sqliteOnce   sync.Once
 	sqliteBridge *kine.KVServerBridge
 
-	tunnelOnce     sync.Once
-	tunnel         tunnel.Tunnel
-	tunnelProvided chan struct{}
+	discoveryOnce     sync.Once
+	discovery         discovery.Discovery
+	discoveryProvided chan struct{}
 
 	transport         storagebackend.TransportConfig
 	transportOnce     sync.Once
@@ -103,7 +108,7 @@ func StorageRef() v1.Storage {
 		storage = &StorageImpl{
 			ctx:                  ctx,
 			cancel:               cancel,
-			tunnelProvided:       make(chan struct{}),
+			discoveryProvided:    make(chan struct{}),
 			transportProvided:    make(chan struct{}),
 			serverConfigProvided: make(chan struct{}),
 		}
@@ -139,17 +144,17 @@ func (s *StorageImpl) Client() v1.StorageClient {
 	return s.client
 }
 
-func (s *StorageImpl) WithTunnel(tunnel tunnel.Tunnel) v1.Storage {
-	s.tunnelOnce.Do(func() {
-		s.tunnel = tunnel
-		close(s.tunnelProvided)
+func (s *StorageImpl) WithDiscovery(discovery discovery.Discovery) v1.Storage {
+	s.discoveryOnce.Do(func() {
+		s.discovery = discovery
+		close(s.discoveryProvided)
 	})
 	return s
 }
 
-func (s *StorageImpl) Tunnel() tunnel.Tunnel {
-	await(s.ctx, s.tunnelProvided)
-	return s.tunnel
+func (s *StorageImpl) Discovery() discovery.Discovery {
+	await(s.ctx, s.discoveryProvided)
+	return s.discovery
 }
 
 func (s *StorageImpl) WithTransport(cfg storagebackend.TransportConfig) v1.Storage {
@@ -218,12 +223,17 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			zapcore.FatalLevel,
 		))
 
+		peers := s.Discovery().Peers()
+		klog.InfoS("etcd: discovery peers", "peers", peers)
+
 		cfg := embed.NewConfig()
-		cfg.Name = s.Tunnel().Hostname()
+		cfg.Name = s.Discovery().Tunnel().Hostname()
 		cfg.Dir = dataDir
 		cfg.ListenClientUrls = s.ClientURLs()
 		cfg.AdvertiseClientUrls = s.ClientURLs()
-		cfg.ListenPeerUrls = []url.URL{*peerURL}
+		cfg.ListenPeerUrls = []url.URL{}
+		// cfg.AdvertisePeerUrls = []url.URL{*s.Discovery().Tunnel().LocalURL()}
+		// cfg.InitialCluster = cfg.Name + "=" + s.Discovery().Tunnel().LocalURL().String()
 		cfg.AdvertisePeerUrls = []url.URL{*peerURL}
 		cfg.InitialCluster = cfg.Name + "=" + peerURL.String()
 		cfg.AutoCompactionRetention = "0"
