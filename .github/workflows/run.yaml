@@ -1,0 +1,57 @@
+name: Run Nanokube
+
+on:
+  workflow_dispatch:
+    inputs:
+      verbosity:
+        description: "klog verbosity passed to nanokube start (-v)"
+        required: false
+        default: "0"
+      seed:
+        description: "Reuse an existing cluster seed (optional; empty creates a new one)"
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Run nanokube
+        id: nanokube
+        uses: cnuss/nanokube@1.36
+        with:
+          verbosity: ${{ inputs.verbosity }}
+          seed: ${{ inputs.seed }}
+
+      - name: Show seed
+        shell: bash
+        run: echo "seed=${{ steps.nanokube.outputs.seed }}"
+
+      - name: Wait for apiserver
+        shell: bash
+        run: |
+          # start daemonizes; the kubeconfig + apiserver come up a moment later,
+          # so poll readyz (kubectl fails until ~/.kube/config exists — that's fine).
+          for i in $(seq 1 60); do
+            if kubectl get --raw='/readyz' >/dev/null 2>&1; then
+              echo "apiserver ready"
+              break
+            fi
+            echo "waiting for apiserver... ($i)"
+            sleep 2
+          done
+          kubectl get --raw='/readyz?verbose' || true
+
+      - name: Cluster info
+        shell: bash
+        run: |
+          kubectl cluster-info
+          kubectl version
+          kubectl get nodes -o wide
+
+      - name: Cluster state
+        shell: bash
+        run: |
+          kubectl get namespaces
+          kubectl get pods -A
+          kubectl get all -A
