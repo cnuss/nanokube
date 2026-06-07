@@ -80,7 +80,7 @@ func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 	d.tunnelOnce.Do(func() {
 		klog.Infof("discovery: registering tunnel %s with discovery service", tunnel.Hostname())
 		payload := tunnel.LocalHost()
-		url := fmt.Sprintf("https://%s/%s/%s", discoveryService, d.Seed(), tunnel.Hostname())
+		url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), tunnel.Hostname())
 
 		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, strings.NewReader(payload))
 		if err != nil {
@@ -110,91 +110,134 @@ func (d *discoveryImpl) Tunnel() tunnel.Tunnel {
 
 func (d *discoveryImpl) Seed() string {
 	d.seedOnce.Do(func() {
-		if seed := os.Getenv("NANOKUBE_SEED"); seed != "" {
-			d.seed = seed
-			return
-		}
-		if data, err := os.ReadFile(d.seedFile); err == nil {
-			d.seed = string(data)
-			return
+		create := func() (*string, error) {
+			klog.Infof("discovery: registering with discovery service %s", discoveryService)
+
+			os.Setenv("NANOKUBE_SEED", "")
+			err := os.Remove(d.seedFile)
+			if err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("failed to remove seed file: %w", err)
+			}
+
+			url := fmt.Sprintf("https://%s", discoveryService)
+			payload := strings.NewReader(fmt.Sprintf("email=%s@nanokube.xyz", discoveryService))
+
+			req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, payload)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := do(d.ctx, d.client(), req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to do request: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusCreated {
+				return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			}
+			location := resp.Header.Get("Location")
+			if location == "" {
+				return nil, fmt.Errorf("missing Location header")
+			}
+			seed := strings.Trim(path.Base(location), "/")
+			return &seed, nil
 		}
 
-		url := fmt.Sprintf("https://%s", discoveryService)
-		payload := strings.NewReader(fmt.Sprintf("email=%s@nanokube.xyz", discoveryService))
+		getOrCreate := func() (*string, error) {
+			var seed string
+			if val := os.Getenv("NANOKUBE_SEED"); val != "" {
+				seed = val
+			}
+			if val, err := os.ReadFile(d.seedFile); err == nil {
+				seed = string(val)
+			}
+			if seed == "" {
+				return create()
+			}
 
-		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, payload)
+			url := fmt.Sprintf("https://%s/%s/", discoveryService, seed)
+			req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			req.Header.Set("Cache-Control", "no-cache")
+			resp, err := do(d.ctx, d.client(), req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to do request: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return &seed, nil
+			}
+			if resp.StatusCode != http.StatusNotFound {
+				return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			}
+
+			klog.Warningf("discovery: existing seed %s not found, creating new one", seed)
+			return create()
+		}
+
+		seed, err := getOrCreate()
 		if err != nil {
-			d.cancel(fmt.Errorf("failed to create request: %w", err))
+			d.cancel(err)
 			return
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := do(d.ctx, d.client(), req)
-		if err != nil {
-			d.cancel(fmt.Errorf("failed to do request: %w", err))
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated {
-			d.cancel(fmt.Errorf("unexpected status code: %d", resp.StatusCode))
-			return
-		}
-		location := resp.Header.Get("Location")
-		if location == "" {
-			d.cancel(fmt.Errorf("missing Location header"))
-			return
-		}
-		seed := strings.Trim(path.Base(location), "/")
-		d.seed = seed
-		err = os.WriteFile(d.seedFile, []byte(seed), 0o600)
+		err = os.WriteFile(d.seedFile, []byte(*seed), 0o600)
 		if err != nil {
 			klog.Errorf("discovery: failed to write seed file: %v", err)
 			d.cancel(fmt.Errorf("failed to write seed file: %w", err))
 			return
 		}
-		os.Setenv("NANOKUBE_SEED", seed)
-		klog.Infof("discovery: obtained seed bucket %s", seed)
+		klog.Infof("discovery: obtained seed %s", *seed)
+		os.Setenv("NANOKUBE_SEED", *seed)
+		d.seed = *seed
 	})
 	return d.seed
 }
 
 func (d *discoveryImpl) Peers() types.URLsMap {
-	urls := types.URLsMap{
+	peers := types.URLsMap{
 		d.Tunnel().Hostname(): []url.URL{*d.Tunnel().URL()},
 	}
-	endpoint := fmt.Sprintf("https://%s/%s/?format=json&values=false", discoveryService, d.Seed())
+	payload := url.Values{}
+	payload.Set("prefix", "peer:")
+	payload.Set("format", "json")
+	payload.Set("values", "false")
+	endpoint := fmt.Sprintf("https://%s/%s/?%s", discoveryService, d.Seed(), payload.Encode())
 	klog.Infof("discovery: fetching peers from %s", endpoint)
 	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return urls
+		return peers
 	}
 	req.Header.Set("Cache-Control", "no-cache")
 	resp, err := do(d.ctx, d.client(), req)
 	if err != nil {
-		return urls
+		return peers
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return urls
+		return peers
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return urls
+		return peers
 	}
-	var hostnames []string
-	if err := json.Unmarshal(body, &hostnames); err != nil {
-		return urls
+	var values []string
+	if err := json.Unmarshal(body, &values); err != nil {
+		return peers
 	}
-	if len(hostnames) == 0 {
-		return urls
+	if len(values) == 0 {
+		return peers
 	}
-	for _, hostname := range hostnames {
-		u, err := url.Parse(fmt.Sprintf("https://%s:443", hostname))
+	for _, value := range values {
+		peer := strings.TrimPrefix(value, "peer:")
+		u, err := url.Parse(fmt.Sprintf("https://%s:443", peer))
 		if err != nil {
 			continue
 		}
-		urls[hostname] = []url.URL{*u}
+		peers[peer] = []url.URL{*u}
 	}
-	return urls
+	return peers
 }
 
 func await[T any](ctx context.Context, ch <-chan T) <-chan struct{} {
