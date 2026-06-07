@@ -48,6 +48,7 @@ type Tunnel interface {
 	Host() string
 	Hostname() string
 	Domain() string
+	Port() int
 	URL() *url.URL
 	CACerts() []*x509.Certificate
 	Spec() *Spec
@@ -226,7 +227,7 @@ func (t *TunnelImpl) LocalURL() *url.URL {
 		t.__localURL__ = &url.URL{
 			Scheme: "https",
 			Host:   net.JoinHostPort(t.LocalIP().String(), strconv.Itoa(t.LocalPort())),
-			// Path:   "/", // TODO(partial): etcd hates the path component
+			Path:   "/",
 		}
 	})
 	return t.__localURL__
@@ -252,13 +253,25 @@ func (t *TunnelImpl) Domain() string {
 	return domain
 }
 
+func (t *TunnelImpl) Port() int {
+	_, port, err := net.SplitHostPort(t.Hostname())
+	if err != nil {
+		return 443
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return 443
+	}
+	return p
+}
+
 func (t *TunnelImpl) URL() *url.URL {
 	t.urlOnce.Do(func() {
 		hostname := t.Hostname()
 		<-await(t.ctx, t.HostnameReady())
 		t.__url__ = &url.URL{
 			Scheme: "https",
-			Host:   hostname + ":443",
+			Host:   hostname,
 			Path:   "/",
 		}
 	})

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -86,7 +87,8 @@ func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 			return
 		}
 
-		url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), tunnel.Hostname())
+		host := net.JoinHostPort(tunnel.Hostname(), strconv.Itoa(tunnel.Port()))
+		url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), host)
 
 		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
 		if err != nil {
@@ -203,7 +205,10 @@ func (d *discoveryImpl) Seed() string {
 
 func (d *discoveryImpl) Peers() types.URLsMap {
 	peers := types.URLsMap{
-		d.Tunnel().Hostname(): []url.URL{*d.Tunnel().URL()},
+		d.Tunnel().Hostname(): []url.URL{{
+			Scheme: "https",
+			Host:   net.JoinHostPort(d.Tunnel().Hostname(), strconv.Itoa(d.Tunnel().Port())),
+		}},
 	}
 	payload := url.Values{}
 	payload.Set("prefix", "peer:")
@@ -238,11 +243,11 @@ func (d *discoveryImpl) Peers() types.URLsMap {
 	}
 	for _, value := range values {
 		peer := strings.TrimPrefix(value, "peer:")
-		u, err := url.Parse(fmt.Sprintf("https://%s:443", peer))
-		if err != nil {
+		// Only accept peers registered with an explicit port; skip the rest.
+		if _, _, err := net.SplitHostPort(peer); err != nil {
 			continue
 		}
-		peers[peer] = []url.URL{*u}
+		peers[peer] = []url.URL{{Scheme: "https", Host: peer}}
 	}
 	return peers
 }
