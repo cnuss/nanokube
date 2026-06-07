@@ -304,6 +304,7 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 			s.cancel(fmt.Errorf("embed: new server: %w", err))
 			return
 		}
+
 		srv.Start()
 
 		go func() {

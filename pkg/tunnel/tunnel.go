@@ -54,6 +54,7 @@ type Tunnel interface {
 	Spec() *Spec
 
 	WithListener(listener net.Listener) Tunnel
+	Listener() net.Listener
 	Listening() <-chan struct{}
 	HostnameReady() <-chan struct{}
 }
@@ -87,6 +88,10 @@ type TunnelImpl struct {
 
 	listeningOnce sync.Once
 	__listening__ chan struct{}
+
+	listenerOnce         sync.Once
+	__listener__         net.Listener
+	__listenerProvided__ chan struct{}
 
 	hostnameReadyOnce sync.Once
 	__hostnameReady__ chan struct{}
@@ -144,8 +149,9 @@ func NewTunnel() Tunnel {
 		ctx:               ctx,
 		cancel:            cancel,
 		log:               &log,
-		__listening__:     make(chan struct{}),
-		__hostnameReady__: make(chan struct{}),
+		__listening__:        make(chan struct{}),
+		__listenerProvided__: make(chan struct{}),
+		__hostnameReady__:    make(chan struct{}),
 	}
 
 	// If a resolved spec was inherited via the environment (e.g. across the
@@ -315,6 +321,11 @@ func (t *TunnelImpl) WithListener(listener net.Listener) Tunnel {
 			return
 		}
 
+		t.listenerOnce.Do(func() {
+			t.__listener__ = listener
+			close(t.__listenerProvided__)
+		})
+
 		go func() {
 			t.log.Info().Msg("starting tunnel with local listener")
 			promMu.Lock()
@@ -481,6 +492,11 @@ func (t *TunnelImpl) HostnameReady() <-chan struct{} {
 		}()
 	})
 	return t.__hostnameReady__
+}
+
+func (t *TunnelImpl) Listener() net.Listener {
+	<-await(t.ctx, t.__listenerProvided__)
+	return t.__listener__
 }
 
 func (t *TunnelImpl) Listening() <-chan struct{} {
