@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -79,10 +80,15 @@ func (d *discoveryImpl) client() *http.Client {
 func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 	d.tunnelOnce.Do(func() {
 		klog.Infof("discovery: registering tunnel %s with discovery service", tunnel.Hostname())
-		payload := tunnel.LocalHost()
+		payload, err := json.Marshal(tunnel.Spec())
+		if err != nil {
+			d.cancel(fmt.Errorf("failed to marshal tunnel spec: %w", err))
+			return
+		}
+
 		url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), tunnel.Hostname())
 
-		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, strings.NewReader(payload))
+		req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
 		if err != nil {
 			d.cancel(fmt.Errorf("failed to create request: %w", err))
 			return
@@ -204,7 +210,8 @@ func (d *discoveryImpl) Peers() types.URLsMap {
 	payload.Set("format", "json")
 	payload.Set("values", "false")
 	endpoint := fmt.Sprintf("https://%s/%s/?%s", discoveryService, d.Seed(), payload.Encode())
-	klog.Infof("discovery: fetching peers from %s", endpoint)
+
+	klog.Infof("discovery: fetching peers for seed %s", d.Seed())
 	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return peers

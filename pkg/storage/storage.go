@@ -209,7 +209,7 @@ func (s *StorageImpl) sqliteEtcd(dataDir string) *kine.KVServerBridge {
 		}
 
 		s.sqliteBridge = kine.New(backend, "unix", 5*time.Second, "3.6.11")
-		klog.InfoS("storage is ready", "backend", "sqlite", "path", dsn)
+		klog.Infof("storage: sqlite backend is ready at %s", dsn)
 	})
 	return s.sqliteBridge
 }
@@ -223,7 +223,7 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 		))
 
 		peers := s.Discovery().Peers()
-		klog.Infof("discovery: peers %v", peers.String())
+		klog.Infof("storage: peers %v", peers.String())
 
 		cfg := embed.NewConfig()
 		cfg.Name = s.Discovery().Tunnel().Hostname()
@@ -308,13 +308,13 @@ func (s *StorageImpl) embeddedEtcd(dataDir string) *etcdserver.EtcdServer {
 
 		go func() {
 			<-s.ctx.Done()
-			klog.InfoS("shutting down storage")
+			klog.Infof("storage: shutting down embedded backend at %s", cfg.Dir)
 			srv.Stop()
-			klog.InfoS("storage is done")
+			klog.Infof("storage: embedded backend at %s is done", cfg.Dir)
 		}()
 
 		await(s.ctx, srv.ReadyNotify())
-		klog.InfoS("storage is ready", "backend", "embedded", "path", cfg.Dir)
+		klog.Infof("storage: embedded backend is ready at %s", cfg.Dir)
 
 		s.embedded = srv
 	})
