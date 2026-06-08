@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stoewer/go-strcase"
 	noopoteltrace "go.opentelemetry.io/otel/trace/noop"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -103,6 +104,9 @@ type Command struct {
 	paths         []string
 	pathsProvided chan struct{}
 
+	token   string
+	tokenMu sync.Mutex
+
 	drainDone       chan struct{}
 	kubeconfigReady chan struct{}
 }
@@ -158,6 +162,23 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 			return nil
 		},
 	}
+	seed.AddCommand(&cobra.Command{
+		Use:   "kubeconfig <seed>",
+		Short: "Update kubeconfig in " + clientcmd.RecommendedHomeFile,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kubeconfig, err := c.Nano().Discovery().Kubeconfig(args[0])
+			if err != nil {
+				return fmt.Errorf("failed to get kubeconfig from discovery service: %w", err)
+			}
+			client := nanokube.NewClientForKubeconfig(cmd.Context(), kubeconfig)
+			if err := client.WriteKubeconfig(kubeconfig.CurrentContext); err != nil {
+				return fmt.Errorf("failed to write kubeconfig: %w", err)
+			}
+			fmt.Printf("wrote kubeconfig for context %q to %s\n", kubeconfig.CurrentContext, clientcmd.RecommendedHomeFile)
+			return nil
+		},
+	})
 	seed.SetContext(c.Nano())
 	c.Command.AddCommand(seed)
 
@@ -201,7 +222,8 @@ func NewNanokubeCommand(ctx context.Context) *Command {
 		c.startHooks["node-startup"] = startHook("node-startup", c.kubeconfigReady, c.nodeStartup)
 		c.startHooks["untaint-node"] = startHook("untaint-node", c.Nano().NodeReady(), c.untaintNode)
 		c.startHooks["update-status"] = startHook("update-status", c.Nano().NodeReady(), c.updateStatus)
-		c.startHooks["update-kubelet-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateKubeletRBAC("system:anonymous")) // TODO(partial): use a real subject and tighten permissions
+		c.startHooks["update-rbac"] = startHook("kubelet-rbac", c.pathsProvided, c.updateRBAC("system:anonymous"))                               // TODO(partial): use a real subject and tighten permissions
+		c.startHooks["update-token"] = startHook("update-token", c.kubeconfigReady, c.updateToken("system:serviceaccount:kube-system:nanokube")) // TODO(partial): switch to OIDC
 		c.stopHooks["drain-node"] = stopHook("drain-node", c.drainNode)
 		return c.ApiServerCommand().RunE(cmd, args)
 	}
@@ -393,12 +415,17 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 |_|_|__,|_|_|___|_,_|___|___|___|
                                  
   cluster ready
-  %s
+  api: %s
   machine id: %s
-
-`,
+  
+  Commands:
+  $ nanokube seed kubeconfig %s
+  $ kubectl get nodes
+  $ kubectl get pods -A
+`, // TODO(remove): i hate this way of updating kubeconfig
 						c.Nano().Tunnel().URL(),
 						c.Nano().MachineID(),
+						c.Nano().Discovery().Seed(),
 					)
 					close(c.startHooksDone)
 				}()
@@ -555,7 +582,7 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 			return false, nil
 		}
 		klog.InfoS("Kubernetes Service is ready", "service", svc)
-		err = client.WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig(clientcmd.RecommendedHomeFile)
+		err = client.WithTunnel(c.Nano().Tunnel(), false).WriteKubeconfig("nanokube")
 		if err != nil {
 			klog.ErrorS(err, "failed to write kubeconfig")
 			return false, nil
@@ -662,7 +689,63 @@ func (c *Command) nodeStartup(ctx hookCtx) error {
 	return nil
 }
 
-func (c *Command) updateKubeletRBAC(subject string) func(ctx hookCtx) error {
+func (c *Command) updateToken(subject string) func(ctx hookCtx) error {
+	return func(ctx hookCtx) error {
+		// subject is a service account: system:serviceaccount:<namespace>:<name>
+		const prefix = "system:serviceaccount:"
+		if !strings.HasPrefix(subject, prefix) {
+			return fmt.Errorf("updateToken: subject %q is not a service account", subject)
+		}
+		namespace, name, ok := strings.Cut(strings.TrimPrefix(subject, prefix), ":")
+		if !ok || namespace == "" || name == "" {
+			return fmt.Errorf("updateToken: malformed service account subject %q", subject)
+		}
+
+		sas := c.Nano().Client().CoreV1().ServiceAccounts(namespace)
+		opts := metav1.ApplyOptions{FieldManager: c.Name(), Force: true}
+
+		// Ensure the service account exists before requesting a token for it.
+		sa := corev1ac.ServiceAccount(name, namespace)
+		if _, err := sas.Apply(ctx.Context, sa, opts); err != nil {
+			return fmt.Errorf("apply service account %s/%s: %w", namespace, name, err)
+		}
+
+		// Grant it cluster-admin so the minted token is fully privileged.
+		binding := rbacv1ac.ClusterRoleBinding("nanokube:" + namespace + ":" + name).
+			WithRoleRef(rbacv1ac.RoleRef().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind("ClusterRole").
+				WithName("cluster-admin")).
+			WithSubjects(rbacv1ac.Subject().
+				WithKind(rbacv1.ServiceAccountKind).
+				WithNamespace(namespace).
+				WithName(name))
+		if _, err := c.Nano().Client().RbacV1().ClusterRoleBindings().Apply(ctx.Context, binding, opts); err != nil {
+			return fmt.Errorf("apply cluster role binding %q: %w", *binding.Name, err)
+		}
+
+		// Mint a token bound to the service account. The apiserver caps the
+		// requested expiration at --service-account-max-token-expiration.
+		expiration := int64((365 * 24 * time.Hour).Seconds())
+		tr, err := sas.CreateToken(ctx.Context, name, &authenticationv1.TokenRequest{
+			Spec: authenticationv1.TokenRequestSpec{
+				ExpirationSeconds: &expiration,
+			},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("create token for %s: %w", subject, err)
+		}
+
+		c.tokenMu.Lock()
+		defer c.tokenMu.Unlock()
+		c.token = tr.Status.Token
+		c.Nano().Discovery().WithKubeconfig(c.Nano().Client().WithTunnel(c.Nano().Tunnel(), false).WithToken(c.token).Kubeconfig(c.Nano().Tunnel().URL().String()))
+		klog.V(2).InfoS("minted service account token", "subject", subject, "expiresAt", tr.Status.ExpirationTimestamp)
+		return nil
+	}
+}
+
+func (c *Command) updateRBAC(subject string) func(ctx hookCtx) error {
 	return func(ctx hookCtx) error {
 		const aggregateRoleName = "system:kubelet"
 		const aggregateLabelKey = "rbac.nanokube.io/aggregate-to-kubelet"

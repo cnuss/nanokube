@@ -20,6 +20,7 @@ import (
 
 	"github.com/cnuss/nanokube/pkg/tunnel"
 	"go.etcd.io/etcd/client/pkg/v3/types"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/klog/v2"
 )
 
@@ -36,6 +37,9 @@ type Discovery interface {
 	WithTunnel(tunnel tunnel.Tunnel) Discovery
 	WithoutTunnel(tunnel tunnel.Tunnel) Discovery
 	Tunnel() tunnel.Tunnel
+
+	WithKubeconfig(config *clientcmdapi.Config) Discovery
+	Kubeconfig(seed string) (*clientcmdapi.Config, error)
 
 	Shutdown()
 }
@@ -108,6 +112,59 @@ func (d *discoveryImpl) client() *http.Client {
 		}
 	})
 	return d.http
+}
+
+func (d *discoveryImpl) WithKubeconfig(config *clientcmdapi.Config) Discovery {
+	url := fmt.Sprintf("https://%s/%s/kubeconfig", discoveryService, d.Seed())
+	payload, err := json.Marshal(config)
+	if err != nil {
+		klog.Warningf("discovery: failed to marshal kubeconfig: %v", err)
+		return d
+	}
+
+	req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		klog.Warningf("discovery: failed to create request: %v", err)
+		return d
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := do(d.ctx, d.client(), req)
+	if err != nil {
+		klog.Warningf("discovery: failed to do request: %v", err)
+		return d
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		klog.Warningf("discovery: unexpected status code: %d", resp.StatusCode)
+		return d
+	}
+	return d
+}
+
+func (d *discoveryImpl) Kubeconfig(seed string) (*clientcmdapi.Config, error) {
+	url := fmt.Sprintf("https://%s/%s/kubeconfig", discoveryService, seed)
+	req, err := http.NewRequestWithContext(d.ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("discovery: failed to create request: %w", err)
+	}
+	req.Header.Set("Cache-Control", "no-cache")
+	resp, err := do(d.ctx, d.client(), req)
+	if err != nil {
+		return nil, fmt.Errorf("discovery: failed to do request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discovery: unexpected status code: %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("discovery: failed to read response body: %w", err)
+	}
+	var config clientcmdapi.Config
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, fmt.Errorf("discovery: failed to unmarshal kubeconfig: %w", err)
+	}
+	return &config, nil
 }
 
 func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {

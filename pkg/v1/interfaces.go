@@ -177,10 +177,11 @@ type Client interface {
 	WithHeartbeat(interval time.Duration) Client
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
+	WithToken(token string) Client
 	WithTunnel(tunnel tunnel.Tunnel, local bool) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
-	WriteKubeconfig(path string) error
+	WriteKubeconfig(name string) error
 }
 
 type ApiServer interface {

@@ -3,6 +3,7 @@ package nanokube
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -54,6 +55,14 @@ func NewClient(ctx context.Context, config *rest.Config) v1.Client {
 	}
 }
 
+func NewClientForKubeconfig(ctx context.Context, kubeconfig *clientcmdapi.Config) v1.Client {
+	cfg, err := clientcmd.NewDefaultClientConfig(*kubeconfig, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		panic(err)
+	}
+	return NewClient(ctx, cfg)
+}
+
 func (c *ClientImpl) Sink() record.EventSink {
 	c.sinkOnce.Do(func() {
 		c.sink = &typedcorev1.EventSinkImpl{Interface: c.Interface.CoreV1().Events("")}
@@ -92,6 +101,19 @@ func (c *ClientImpl) WithTimeout(timeout time.Duration) v1.Client {
 	}
 	cfg := rest.CopyConfig(c.config)
 	cfg.Timeout = timeout
+	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
+	if err != nil {
+		panic(err)
+	}
+	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
+}
+
+func (c *ClientImpl) WithToken(token string) v1.Client {
+	if c.config == nil {
+		return c
+	}
+	cfg := rest.CopyConfig(c.config)
+	cfg.BearerToken = token
 	cs, err := client.NewForConfigAndClient(cfg, c.httpClient)
 	if err != nil {
 		panic(err)
@@ -154,7 +176,23 @@ func (c *ClientImpl) Kubeconfig(name string) *clientcmdapi.Config {
 	return &cfg
 }
 
-func (c *ClientImpl) WriteKubeconfig(path string) error {
-	cfg := c.Kubeconfig("nanokube")
-	return clientcmd.WriteToFile(*cfg, path)
+func (c *ClientImpl) WriteKubeconfig(name string) error {
+	cfg := c.Kubeconfig(name)
+
+	// Merge into the existing kubeconfig (honoring $KUBECONFIG) instead of
+	// overwriting it, so other clusters/users/contexts are preserved.
+	pathOptions := clientcmd.NewDefaultPathOptions()
+	merged, err := pathOptions.GetStartingConfig()
+	if err != nil {
+		return fmt.Errorf("load kubeconfig: %w", err)
+	}
+
+	maps.Copy(merged.Clusters, cfg.Clusters)
+	maps.Copy(merged.AuthInfos, cfg.AuthInfos)
+	maps.Copy(merged.Contexts, cfg.Contexts)
+	if cfg.CurrentContext != "" {
+		merged.CurrentContext = cfg.CurrentContext
+	}
+
+	return clientcmd.ModifyConfig(pathOptions, *merged, false)
 }
