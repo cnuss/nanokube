@@ -1,57 +1,98 @@
 name: Run Nanokube
 
+# Manually-triggered harness for nanokube clusters. Always starts by creating
+# a seed, then per scenario:
+#   single      - one node on the seed
+#   sequential  - one node on the seed, plus N more that join it
+# (simultaneous bootstrap is the endgame once sequential works.)
+
 on:
   workflow_dispatch:
     inputs:
+      scenario:
+        description: "what to run"
+        type: choice
+        required: true
+        default: single
+        options:
+          - single
+          - sequential
+      nodes:
+        description: "node count for sequential (how many join the seed)"
+        required: false
+        default: "3"
       verbosity:
         description: "klog verbosity passed to nanokube start (-v)"
         required: false
         default: "0"
       seed:
-        description: "Reuse an existing cluster seed (optional; empty creates a new one)"
+        description: "reuse an existing seed (empty creates one)"
         required: false
         default: ""
 
 jobs:
-  run:
+  # Always create (or reuse) the seed first, with no node. Exposes the seed and
+  # the node matrix for the downstream jobs.
+  seed:
     runs-on: ubuntu-24.04
+    outputs:
+      seed: ${{ steps.seed.outputs.seed }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - name: Run nanokube
-        id: nanokube
+      - name: Create seed
+        id: seed
         uses: cnuss/nanokube@1.36
         with:
-          verbosity: ${{ inputs.verbosity }}
+          start: "false"
           seed: ${{ inputs.seed }}
 
       - name: Show seed
         shell: bash
-        run: echo "seed=${{ steps.nanokube.outputs.seed }}"
+        run: echo "seed=${{ steps.seed.outputs.seed }}"
 
-      - name: Wait for apiserver
+      - name: Build node matrix
+        id: matrix
         shell: bash
-        run: |
-          # start daemonizes; the kubeconfig + apiserver come up a moment later,
-          # so poll readyz (kubectl fails until ~/.kube/config exists — that's fine).
-          for i in $(seq 1 60); do
-            if kubectl get --raw='/readyz' >/dev/null 2>&1; then
-              echo "apiserver ready"
-              break
-            fi
-            echo "waiting for apiserver... ($i)"
-            sleep 2
-          done
-          kubectl get --raw='/readyz?verbose' || true
+        run: echo "matrix=$(seq 1 ${{ inputs.nodes }} | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 
-      - name: Cluster info
-        shell: bash
-        run: |
-          kubectl cluster-info
-          kubectl version
-          kubectl get nodes -o wide
+  # The initial node (single + sequential). For sequential it runs in the
+  # foreground so node1 stays up while the join nodes connect; the foreground
+  # process never exits on its own, so the job is bounded by timeout-minutes.
+  first:
+    needs: seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Provision first node
+        id: node
+        uses: cnuss/nanokube@1.36
+        with:
+          verbosity: ${{ inputs.verbosity }}
+          seed: ${{ needs.seed.outputs.seed }}
+          foreground: "true"
+
+  # The joining nodes (sequential).
+  join:
+    if: ${{ inputs.scenario == 'sequential' }}
+    needs: seed
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(needs.seed.outputs.matrix) }}
+    steps:
+      - name: Start node ${{ matrix.node }}
+        id: node
+        uses: cnuss/nanokube@1.36
+        with:
+          verbosity: ${{ inputs.verbosity }}
+          seed: ${{ needs.seed.outputs.seed }}
 
       - name: Cluster state
         shell: bash
         run: |
-          kubectl get namespaces
-          kubectl get pods -A
-          kubectl get all -A
+          for i in $(seq 1 60); do
+            kubectl get --raw=/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          kubectl get nodes -o wide || true

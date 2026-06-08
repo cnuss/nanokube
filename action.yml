@@ -5,6 +5,10 @@ branding:
   icon: "box"
   color: "blue"
 inputs:
+  token:
+    description: "GitHub token for API access (default GITHUB_TOKEN). Required if the action needs to create a seed or query the API."
+    required: false
+    default: "${{ github.token }}"
   verbosity:
     description: "klog verbosity level passed to nanokube start (-v)"
     required: false
@@ -13,6 +17,14 @@ inputs:
     description: "Reuse an existing cluster seed (sets NANOKUBE_SEED). If empty, a new seed is created."
     required: false
     default: ""
+  start:
+    description: "If true (default) provision a node; if false only resolve and output the seed."
+    required: false
+    default: "true"
+  foreground:
+    description: "If true run 'nanokube' in the foreground; if false (default) run 'nanokube start' (daemonize)."
+    required: false
+    default: "false"
 outputs:
   seed:
     description: "The discovery seed for this cluster"
@@ -65,7 +77,10 @@ runs:
     - name: Resolve cluster seed
       id: seed
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
       run: |
+        echo "token sha256: $(printf '%s' "$GITHUB_TOKEN" | sha256sum | cut -c1-12)"
         if [ -n "${{ inputs.seed }}" ]; then
           export NANOKUBE_SEED="${{ inputs.seed }}"
           echo "NANOKUBE_SEED=$NANOKUBE_SEED" >> "$GITHUB_ENV"
@@ -79,7 +94,10 @@ runs:
 
     - name: Start nanokube
       id: start
+      if: ${{ inputs.start == 'true' }}
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
       run: |
         verbosity="${{ inputs.verbosity }}"
         # Bump verbosity when step debug logging is on (RUNNER_DEBUG=1).
@@ -91,4 +109,8 @@ runs:
           args="-v=$verbosity"
         fi
 
-        nanokube start $args
+        if [ "${{ inputs.foreground }}" = "true" ]; then
+          nanokube $args
+        else
+          nanokube start $args
+        fi
