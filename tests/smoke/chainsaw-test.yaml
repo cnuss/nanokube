@@ -10,6 +10,7 @@ spec:
       try:
         - script:
             content: |
+              set -x
               CTX=$(kubectl config current-context)
               CLUSTER=$(kubectl config view -o jsonpath="{.contexts[?(@.name=='$CTX')].context.cluster}")
               SERVICE="https://$(kubectl get service kubernetes -n default -o jsonpath='{.spec.externalName}')"

@@ -3,6 +3,7 @@ package pkg
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	_ "embed"
 	"encoding/pem"
 	"errors"
@@ -17,10 +18,10 @@ import (
 	"time"
 	_ "unsafe"
 
+	tunnel "github.com/cnuss/libtunnel"
 	"github.com/cnuss/nanokube/pkg/discovery"
 	"github.com/cnuss/nanokube/pkg/nanokube"
 	"github.com/cnuss/nanokube/pkg/storage"
-	"github.com/cnuss/nanokube/pkg/tunnel"
 	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"github.com/emicklei/go-restful/v3"
 	"github.com/google/uuid"
@@ -154,6 +155,9 @@ type nanokubeImpl struct {
 	proxiedRecorderOnce sync.Once
 
 	certKeyOnce sync.Once
+
+	cert     tls.Certificate
+	certOnce sync.Once
 
 	rootCaOnce sync.Once
 }
@@ -335,6 +339,23 @@ func (k *nanokubeImpl) KeyFilePath() string {
 	return keyPath
 }
 
+// Cert loads the apiserver cert/key pair as a tls.Certificate, materializing
+// them on disk via ensureCertKey first (same helper backing CertFilePath /
+// KeyFilePath). Used to build a TLS listener directly instead of handing
+// cert/key paths to the apiserver's secure-serving plumbing.
+func (k *nanokubeImpl) Cert() tls.Certificate {
+	k.certOnce.Do(func() {
+		certPath, keyPath := k.ensureCertKey()
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			k.Cancel(nanokube.NewError(fmt.Errorf("load cert/key pair: %w", err)))
+			return
+		}
+		k.cert = cert
+	})
+	return k.cert
+}
+
 // RootCaFilePath returns the path to a CA bundle containing the self-signed
 // apiserver cert plus the tunnel's CA roots (Mozilla bundle + Cloudflare
 // root). The apiserver cert is its own CA (self-signed); the tunnel roots
@@ -421,12 +442,10 @@ func (k *nanokubeImpl) ensureCertKey() (string, string) {
 			}
 		}
 
-		tunnel := k.Tunnel()
-
 		certPEM, keyPEM, err := cert.GenerateSelfSignedCertKey(
 			"localhost",
-			[]net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback, tunnel.LocalIP()},
-			[]string{tunnel.Hostname()},
+			[]net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+			[]string{k.Tunnel().LocalHost(), "apiserver-loopback-client"},
 		)
 		if err != nil {
 			k.Cancel(nanokube.NewError(fmt.Errorf("generate self-signed cert: %w", err)))
@@ -493,16 +512,19 @@ func (k *nanokubeImpl) Version() string {
 	return k.version
 }
 
-func (k *nanokubeImpl) Tunnel() tunnel.Tunnel {
+func (k *nanokubeImpl) Tunnel() tunnel.TunnelV1 {
 	// DEVNOTE: Formerly had separate tunnels for the API server and kubelet
 	//          Leaving scaffolding in place to allow for multiple tunnels in the future, but for now just return a single shared tunnel.
 	tunnelName := v1.SharedTunnel
 
 	if t, ok := k.tunnels.Load(tunnelName); ok {
-		return t.(tunnel.Tunnel)
+		return t.(tunnel.TunnelV1)
 	}
-	t, _ := k.tunnels.LoadOrStore(tunnelName, tunnel.NewTunnel())
-	return t.(tunnel.Tunnel)
+	t, _ := k.tunnels.LoadOrStore(tunnelName, tunnel.New(tunnel.Cloudflare().
+		WithTLS(true).
+		WithHTTP2(true),
+	))
+	return t.(tunnel.TunnelV1)
 }
 
 func (k *nanokubeImpl) Host() v1.Host {

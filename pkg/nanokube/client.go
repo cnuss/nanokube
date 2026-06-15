@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	tunnel "github.com/cnuss/libtunnel"
+	v1 "github.com/cnuss/nanokube/pkg/v1"
 	"k8s.io/client-go/informers"
 	client "k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -15,9 +17,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/record"
-
-	"github.com/cnuss/nanokube/pkg/tunnel"
-	v1 "github.com/cnuss/nanokube/pkg/v1"
 )
 
 type ClientImpl struct {
@@ -121,7 +120,7 @@ func (c *ClientImpl) WithToken(token string) v1.Client {
 	return &ClientImpl{Interface: cs, clientset: cs, config: cfg, httpClient: c.httpClient}
 }
 
-func (c *ClientImpl) WithTunnel(tunnel tunnel.Tunnel, local bool) v1.Client {
+func (c *ClientImpl) WithTunnel(tunnel tunnel.TunnelV1, local bool) v1.Client {
 	if c.config == nil {
 		return c
 	}

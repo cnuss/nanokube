@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cnuss/nanokube/pkg/tunnel"
+	tunnel "github.com/cnuss/libtunnel"
 	"go.etcd.io/etcd/client/pkg/v3/types"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/klog/v2"
@@ -34,9 +34,9 @@ type Discovery interface {
 	Seed() string
 	Peers() types.URLsMap
 
-	WithTunnel(tunnel tunnel.Tunnel) Discovery
-	WithoutTunnel(tunnel tunnel.Tunnel) Discovery
-	Tunnel() tunnel.Tunnel
+	WithTunnel(tunnel tunnel.TunnelV1) Discovery
+	WithoutTunnel(tunnel tunnel.TunnelV1) Discovery
+	Tunnel() tunnel.TunnelV1
 
 	WithKubeconfig(config *clientcmdapi.Config) Discovery
 	Kubeconfig(seed string) (*clientcmdapi.Config, error)
@@ -53,7 +53,7 @@ type discoveryImpl struct {
 	http     *http.Client
 
 	tunnelOnce     sync.Once
-	tunnel         tunnel.Tunnel
+	tunnel         tunnel.TunnelV1
 	tunnelProvided chan struct{}
 
 	seed     string
@@ -167,21 +167,22 @@ func (d *discoveryImpl) Kubeconfig(seed string) (*clientcmdapi.Config, error) {
 	return &config, nil
 }
 
-func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
+func (d *discoveryImpl) WithTunnel(tunnel tunnel.TunnelV1) Discovery {
 	d.tunnelOnce.Do(func() {
 		klog.V(2).Infof("discovery: registering tunnel %s with discovery service", tunnel.Hostname())
-		payload, err := json.Marshal(tunnel.Spec())
-		if err != nil {
-			d.cancel(fmt.Errorf("failed to marshal tunnel spec: %w", err))
-			return
-		}
+		// TODO(partial): add marshal functionality to libtunnel
+		// payload, err := json.Marshal(tunnel.Spec())
+		// if err != nil {
+		// 	d.cancel(fmt.Errorf("failed to marshal tunnel spec: %w", err))
+		// 	return
+		// }
 
 		go func() {
 			hostname := tunnel.URL().Hostname() // DEVNOTE: blocks until tunnel is up
 			host := net.JoinHostPort(hostname, strconv.Itoa(tunnel.Port()))
 			url := fmt.Sprintf("https://%s/%s/peer:%s", discoveryService, d.Seed(), host)
 
-			req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader(payload))
+			req, err := http.NewRequestWithContext(d.ctx, http.MethodPost, url, bytes.NewReader([]byte{}))
 			if err != nil {
 				d.cancel(fmt.Errorf("failed to create request: %w", err))
 				return
@@ -207,7 +208,7 @@ func (d *discoveryImpl) WithTunnel(tunnel tunnel.Tunnel) Discovery {
 // No-op if the argument is nil or no tunnel was ever registered (tunnelOnce
 // never fired). Uses a detached context so it still runs during shutdown when
 // d.ctx is already cancelled.
-func (d *discoveryImpl) WithoutTunnel(tunnel tunnel.Tunnel) Discovery {
+func (d *discoveryImpl) WithoutTunnel(tunnel tunnel.TunnelV1) Discovery {
 	if tunnel == nil {
 		return d
 	}
@@ -244,7 +245,7 @@ func (d *discoveryImpl) WithoutTunnel(tunnel tunnel.Tunnel) Discovery {
 	return d
 }
 
-func (d *discoveryImpl) Tunnel() tunnel.Tunnel {
+func (d *discoveryImpl) Tunnel() tunnel.TunnelV1 {
 	<-await(d.ctx, d.tunnelProvided)
 	return d.tunnel
 }

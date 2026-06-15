@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -305,9 +306,21 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 			cmd.Flags().Set("tls-cert-file", c.Nano().CertFilePath())
 			cmd.Flags().Set("tls-private-key-file", c.Nano().KeyFilePath())
 			apiserver.Run = func(ctx context.Context, opts apiserveroptions.CompletedOptions) error {
-				opts.GenericServerRunOptions.ExternalHost = c.Nano().Tunnel().URL().Host
+				opts.SecureServing.Listener = func() net.Listener {
+					lis, err := net.Listen("tcp", "127.0.0.1:0")
+					if err != nil {
+						panic(fmt.Sprintf("failed to create listener for apiserver: %v", err))
+					}
+					return c.Nano().Tunnel().WithContext(context.Background()).WithListener(lis).Listener()
+				}()
 				opts.SecureServing.BindAddress = c.Nano().Tunnel().LocalIP()
 				opts.SecureServing.BindPort = c.Nano().Tunnel().LocalPort()
+
+				opts.GenericServerRunOptions.ExternalHost = func() string {
+					// TODO(hack): see kubernetes patches, this is a hack to put ExternalDNS into the kubernetes service
+					os.Setenv("TUNNEL_HOSTNAME", c.Nano().Tunnel().URL().Host)
+					return c.Nano().Tunnel().URL().Host
+				}()
 				config := &apiserver.Config{Options: opts}
 
 				genericConfig, versionedInformers, storageFactory, err := controlplaneapiserver.BuildGenericConfig(
@@ -348,9 +361,6 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 				if err != nil {
 					return err
 				}
-
-				// TODO(partial): is this the right place for this?
-				c.Nano().Tunnel().WithListener(server.GenericAPIServer.SecureServingInfo.Listener)
 
 				go func() {
 					klog.Infof("apiserver: injecting handlers...")
@@ -415,7 +425,8 @@ func (c *Command) With(cmd *cobra.Command) *Command {
 |_|_|__,|_|_|___|_,_|___|___|___|
                                  
   cluster ready
-  api: %s
+  local: %s
+  tunnel: %s
   machine id: %s
   
   Commands:
@@ -423,6 +434,7 @@ func (c *Command) With(cmd *cobra.Command) *Command {
   $ kubectl get nodes
   $ kubectl get pods -A
 `, // TODO(remove): i hate this way of updating kubeconfig
+						c.Nano().Tunnel().LocalURL(),
 						c.Nano().Tunnel().URL(),
 						c.Nano().MachineID(),
 						c.Nano().Discovery().Seed(),
@@ -578,7 +590,7 @@ func (c *Command) updateKubeconfig(ctx hookCtx) error {
 	return wait.PollUntilContextCancel(ctx.Context, 200*time.Millisecond, true, func(ctx context.Context) (bool, error) {
 		svc, err := client.CoreV1().Services(metav1.NamespaceDefault).Get(ctx, "kubernetes", metav1.GetOptions{})
 		if err != nil {
-			klog.V(2).InfoS("waiting for API server to be ready: %v", err)
+			klog.V(2).InfoS("waiting for API server to be ready", "error", err)
 			return false, nil
 		}
 		klog.InfoS("Kubernetes Service is ready", "service", svc)

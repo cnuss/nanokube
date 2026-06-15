@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"net"
@@ -9,8 +10,8 @@ import (
 	"net/url"
 	"time"
 
+	tunnel "github.com/cnuss/libtunnel"
 	"github.com/cnuss/nanokube/pkg/discovery"
-	"github.com/cnuss/nanokube/pkg/tunnel"
 	"github.com/emicklei/go-restful/v3"
 	kineserver "github.com/k3s-io/kine/pkg/server"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -61,13 +62,14 @@ type Nanokube interface {
 	Host() Host
 	Client() Client
 	Broadcaster() record.EventBroadcaster
-	Tunnel() tunnel.Tunnel
+	Tunnel() tunnel.TunnelV1
 	StaticPods() []*corev1.Pod
 
 	Services(baseURL *url.URL) []*restful.WebService
 
 	CertFilePath() string
 	KeyFilePath() string
+	Cert() tls.Certificate
 	RootCaFilePath() string
 	WithLoopback(loopback *rest.Config) Nanokube
 	KubeconfigPath() string
@@ -178,7 +180,7 @@ type Client interface {
 	WithQps(qps float32) Client
 	WithTimeout(timeout time.Duration) Client
 	WithToken(token string) Client
-	WithTunnel(tunnel tunnel.Tunnel, local bool) Client
+	WithTunnel(tunnel tunnel.TunnelV1, local bool) Client
 
 	Kubeconfig(name string) *clientcmdapi.Config
 	WriteKubeconfig(name string) error
